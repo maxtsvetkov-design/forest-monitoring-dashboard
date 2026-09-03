@@ -1,0 +1,16 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="54.5738" height="54.5738" viewBox="0 0 54.5738 54.5738" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Halo / Mid Glow" filter="url(#filter0_f_0_2325)" style="mix-blend-mode:screen">
+<circle cx="27.2869" cy="27.2869" r="20.8849" fill="url(#paint0_radial_0_2325)"/>
+</g>
+<defs>
+<filter id="filter0_f_0_2325" x="0" y="0" width="54.5738" height="54.5738" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feGaussianBlur stdDeviation="3.201" result="effect1_foregroundBlur_0_2325"/>
+</filter>
+<radialGradient id="paint0_radial_0_2325" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(6.40201 6.40201) scale(41.7698)">
+<stop stop-color="#99F2D4" stop-opacity="0.6"/>
+<stop offset="1" stop-color="#66CCB3" stop-opacity="0"/>
+</radialGradient>
+</defs>
+</svg>

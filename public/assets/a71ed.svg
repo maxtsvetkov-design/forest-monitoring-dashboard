@@ -1,0 +1,12 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="37.7997" height="37.6211" viewBox="0 0 37.7997 37.6211" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Orbit / Ring A" filter="url(#filter0_f_0_2304)" style="mix-blend-mode:screen">
+<ellipse cx="18.8999" cy="18.8105" rx="18.3582" ry="18.2688" stroke="#8CF2E0" stroke-opacity="0.3" stroke-width="0.492462"/>
+</g>
+<defs>
+<filter id="filter0_f_0_2304" x="1.49012e-08" y="1.49012e-08" width="37.7997" height="37.6211" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feGaussianBlur stdDeviation="0.147739" result="effect1_foregroundBlur_0_2304"/>
+</filter>
+</defs>
+</svg>

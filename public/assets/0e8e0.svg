@@ -1,0 +1,20 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="138.732" height="71.0552" viewBox="0 0 138.732 71.0552" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Ellipse 2322" filter="url(#filter0_i_0_1836)">
+<mask id="path-1-inside-1_0_1836" fill="white">
+<path d="M135.622 71.0552C137.377 71.0552 138.807 69.6317 138.729 67.8784C138.011 51.821 131.864 36.4447 121.245 24.2952C109.928 11.3464 94.2985 2.94158 77.2558 0.639606C60.2132 -1.66237 42.9139 2.29474 28.5668 11.777C15.1052 20.674 5.09975 33.8686 0.147184 49.1601C-0.393568 50.8297 0.607657 52.5816 2.29977 53.0472L23.0392 58.7539C24.7313 59.2195 26.4693 58.22 27.058 56.5667C30.1889 47.774 36.0972 40.2018 43.9312 35.0241C52.6518 29.2606 63.1668 26.8553 73.5259 28.2545C83.8849 29.6537 93.385 34.7624 100.264 42.6331C106.444 49.7036 110.131 58.5719 110.817 67.8801C110.946 69.6304 112.357 71.0552 114.112 71.0552H135.622Z"/>
+</mask>
+<path d="M135.622 71.0552C137.377 71.0552 138.807 69.6317 138.729 67.8784C138.011 51.821 131.864 36.4447 121.245 24.2952C109.928 11.3464 94.2985 2.94158 77.2558 0.639606C60.2132 -1.66237 42.9139 2.29474 28.5668 11.777C15.1052 20.674 5.09975 33.8686 0.147184 49.1601C-0.393568 50.8297 0.607657 52.5816 2.29977 53.0472L23.0392 58.7539C24.7313 59.2195 26.4693 58.22 27.058 56.5667C30.1889 47.774 36.0972 40.2018 43.9312 35.0241C52.6518 29.2606 63.1668 26.8553 73.5259 28.2545C83.8849 29.6537 93.385 34.7624 100.264 42.6331C106.444 49.7036 110.131 58.5719 110.817 67.8801C110.946 69.6304 112.357 71.0552 114.112 71.0552H135.622Z" stroke="#E69F00" stroke-width="51.78" mask="url(#path-1-inside-1_0_1836)"/>
+</g>
+<defs>
+<filter id="filter0_i_0_1836" x="0" y="0" width="138.732" height="75.8218" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="4.76658"/>
+<feGaussianBlur stdDeviation="6.35544"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.2 0"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_0_1836"/>
+</filter>
+</defs>
+</svg>

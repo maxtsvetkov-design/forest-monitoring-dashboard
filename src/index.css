@@ -1,0 +1,924 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+@import 'tailwindcss';
+
+@font-face {
+  font-family: "DM Sans:Medium";
+  src: url("https://static.figma.com/font/DMSans_opsz_wght__1") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+}
+@font-face {
+  font-family: "Inter:Bold";
+  src: url("https://static.figma.com/font/Inter_1") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+}
+@font-face {
+  font-family: "Inter:Medium";
+  src: url("https://static.figma.com/font/Inter_1") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+}
+@font-face {
+  font-family: "Inter:Regular";
+  src: url("https://static.figma.com/font/Inter_1") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: 'Inter', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 4px; }
+*:hover::-webkit-scrollbar { opacity: 1; }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out both;
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out both;
+}
+
+/* Donut chart's centre readout — pops in fresh each time the hovered slice
+   changes (the component remounts via a `key` on the slice name), a spring
+   scale-up rather than a flat crossfade so a value change reads as an event. */
+@keyframes donutCenterPop {
+  from {
+    opacity: 0;
+    transform: scale(0.65);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.donut-center-pop {
+  animation: donutCenterPop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* ── App-boot entrance ────────────────────────────────────────────────────
+   The chrome (icon rail, header, timeline) isn't part of the Insights grid's
+   own `delay`-prop cascade, so it needs its own vocabulary to join the same
+   consecutive reveal instead of popping in as one flat block alongside it. */
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-down {
+  animation: fadeInDown 0.5s var(--ease-out, ease-out) both;
+}
+
+@keyframes fadeInLeft {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-fade-in-left {
+  animation: fadeInLeft 0.45s var(--ease-out, ease-out) both;
+}
+
+/* Reserved for the one element that should land last with a little physical
+   weight — the AI assistant FAB, arriving after the whole page has settled. */
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(0.4) translateY(12px); }
+  60% { opacity: 1; transform: scale(1.08) translateY(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-pop-in {
+  animation: popIn 0.55s var(--ease-spring, ease-out) both;
+}
+
+/* One-shot diagonal light sweep across a freshly-grown bar segment — see
+   AnimatedStackedBar. Fires once on mount, not on every hover, so it reads
+   as "the data just arrived" rather than a distracting hover gimmick. */
+@keyframes barShimmer {
+  from { transform: translateX(-120%) skewX(-20deg); }
+  to { transform: translateX(220%) skewX(-20deg); }
+}
+.animate-bar-shimmer {
+  animation: barShimmer 1.1s ease-out both;
+}
+
+/* Recharts sets overflow: hidden inline on the chart <svg>, which clips the
+   donut-chart hover-zoom (scaled slice + drop-shadow) right at the viewBox
+   edge. Only a stylesheet !important rule can beat that inline default. */
+.recharts-surface {
+  overflow: visible !important;
+}
+
+/* ── Degrading-tree map pins ─────────────────────────────────────────────── */
+
+@keyframes pinFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+@keyframes pinPulse {
+  0% { transform: scale(0.5); opacity: 0.55; }
+  70% { transform: scale(2.1); opacity: 0; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+/* Two rules here are load-bearing for keeping a pin on its tree:
+
+   1. `position: absolute; top/left: 0` is REQUIRED, not incidental. MapLibre
+      places a marker by writing a `transform` on this root element, which is
+      only the whole story if the element is taken out of flow at the origin —
+      exactly what MapLibre's own `.maplibregl-marker` rule does. That rule has
+      the same specificity as this one, and this stylesheet loads after
+      maplibre-gl.css, so declaring `position: relative` here silently won this
+      cascade and left every marker in normal document flow: each pin ended up
+      offset by 34px × its DOM index on top of the correct transform, sliding
+      the later pins right off the imagery.
+   2. Never put a transform or animation on `.tree-pin` itself — that overwrites
+      the transform MapLibre uses to position it. The float animation lives on
+      the inner wrapper instead. */
+.tree-pin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 26px;
+  height: 34px;
+  cursor: pointer;
+  /* Opacity only — never transform here (see above) — so this is safe to
+     transition even though MapLibre is simultaneously writing `transform`. */
+  transition: opacity 250ms ease-out;
+}
+
+/* Toggled by MapCanvas as the selected date range changes, so pins fade in
+   and out to match which months are in view instead of a fixed set always
+   showing regardless of range. */
+.tree-pin--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.tree-pin--hidden .tree-pin__body,
+.tree-pin--hidden .tree-pin__blob {
+  transform: scale(0.4);
+}
+
+/* Toggled by the LayerPanel's "Tree health" chip — a coarser, all-or-nothing
+   switch layered on top of the range-driven fade above, not a replacement
+   for it. */
+.map--pins-off .tree-pin {
+  display: none;
+}
+
+.tree-pin__float {
+  position: relative;
+  width: 26px;
+  height: 34px;
+  animation: pinFloat 2.8s ease-in-out infinite;
+  will-change: transform;
+  /* Set on the map container by MapCanvas from the LayerPanel's "Tree health
+     pins" opacity slider — stacks with the ancestor .tree-pin's own opacity
+     (range visibility, hide/show) rather than replacing it, since nested
+     opacity is multiplicative. */
+  opacity: var(--pin-user-opacity, 1);
+}
+
+/* The ring and dot mark the pin's ground point, so they are siblings of the
+   floating body rather than children of it — they stay put on the imagery while
+   the pin bobs above, which is what makes the pin read as tethered to a tree
+   rather than drifting over the picture. The marker is bottom-anchored, so the
+   root element's bottom edge is the ground point. */
+.tree-pin__pulse {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border-radius: 9999px;
+  background: var(--pin-color);
+  animation: pinPulse 2.2s ease-out infinite;
+  pointer-events: none;
+}
+
+.tree-pin__anchor {
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 9999px;
+  background: var(--pin-color);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+
+/* --pin-t (0 = fully zoomed in, 1 = fully zoomed out) is set on the map
+   container by MapCanvas as the camera zoom changes (see updatePinFilter),
+   inherited down to every pin. Rather than just blurring the teardrop icon in
+   place, the icon crossfades into a soft blurred circle — .tree-pin__blob —
+   so zoomed out reads as glowing hotspots rather than a smeared version of a
+   shape too small to read anyway. Defaults to 0 so a pin outside a map that
+   sets it (none, currently) still renders as a crisp icon. */
+.tree-pin__body {
+  position: relative;
+  /* Mutually exclusive with the blob rather than a long linear blend across
+     the whole z10-z15 span: a plain `1 - t` left both states half-visible
+     through the middle of that range, which read as a smeared double image.
+     The pin is fully gone by t=0.55 and the blob doesn't start until t=0.45,
+     so they only overlap for a brief crossfade instead of coexisting. */
+  opacity: clamp(0, calc((0.55 - var(--pin-t, 0)) / 0.15), 1);
+  filter: blur(calc(var(--pin-t, 0) * 1px)) drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35))
+    drop-shadow(0 0 calc(1px + var(--pin-t, 0) * 3px) var(--pin-color));
+  transition: transform 150ms ease-out, filter 200ms ease-out, opacity 200ms ease-out;
+}
+
+/* Centered on the teardrop's circular head (roughly x=50%, y=38% of the
+   26×34 box), so the crossfade doesn't visibly shift the pin's apparent
+   position — it's a sibling of .tree-pin__body inside the same floating
+   wrapper, so it bobs identically and sits at the same ground anchor. */
+.tree-pin__blob {
+  position: absolute;
+  left: 50%;
+  /* Pinned to the marker's ground point (its bottom edge -- the marker is
+     bottom-anchored), the same place .tree-pin__anchor sits, NOT to the
+     floating body's head. When zoomed out this circle *is* the tree's position
+     on the aerial, so it has to sit exactly on it and stay still; anchoring it
+     to the bobbing body left it drifting a few pixels up and down off the
+     imagery it is supposed to mark. */
+  bottom: -3.5px;
+  /* Halved from the original 23px: at the old size, a cluster of pins merged
+     into one large blob that covered the aerial imagery underneath — the
+     opposite of the "glowing hotspot" effect this was meant to give. Small
+     enough now that the trees under a cluster stay visible around it. */
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 9999px;
+  background: var(--pin-color);
+  opacity: clamp(0, calc((var(--pin-t, 0) - 0.45) / 0.15), 1);
+  filter: blur(calc(var(--pin-t, 0) * 1px)) drop-shadow(0 0 calc(1px + var(--pin-t, 0) * 3px) var(--pin-color));
+  transition: opacity 200ms ease-out, filter 200ms ease-out, transform 200ms ease-out;
+  pointer-events: none;
+}
+
+/* The blob is the only affordance left when zoomed out, so it takes over the
+   hover response the teardrop has when zoomed in. Safe on a child — MapLibre
+   owns `transform` on .tree-pin itself, never on its descendants. */
+.tree-pin:hover .tree-pin__blob {
+  transform: scale(1.35);
+}
+
+/* The ground ripple and anchor dot belong to the pin, not the blob: left
+   visible they stayed as crisp little rings dotted over the soft hotspots,
+   which is exactly the clutter the zoomed-out treatment exists to avoid. */
+.map--blob-mode .tree-pin__anchor {
+  opacity: 0;
+}
+
+.map--blob-mode .tree-pin__pulse {
+  visibility: hidden;
+}
+.tree-pin:hover .tree-pin__body {
+  transform: scale(1.15);
+}
+
+.tree-pin__label {
+  position: absolute;
+  top: 5px;
+  left: 0;
+  width: 26px;
+  text-align: center;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  pointer-events: none;
+}
+
+/* Map colour-mode filter — the active mode's own recipe plus the user's
+   contrast slider are composed in JS (MapCanvas's COLOR_MODE_FILTERS) and
+   applied inline as `filter`; this class only owns the transition so a mode
+   or contrast change animates instead of snapping. Applied to the same
+   element `isolate` sits on, so it composes with that stacking context for
+   free — the filter reaches the whole rendered map (whichever basemap, plus
+   every overlay and pin drawn on top of it), not just the raster layers. */
+.map-color-mode {
+  transition: filter 350ms ease-out;
+}
+
+/* Popup restyled to match the dashboard's card language. */
+.maplibregl-popup-content {
+  border-radius: 10px !important;
+  padding: 10px 12px !important;
+  box-shadow: 0px 4px 12px -2px rgba(0, 0, 0, 0.12), 0px 6px 20px -4px rgba(0, 0, 0, 0.12) !important;
+  font-family: 'Inter', sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+   Areas view: resize affordances
+   --------------------------------------------------------------------------- */
+
+/* Set on <body> for the duration of any drag (see useDragResize). Without it,
+   dragging across the table selects rows of text and the cursor flickers back
+   to the default over every element the pointer crosses. */
+body.is-dragging-resize {
+  user-select: none;
+  cursor: col-resize;
+}
+
+/* Column resize grip: a wide invisible hit target straddling the header's right
+   edge, with a hairline that only appears on hover or while dragging. */
+.col-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 11px;
+  height: 100%;
+  transform: translateX(50%);
+  cursor: col-resize;
+  background: transparent;
+  border: none;
+  padding: 0;
+  z-index: 1;
+  touch-action: none;
+}
+
+.col-grip::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  width: 2px;
+  height: 60%;
+  margin-left: -1px;
+  border-radius: 9999px;
+  background: #096151;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.col-grip:hover::after,
+.col-grip:focus-visible::after,
+.col-grip--active::after {
+  opacity: 1;
+}
+
+.col-grip--active::after {
+  top: 0;
+  height: 100%;
+}
+
+/* Split-pane divider between the map and the table. 10px of grabbable width,
+   but only a 2px line ever paints, so it reads as a seam rather than a bar. */
+.split-divider {
+  position: relative;
+  flex: 0 0 10px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.split-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 100%;
+  margin-left: -1px;
+  border-radius: 9999px;
+  background: #e5e5e5;
+  transition: background-color 150ms ease-out;
+}
+
+.split-divider:hover::after,
+.split-divider:focus-visible::after,
+.split-divider--active::after {
+  background: #096151;
+}
+
+.split-divider:focus-visible {
+  outline: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Timeline range slider: month steppers
+   --------------------------------------------------------------------------- */
+
+/* The static background rail — full width, always visible, reads as "this is
+   a range control" even before any dots or fill are considered. Sits at
+   z-index 0, beneath everything else in the track. */
+.tl-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  background: #e9e9e9;
+  z-index: 0;
+}
+
+/* The filled span between the two handles — a real range slider reads its
+   selection from a solid bar, not just from dot colour. Gradient gives it
+   some depth rather than a flat block; caps rounded to match the rail.
+   It's also the drag target for moving the whole range at once, so the
+   element itself is taller than the 4px bar it paints (via ::after) — the
+   same "generous invisible hit target, small visible mark" trick as .tl-dot,
+   since a bare 4px strip would be nearly unusable to grab with a mouse. */
+.tl-rail__fill {
+  position: absolute;
+  top: 50%;
+  height: 14px;
+  margin-top: -7px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  z-index: 0;
+  cursor: grab;
+  touch-action: none;
+  transition: left 200ms ease-out, width 200ms ease-out;
+}
+
+.tl-rail__fill::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #0c7a63 0%, #24a67a 100%);
+  transition: filter 150ms ease-out;
+}
+
+.tl-rail__fill:hover::after {
+  filter: brightness(0.92);
+}
+
+.tl-rail__fill--dragging {
+  cursor: grabbing;
+}
+
+.tl-rail__fill--dragging::after {
+  filter: brightness(0.85);
+}
+
+.tl-track--dragging .tl-rail__fill {
+  transition: none;
+}
+
+/* A permanent vertical tick at every capture date — deliberately thin and
+   pale so it reads as a grid reference, not competing with the rail/fill or
+   the dots' own hover mark for attention. */
+.tl-tick {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 14px;
+  margin-top: -7px;
+  margin-left: -0.5px;
+  background: #dcdcdc;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* One dot per month. The button is a generous 18px hit target; only the 5px
+   .tl-dot__mark inside it paints, so months stay easy to click even when a long
+   timeline packs them ~20px apart. */
+.tl-dot {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  z-index: 1;
+}
+
+/* The rail, fill, and handles now carry the range visually on their own —
+   a permanent bump at every month reads as clutter on top of that, not as
+   information. So the mark stays invisible at rest and only appears, at a
+   deliberately larger size, on hover/focus — "big or hidden", never small. */
+.tl-dot__mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 9999px;
+  background: #096151;
+  opacity: 0;
+  transform: scale(0.4);
+  /* Slight overshoot on the way up reads as a physical "pop" rather than a
+     linear grow — the difference between a control that feels alive and one
+     that feels like a state change. */
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 180ms ease-out;
+}
+
+.tl-track:not(.tl-track--dragging) .tl-dot:hover .tl-dot__mark,
+.tl-dot:focus-visible .tl-dot__mark {
+  opacity: 1;
+  transform: scale(2.1);
+}
+
+/* Hover preview: the frame that covers the hovered month, plus its date.
+   Sits BELOW the rail — a thumbnail-sized panel above it would run into the
+   fixed top bar. Rendered by React for the hovered dot only (see
+   TimelineRangeSlider), because these are multi-megabyte JPEGs and one <img>
+   per dot would fetch the entire set on mount. */
+.tl-preview {
+  position: absolute;
+  top: calc(100% + 8px);
+  /* Defaults to centred on the dot; TimelineRangeSlider overrides this custom
+     property for the first/last couple of months so the now-much-wider
+     preview card (148px, up from 104px) anchors to its own edge there
+     instead of overflowing past the timeline card's own boundary. */
+  transform: translateX(var(--tl-preview-x, -50%));
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 7px;
+  background: #141414;
+  box-shadow: 0 6px 18px -4px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  animation: tlPreviewIn 180ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes tlPreviewIn {
+  from {
+    opacity: 0;
+    transform: translateX(var(--tl-preview-x, -50%)) translateY(-4px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(var(--tl-preview-x, -50%)) translateY(0) scale(1);
+  }
+}
+
+/* Wraps the frame + pin badge so the pin can anchor to the image's own
+   corner rather than the whole (larger) card. */
+.tl-preview__frame {
+  position: relative;
+}
+
+/* Bigger than the old thumbnail (104x58) now that the timeline spans the
+   full toolbar width — a hover preview that size read as cramped once
+   everything else around it grew. */
+.tl-preview__img {
+  width: 148px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+  background: #2a2a2a;
+}
+
+/* The map-marker glyph that makes this read as "a look at the map for that
+   month" rather than a generic cropped photo — the same teardrop the map
+   itself draws for a flagged tree. */
+.tl-preview__pin {
+  position: absolute;
+  bottom: -4px;
+  left: 6px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+}
+
+.tl-preview__date {
+  font-family: "Inter", sans-serif;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+/* A proper drag grip, not just a boundary marker: 20px hit target (bigger
+   than the 18px month dots, since this is the control the user actually
+   drags), white disc with a green ring so it reads as "on top of" the fill,
+   plus a tiny two-bar glyph — the universal "this is draggable" affordance —
+   so it doesn't get mistaken for one more month dot. */
+.tl-handle {
+  position: absolute;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  margin-top: -10px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  cursor: grab;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tl-handle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 2px solid #096151;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 180ms ease-out,
+    border-color 180ms ease-out;
+}
+
+.tl-handle__grip {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.tl-handle__grip::before,
+.tl-handle__grip::after {
+  content: "";
+  width: 1.5px;
+  height: 8px;
+  border-radius: 1px;
+  background: #096151;
+  opacity: 0.55;
+  transition: opacity 180ms ease-out;
+}
+
+.tl-handle:hover::before {
+  transform: scale(1.12);
+  box-shadow: 0 2px 8px rgba(9, 97, 81, 0.35);
+}
+
+.tl-handle:hover .tl-handle__grip::before,
+.tl-handle:hover .tl-handle__grip::after {
+  opacity: 0.85;
+}
+
+.tl-handle:active,
+.tl-handle--active {
+  cursor: grabbing;
+}
+
+.tl-handle:active::before,
+.tl-handle--active::before {
+  transform: scale(1.05);
+  border-color: #24a67a;
+  box-shadow: 0 2px 10px rgba(9, 97, 81, 0.45);
+}
+
+
+/* Ring over the tree selected in the Areas table. Drawn for every selection,
+   not just flagged ones: healthy trees carry no pin, so without the ring a
+   selection would fly the camera to imagery with nothing marked on it. */
+/* Load-bearing: the pulse animates `transform`, and MapLibre positions a marker
+   by writing `transform: translate(...)` onto this very element. A CSS
+   animation outranks that inline style, so animating the marker element itself
+   tears the ring off its coordinates and parks it near the map's top-left
+   corner. Keeping the animation on a pseudo-element leaves MapLibre's transform
+   alone. (Same class of bug as .tree-pin's `position` override.) */
+.tree-focus {
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+}
+
+.tree-focus::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid #096151;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 0 12px rgba(9, 97, 81, 0.55);
+  background: rgba(9, 97, 81, 0.1);
+  animation: treeFocusPulse 1.8s ease-out infinite;
+}
+
+@keyframes treeFocusPulse {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.95;
+  }
+  70% {
+    transform: scale(1.15);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(0.75);
+    opacity: 0.95;
+  }
+}
+
+/* ===========================================================================
+   Motion system
+   ---------------------------------------------------------------------------
+   One vocabulary for the whole app. Two curves and four durations, referenced
+   everywhere, so interactions feel like facets of a single object rather than
+   twenty independently-tuned timings. "Refined" tier: fast, small travel,
+   confident — motion you feel rather than watch, which is what a dashboard
+   someone uses all day can afford.
+   =========================================================================== */
+
+:root {
+  /* Decelerating: entrances, position changes, anything arriving. */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Slight overshoot: presses and pops, where a physical rebound reads well. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --dur-1: 120ms; /* colour / opacity swaps */
+  --dur-2: 180ms; /* hover states */
+  --dur-3: 260ms; /* position changes, view entrances */
+  --dur-4: 420ms; /* the longest thing that should ever move */
+}
+
+/* --- Hover tier 1: cards -------------------------------------------------- */
+/* Lift plus a shadow bloom. 3px is enough to read as "raised" without the
+   layout appearing to wobble when a row of them is hovered in sequence. */
+.u-lift {
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+  will-change: transform;
+}
+
+.u-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0px 4px 12px -2px rgba(0, 0, 0, 0.1), 0px 10px 28px -6px rgba(0, 0, 0, 0.12);
+}
+
+/* --- Hover tier 2: buttons ------------------------------------------------ */
+.u-press {
+  transition: transform var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+}
+
+.u-press:hover {
+  transform: translateY(-1px);
+}
+
+/* The rebound on release is the whole point of the spring curve here. */
+.u-press:active {
+  transform: translateY(0) scale(0.97);
+  transition-duration: var(--dur-1);
+  transition-timing-function: var(--ease-spring);
+}
+
+/* --- Hover tier 3: icons -------------------------------------------------- */
+.u-icon {
+  transition: transform var(--dur-2) var(--ease-spring), opacity var(--dur-2) var(--ease-out);
+}
+
+.u-icon:hover,
+.group:hover .u-icon {
+  transform: scale(1.12);
+}
+
+/* --- View transitions ----------------------------------------------------- */
+/* Keyed on the active tab, so switching replays the entrance. */
+.view-enter {
+  animation: viewEnter var(--dur-3) var(--ease-out) both;
+}
+
+@keyframes viewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Opacity only. Used for the Maps and Areas views: a `transform` on an ancestor
+   of MapLibre's WebGL canvas forces it into a new containing block and costs a
+   full recomposite mid-animation, which makes the map feel worse than no
+   transition at all. Fading is free. */
+.view-enter-soft {
+  animation: viewEnterSoft var(--dur-3) var(--ease-out) both;
+}
+
+@keyframes viewEnterSoft {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Staggered children — set --i on each child. */
+.stagger > * {
+  animation: viewEnter var(--dur-3) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+/* --- Tab indicator -------------------------------------------------------- */
+/* A single pill that travels between tabs instead of the active colour jumping
+   between them. The continuity is what sells it: one object moving, rather than
+   two independent state changes. Position is measured in App.tsx. */
+.tab-pill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  background: #096151;
+  border-radius: 8px;
+  box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.08);
+  transition: left var(--dur-3) var(--ease-out), width var(--dur-3) var(--ease-out);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Skips the slide on first paint, so the pill doesn't fly in from x=0 on load. */
+.tab-pill--instant {
+  transition: none;
+}
+
+/* --- Scrolling ------------------------------------------------------------ */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Slim, self-effacing scrollbars for the inner panes. `overscroll-behavior`
+   stops a table that has hit its end from chaining the scroll to the page —
+   the thing that makes nested scroll areas feel cheap. */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d4 transparent;
+  overscroll-behavior: contain;
+}
+
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.scroll-slim:hover::-webkit-scrollbar-thumb {
+  background: #b4b4b4;
+  background-clip: content-box;
+}
+
+/* --- Reduced motion ------------------------------------------------------- */
+/* Everything above collapses. Vestibular disorders make parallax and travel
+   genuinely unpleasant, and a dashboard is not the place to insist on it —
+   the interface still works, it simply arrives instead of moving. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .u-lift:hover,
+  .u-press:hover,
+  .u-press:active,
+  .u-icon:hover,
+  .group:hover .u-icon {
+    transform: none;
+  }
+}

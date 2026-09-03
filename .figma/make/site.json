@@ -1,0 +1,10 @@
+{
+  "description": "This interactive dashboard provides real-time data visualization with animated graphs and responsive design, ideal for users seeking insightful analytics.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

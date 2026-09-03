@@ -1,0 +1,11 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="ic_info-circle">
+<g id="bounds" opacity="0.01">
+</g>
+<g id="alertCircle">
+<circle id="oval" cx="8.26673" cy="8.26673" r="5.06667" transform="rotate(-180 8.26673 8.26673)" stroke="#141414" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="alertcircle__icon--1" d="M8.26673 10.2934L8.26673 8.26673" stroke="#141414" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="alertcircle__icon--2" d="M8.26673 6.31801L8.26673 5.92827" stroke="#141414" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>
