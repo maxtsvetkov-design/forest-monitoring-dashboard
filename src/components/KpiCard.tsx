@@ -10,6 +10,8 @@ export default function KpiCard({
   trend,
   hasInfo,
   delay,
+  onDrillDown,
+  drillDownLabel,
 }: {
   label: string;
   value: string;
@@ -22,16 +24,35 @@ export default function KpiCard({
   trend?: "up" | "down";
   hasInfo?: boolean;
   delay: number;
+  /** When given, the whole card becomes a button that opens Areas filtered to
+   * the trees behind this number — see App.tsx's drillIntoAreas. */
+  onDrillDown?: () => void;
+  /** What that drill-down lands on, for the card's title/aria text. Without
+   * it a screen reader hears only the KPI label and no hint that activating
+   * the card navigates anywhere. */
+  drillDownLabel?: string;
 }) {
+  const Tag = onDrillDown ? "button" : "div";
   return (
     <div className="flex-1 min-w-0 animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
-      <div className="u-lift bg-[#fafafa] border border-white rounded-[12px] h-full shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04),0px_5.124px_5.915px_0px_rgba(0,0,0,0.01)] group">
-        <div className="border border-[#d9d9d9] rounded-[12px] pt-[12px] pb-[8px] px-[12px] h-full">
-          <p className="text-[12px] font-normal text-[#363636] leading-[18px] font-['Inter',sans-serif] truncate mb-1">
+      <div className="surface-card surface-card--interactive h-full group">
+        {/* `w-full text-left` because a <button> is inline-block and
+            centre-aligned by default — without them the card collapses to its
+            content width and every label re-centres. */}
+        <Tag
+          type={onDrillDown ? "button" : undefined}
+          onClick={onDrillDown}
+          title={drillDownLabel}
+          aria-label={drillDownLabel ? `${label} — ${drillDownLabel}` : undefined}
+          className={`p-[14px] h-full w-full text-left ${
+            onDrillDown ? "u-press cursor-pointer" : ""
+          }`}
+        >
+          <p className="text-[12px] font-normal text-[#464650] leading-[18px] font-['Outfit',sans-serif] truncate mb-1">
             {label}
           </p>
           <div className="flex items-center gap-[4px]">
-            <p className="text-[16px] font-medium text-[#141414] leading-[24px] font-['Inter',sans-serif] whitespace-nowrap">
+            <p className="text-[16px] font-medium text-[#18181c] leading-[24px] font-['Outfit',sans-serif] whitespace-nowrap">
               {value}
             </p>
             {hasInfo && (
@@ -43,7 +64,7 @@ export default function KpiCard({
             )}
           </div>
           {secondaryValue && (
-            <p className="text-[12px] font-normal text-[#6b6b6b] leading-[16px] font-['Inter',sans-serif] whitespace-nowrap">
+            <p className="text-[12px] font-normal text-[#5b5b66] leading-[16px] font-['Outfit',sans-serif] whitespace-nowrap">
               {secondaryValue}
             </p>
           )}
@@ -51,11 +72,11 @@ export default function KpiCard({
             <div className="flex items-center gap-[4px] mt-1">
               <TrendChip change={change} trend={trend} />
               {changeNote && (
-                <span className="text-[10px] text-[#6b6b6b] font-normal font-['Inter',sans-serif]">{changeNote}</span>
+                <span className="text-[10px] text-[#5b5b66] font-normal font-['Outfit',sans-serif]">{changeNote}</span>
               )}
             </div>
           )}
-        </div>
+        </Tag>
       </div>
     </div>
   );

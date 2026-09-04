@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DateRange } from "../data/aggregate";
+import { buildUpcomingMonthLabels } from "../data/monthlySnapshots";
 import type { HealthKey } from "../data/types";
+import { CONDITIONS } from "../data/taxonomy";
+import DenseCoverageModal from "./DenseCoverageModal";
 
-// Same colour coding as the health donut and map pins elsewhere on the
-// dashboard — a reader who already learned that legend gets it for free here.
-const AT_RISK_HEALTH: { key: HealthKey; label: string; color: string }[] = [
-  { key: "stressed", label: "Stressed", color: "#F0B429" },
-  { key: "declining", label: "Declining", color: "#E55C2F" },
-  { key: "dead", label: "Dead", color: "#8C8C8C" },
-];
+// Two more calendar months, shown past the real data as a locked preview of
+// what's coming rather than letting the axis just stop at "now" — computed
+// once at module load (same pattern as monthLabels itself), not per render.
+const UPCOMING_MONTHS = buildUpcomingMonthLabels(2);
+
+// The flagged bands, worst first — same colour coding as the condition donut
+// and the map pins, read off the taxonomy so all three stay in step.
+const AT_RISK_HEALTH: { key: HealthKey; label: string; color: string }[] = CONDITIONS.filter(
+  (c) => c.flagged,
+).map((c) => ({ key: c.key, label: c.label, color: c.color }));
 
 interface TimelineRangeSliderProps {
   months: string[];
@@ -56,6 +62,26 @@ export default function TimelineRangeSlider({
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<Handle | null>(null);
   const [playing, setPlaying] = useState(false);
+  // On mount, the end handle (and the selection band it carries along —
+  // wash, fill, chart clip) starts pinned to the start handle's position and
+  // grows out to the real range a beat later, so opening the dashboard reads
+  // as the timeline sweeping itself in left-to-right rather than the full
+  // range just appearing pre-selected. A double rAF, not a single one: the
+  // browser needs to actually paint the collapsed state on one frame before
+  // the next frame's change has something to transition from — flipping
+  // this in the same frame the component first renders would just skip
+  // straight to the end state with no visible motion.
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setRevealed(true));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, []);
   const [hovered, setHovered] = useState<number | null>(null);
   const [bannerOpen, setBannerOpen] = useState(false);
   const lastCount = months.length - 1;
@@ -184,6 +210,11 @@ export default function TimelineRangeSlider({
 
   const startPct = (range.startIndex / lastCount) * 100;
   const endPct = (range.endIndex / lastCount) * 100;
+  // Collapsed onto the start handle until the initial reveal has fired (see
+  // the `revealed` effect above) — every element that positions itself off
+  // `endPct` reads this instead, so the band grows out as one motion rather
+  // than the end handle alone detaching from the wash/fill/chart around it.
+  const displayEndPct = revealed ? endPct : startPct;
   const atEnd = range.endIndex >= lastCount;
   const atStart = range.startIndex <= 0;
 
@@ -199,29 +230,38 @@ export default function TimelineRangeSlider({
     return previewImages[bucket];
   }
 
-  // Plotted in a 0–100 x 0–SPARK_HEIGHT viewBox with preserveAspectRatio="none",
-  // so x=0..100 lines up exactly with the dots/ticks' own left:0%..100% —
-  // no separate scale to keep in sync as the track's actual pixel width changes.
-  const SPARK_HEIGHT = 26;
+  // The rail/fill and the tree-count trend used to be two stacked strips —
+  // a thin drag bar with a chart floating just above it. They're now one
+  // band: the trend line IS the rail, the selected range is a clipped,
+  // saturated segment of that same line over a soft wash rather than a
+  // second bar drawn separately. Plotted in a 0–100 x 0–TRACK_HEIGHT viewBox
+  // with preserveAspectRatio="none", so x=0..100 lines up exactly with the
+  // dots/ticks/handles' own left:0%..100% — no separate scale to keep in
+  // sync as the track's actual pixel width changes. The bottom
+  // CHART_BOTTOM_PAD is left clear of the line itself so the tick/dot strip
+  // anchored to the band's bottom edge never collides with it.
+  const TRACK_HEIGHT = 34;
+  const CHART_TOP_PAD = 4;
+  const CHART_BOTTOM_PAD = 12;
   let sparkLine = "";
   let sparkArea = "";
   if (treeCountSeries && treeCountSeries.length === months.length && treeCountSeries.length > 1) {
     const max = Math.max(...treeCountSeries);
     const min = Math.min(...treeCountSeries);
     const span = max - min || 1;
+    const plotHeight = TRACK_HEIGHT - CHART_TOP_PAD - CHART_BOTTOM_PAD;
     const points = treeCountSeries.map((v, i) => {
       const x = (i / lastCount) * 100;
-      // A little headroom top/bottom so the line never touches the band's edge.
-      const y = SPARK_HEIGHT - 3 - ((v - min) / span) * (SPARK_HEIGHT - 6);
+      const y = TRACK_HEIGHT - CHART_BOTTOM_PAD - ((v - min) / span) * plotHeight;
       return [x, y] as const;
     });
     sparkLine = points.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
-    sparkArea = `${sparkLine} L100,${SPARK_HEIGHT} L0,${SPARK_HEIGHT} Z`;
+    sparkArea = `${sparkLine} L100,${TRACK_HEIGHT} L0,${TRACK_HEIGHT} Z`;
   }
 
   return (
     <div className="relative">
-      <div className="w-full bg-white border border-[#e5e5e5] rounded-[8px] pl-[8px] pr-[12px] py-[6px] shadow-[0px_2px_8px_rgba(0,0,0,0.07)] flex flex-col gap-[5px]">
+      <div className="w-full surface-card pl-[10px] pr-[14px] py-[8px] flex flex-col gap-[5px]">
         <div className="flex items-center gap-[8px]">
           <button
             type="button"
@@ -232,7 +272,7 @@ export default function TimelineRangeSlider({
             disabled={atStart}
             aria-label="Jump to previous month"
             title={atStart ? "Already at the start of the timeline" : "Jump to the previous month"}
-            className="u-press shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full border border-[#d9d9d9] text-[#363636] hover:bg-[#f2f2f2] disabled:text-[#c4c4c4] disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+            className="u-press shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full border border-[#dedee3] text-[#464650] hover:bg-[#ebece7] disabled:text-[#cbcbd2] disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
               <path d="M8.6 0.7v8.6a0.5 0.5 0 0 1-.77.42l-5.6-4.3a0.5 0.5 0 0 1 0-.84l5.6-4.3A0.5 0.5 0 0 1 8.6 0.7z" fill="currentColor" />
@@ -247,7 +287,7 @@ export default function TimelineRangeSlider({
             aria-label={playing ? "Pause timeline playback" : "Play timeline playback"}
             aria-pressed={playing}
             title={playing ? "Pause" : atEnd ? "Already at the end of the timeline" : "Play through the timeline"}
-            className="u-press shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full bg-[#096151] text-white disabled:bg-[#e5e5e5] disabled:text-[#b4b4b4] disabled:cursor-not-allowed cursor-pointer"
+            className="u-press shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full bg-[#096151] text-white disabled:bg-[#dedee3] disabled:text-[#a6a6b0] disabled:cursor-not-allowed cursor-pointer"
           >
             {playing ? (
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -270,7 +310,7 @@ export default function TimelineRangeSlider({
             disabled={atEnd}
             aria-label="Jump to next month"
             title={atEnd ? "Already at the end of the timeline" : "Jump to the next month"}
-            className="u-press shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full border border-[#d9d9d9] text-[#363636] hover:bg-[#f2f2f2] disabled:text-[#c4c4c4] disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+            className="u-press shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full border border-[#dedee3] text-[#464650] hover:bg-[#ebece7] disabled:text-[#cbcbd2] disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
               <path d="M1.4 0.7v8.6a0.5 0.5 0 0 0 0.77.42l5.6-4.3a0.5 0.5 0 0 0 0-0.84l-5.6-4.3A0.5 0.5 0 0 0 1.4 0.7z" fill="currentColor" />
@@ -278,25 +318,93 @@ export default function TimelineRangeSlider({
             </svg>
           </button>
 
+          {/* Real track + the locked upcoming-months strip side by side, each
+              sized by how many month-slots it holds — `flex: {n}` gives every
+              slot in either strip the same width without the two needing to
+              agree on an actual pixel value. */}
+          <div className="flex-1 min-w-0 flex items-stretch gap-[6px] relative">
           {/* `flex-col-reverse` puts the track first in the DOM but the label
               first on screen — the label reads as the heading above the rail. */}
-          <div className="flex-1 min-w-0 flex flex-col-reverse gap-[5px]">
+          <div className="min-w-0 flex flex-col-reverse gap-[5px]" style={{ flex: `${lastCount} 1 0%` }}>
             <div
               ref={trackRef}
-              className={`tl-track relative h-[18px] flex items-center select-none touch-none ${
-                dragging ? "tl-track--dragging" : ""
-              }`}
+              className={`tl-track relative select-none touch-none ${dragging ? "tl-track--dragging" : ""}`}
+              style={{ height: TRACK_HEIGHT }}
             >
               <div className="tl-rail" />
-              {/* The filled span is itself draggable — grabbing it slides the
-                  whole selection left/right, keeping its width, rather than
-                  only being able to resize it from the two end handles. */}
+
+              {/* Soft wash behind the selected range — the same footprint the
+                  old thin fill bar covered, now the full band height so the
+                  trend line reads as sitting "inside" the selection rather
+                  than floating above a separate control. */}
+              <div className="tl-rail__wash" style={{ left: `${startPct}%`, width: `${displayEndPct - startPct}%` }} />
+
+              {/* Trend chart: a muted full-timeline line underneath, and the
+                  same line redrawn in the brand colour but clipped to the
+                  selected range on top — one continuous line whose "in
+                  range" segment is visually brighter, rather than a second
+                  chart floating over an unrelated drag bar. */}
+              {sparkLine && (
+                <svg
+                  viewBox={`0 0 100 ${TRACK_HEIGHT}`}
+                  preserveAspectRatio="none"
+                  className="absolute inset-0 w-full h-full overflow-visible pointer-events-none"
+                >
+                  <defs>
+                    <linearGradient id="tl-tree-fill-muted" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#71717a" stopOpacity="0.16" />
+                      <stop offset="100%" stopColor="#71717a" stopOpacity="0" />
+                    </linearGradient>
+                    <linearGradient id="tl-tree-fill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#24A67A" stopOpacity="0.32" />
+                      <stop offset="100%" stopColor="#24A67A" stopOpacity="0" />
+                    </linearGradient>
+                    <clipPath id="tl-range-clip" clipPathUnits="userSpaceOnUse">
+                      <rect
+                        className={dragging ? "" : "tl-range-clip-rect"}
+                        x={startPct}
+                        y={0}
+                        width={Math.max(0, displayEndPct - startPct)}
+                        height={TRACK_HEIGHT}
+                      />
+                    </clipPath>
+                  </defs>
+                  <path d={sparkArea} fill="url(#tl-tree-fill-muted)" />
+                  <path
+                    d={sparkLine}
+                    fill="none"
+                    stroke="#cbcbd2"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <g clipPath="url(#tl-range-clip)">
+                    <path d={sparkArea} fill="url(#tl-tree-fill)" />
+                    <path
+                      d={sparkLine}
+                      fill="none"
+                      stroke="#096151"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </g>
+                </svg>
+              )}
+
+              {/* The selected span is itself draggable — grabbing it slides
+                  the whole selection left/right, keeping its width, rather
+                  than only being able to resize it from the two end
+                  handles. Transparent: the wash + chart above already paint
+                  the visible selection, this is purely the hit target. */}
               <div
                 role="button"
                 tabIndex={0}
                 aria-label={`Move the selected range — currently ${months[range.startIndex]} to ${months[range.endIndex]}`}
                 className={`tl-rail__fill ${dragging === "move" ? "tl-rail__fill--dragging" : ""}`}
-                style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
+                style={{ left: `${startPct}%`, width: `${displayEndPct - startPct}%` }}
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
                   moveStartRef.current = { clientX: e.clientX, startIndex: range.startIndex, endIndex: range.endIndex };
@@ -346,12 +454,10 @@ export default function TimelineRangeSlider({
                 onFocus={() => setHovered(range.startIndex)}
                 onBlur={() => setHovered((h) => (h === range.startIndex ? null : h))}
                 className={`tl-handle ${dragging === "start" ? "tl-handle--active" : ""} ${
-                  dragging ? "" : "transition-[left] duration-200 ease-out"
+                  dragging ? "" : "tl-handle--animated"
                 }`}
                 style={{ left: `${startPct}%` }}
-              >
-                <span className="tl-handle__grip" />
-              </button>
+              />
               <button
                 type="button"
                 aria-label="Range end"
@@ -364,12 +470,10 @@ export default function TimelineRangeSlider({
                 onFocus={() => setHovered(range.endIndex)}
                 onBlur={() => setHovered((h) => (h === range.endIndex ? null : h))}
                 className={`tl-handle ${dragging === "end" ? "tl-handle--active" : ""} ${
-                  dragging ? "" : "transition-[left] duration-200 ease-out"
+                  dragging ? "" : "tl-handle--animated"
                 }`}
-                style={{ left: `${endPct}%` }}
-              >
-                <span className="tl-handle__grip" />
-              </button>
+                style={{ left: `${displayEndPct}%` }}
+              />
 
               {/* Rendered for the hovered dot only, and below the rail rather
                   than above it: these frames are multi-megabyte JPEGs, so one
@@ -410,7 +514,7 @@ export default function TimelineRangeSlider({
                       {AT_RISK_HEALTH.map(({ key, label, color }) => (
                         <span key={key} className="flex items-center gap-[3px]" title={label}>
                           <span className="w-[6px] h-[6px] rounded-full shrink-0" style={{ background: color }} />
-                          <span className="text-[9px] font-medium text-white/90 font-['Inter',sans-serif] tabular-nums whitespace-nowrap">
+                          <span className="text-[9px] font-medium text-white/90 font-['Outfit',sans-serif] tabular-nums whitespace-nowrap">
                             {healthCountsSeries[hovered][key]}
                           </span>
                         </span>
@@ -421,59 +525,31 @@ export default function TimelineRangeSlider({
               )}
             </div>
 
-            {/* Tree-count trend, sitting directly over the track it shares an
-                x-axis with — same 0%..100% coordinate space as the dots/ticks
-                below, so a bump in the line always lines up with its month. */}
-            {sparkLine && (
-              <div className="relative w-full pointer-events-none" style={{ height: SPARK_HEIGHT }}>
-                <svg
-                  viewBox={`0 0 100 ${SPARK_HEIGHT}`}
-                  preserveAspectRatio="none"
-                  className="w-full h-full overflow-visible"
-                >
-                  <defs>
-                    <linearGradient id="tl-tree-fill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#24A67A" stopOpacity="0.32" />
-                      <stop offset="100%" stopColor="#24A67A" stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-                  <path d={sparkArea} fill="url(#tl-tree-fill)" />
-                  <path
-                    d={sparkLine}
-                    fill="none"
-                    stroke="#096151"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                </svg>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between px-[1px]">
-              <span className="tl-label flex-1 text-[12px] font-normal text-[#363636] font-['Inter',sans-serif] text-center">
-                <span className="font-medium text-[#096151]">{months[range.startIndex]}</span>
-                {" – "}
-                <span className="font-medium text-[#096151]">{months[range.endIndex]}</span>
-              </span>
-            </div>
-
             {/* A full month-by-month axis, one tick per timestamp under its
                 own dot — only worth the visual weight now that the track
                 spans the whole toolbar; at the old ~360px width, 12 labels
-                would have overlapped into an unreadable smear. */}
+                would have overlapped into an unreadable smear. The selected
+                range used to also get its own "Mon '26 – Mon '26" line above
+                this row — redundant with the row right below it, so the
+                range is now highlighted directly here instead: the two
+                boundary months pick up the same green/bold treatment that
+                line used to own. */}
             <div className="relative h-[13px]">
               {months.map((month, index) => {
                 // Centering every label on its dot would clip the first and
                 // last against the card's edge padding — anchor those two to
                 // their own end instead, everything between stays centered.
                 const align = index === 0 ? "translate-x-0" : index === lastCount ? "-translate-x-full" : "-translate-x-1/2";
+                const state = dotState(index);
                 return (
                   <span
                     key={month}
-                    className={`absolute top-0 ${align} text-[10px] font-['Inter',sans-serif] whitespace-nowrap transition-colors duration-150 ${
-                      dotState(index) === "out" ? "text-[#b4b4b4]" : "text-[#6b6b6b]"
+                    className={`absolute top-0 ${align} text-[10px] font-['Outfit',sans-serif] whitespace-nowrap transition-colors duration-150 ${
+                      state === "edge"
+                        ? "font-medium text-[#096151]"
+                        : state === "out"
+                          ? "text-[#a6a6b0]"
+                          : "text-[#5b5b66]"
                     }`}
                     style={{ left: `${(index / lastCount) * 100}%` }}
                   >
@@ -484,58 +560,97 @@ export default function TimelineRangeSlider({
             </div>
           </div>
 
-          {/* Promo trigger: right-aligned in the top row (flex-1 above pushes
-              it there) rather than a separate centred row beneath the track —
-              reads as a badge advertising more coverage, not a data label. */}
-          {previewImages && plannedCaptures ? (
+          {/* Locked preview of the next `UPCOMING_MONTHS.length` calendar
+              months — no snapshot data exists for these yet, so they render
+              as a visibly continued axis (rail, ticks, labels) with none of
+              the interactive pieces: no dot buttons, no handles, nothing for
+              jumpTo/drag to land on. `aria-hidden` because there's nothing
+              here a screen reader user could act on. */}
+          {UPCOMING_MONTHS.length > 0 && (
+            <div
+              className="shrink-0 flex flex-col-reverse gap-[5px] opacity-50"
+              style={{ flex: `${UPCOMING_MONTHS.length} 1 0%` }}
+              aria-hidden="true"
+              title="Not yet available — no imagery captured for these months"
+            >
+              <div className="relative" style={{ height: TRACK_HEIGHT }}>
+                <div className="tl-rail tl-rail--disabled" />
+                {UPCOMING_MONTHS.map((_, index) => (
+                  <div
+                    key={`upcoming-tick-${index}`}
+                    className="tl-tick tl-tick--disabled"
+                    style={{ left: `${(index / Math.max(1, UPCOMING_MONTHS.length - 1)) * 100}%` }}
+                  />
+                ))}
+              </div>
+
+              <div className="relative h-[13px]">
+                {UPCOMING_MONTHS.map((month, index) => {
+                  const align =
+                    index === 0
+                      ? "translate-x-0"
+                      : index === UPCOMING_MONTHS.length - 1
+                        ? "-translate-x-full"
+                        : "-translate-x-1/2";
+                  return (
+                    <span
+                      key={month}
+                      className={`absolute top-0 ${align} text-[10px] font-['Outfit',sans-serif] whitespace-nowrap text-[#a6a6b0]`}
+                      style={{ left: `${(index / Math.max(1, UPCOMING_MONTHS.length - 1)) * 100}%` }}
+                    >
+                      {month}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Promo trigger: anchored over the locked upcoming-months strip —
+              the pitch is about the very months it's sitting on top of (no
+              imagery yet for Oct '26 / Nov '26), not a generic banner
+              floating off to the side of the whole timeline. Positioned
+              absolutely against this row (not the upcoming column itself,
+              which is `aria-hidden` and would swallow the button along with
+              it), centred on that column's own horizontal midpoint and
+              vertically centred on `tl-track`'s own band — both columns are
+              flush at the row's bottom (see the empty spacer comment above),
+              so `bottom` reaches the same TRACK_HEIGHT strip `.tl-track`
+              itself occupies rather than floating above the whole row.
+
+              Dark chip + white glyph, not the light green outline pill this
+              used to be — a small black rounded badge with a white icon, the
+              way a promo trigger reads in the moodboard this was restyled
+              from, rather than blending in as another data label. */}
+          {previewImages && plannedCaptures && UPCOMING_MONTHS.length > 0 ? (
             <button
               type="button"
               onClick={() => setBannerOpen((b) => !b)}
               aria-expanded={bannerOpen}
-              className="u-press shrink-0 flex items-center gap-[5px] pl-[6px] pr-[8px] py-[4px] rounded-full bg-[#0961511a] border border-[#09615166] text-[#096151] cursor-pointer"
+              className="u-press absolute bottom-[5px] -translate-x-1/2 flex items-center gap-[5px] pl-[7px] pr-[10px] py-[5px] rounded-full bg-[#18181c] hover:bg-[#2e2e35] text-white cursor-pointer whitespace-nowrap shadow-[0_2px_6px_-1px_rgba(0,0,0,0.35)] transition-colors duration-150"
+              style={{ left: `${((lastCount + UPCOMING_MONTHS.length / 2) / (lastCount + UPCOMING_MONTHS.length)) * 100}%` }}
             >
               <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="shrink-0">
                 <path
                   d="M8 1l1.6 4.4L14 7l-4.4 1.6L8 13l-1.6-4.4L2 7l4.4-1.6L8 1z"
-                  fill="currentColor"
+                  fill="white"
                 />
               </svg>
-              <span className="text-[10px] font-medium font-['Inter',sans-serif] leading-[14px] whitespace-nowrap">
-                {previewImages.length} of {plannedCaptures} captures
+              <span className="text-[10px] font-medium font-['Outfit',sans-serif] leading-[14px] whitespace-nowrap">
+                What&apos;s next?
               </span>
             </button>
           ) : null}
+          </div>
         </div>
       </div>
 
       {bannerOpen && previewImages && plannedCaptures && (
-        <div className="tl-banner absolute left-0 right-0 top-[calc(100%+8px)] z-[30] bg-[#096151] text-white rounded-[8px] px-[12px] py-[10px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.25)] flex items-start gap-[10px] animate-fade-in">
-          <div className="flex-1 min-w-0">
-            <p className="text-[12px] font-bold font-['Inter',sans-serif] leading-[16px]">
-              Denser time coverage available
-            </p>
-            <p className="text-[11px] font-['Inter',sans-serif] leading-[15px] text-white/80 mt-[2px]">
-              {plannedCaptures - previewImages.length} further captures are planned for this plot. Add them to
-              step through the recovery week by week instead of month by month.
-            </p>
-            <button
-              type="button"
-              className="u-press mt-[8px] px-[10px] py-[4px] rounded-[6px] bg-white text-[#096151] text-[11px] font-medium font-['Inter',sans-serif] cursor-pointer"
-            >
-              Request imagery
-            </button>
-          </div>
-          <button
-            type="button"
-            aria-label="Dismiss"
-            onClick={() => setBannerOpen(false)}
-            className="u-press shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-white/70 hover:bg-white/15 hover:text-white cursor-pointer"
-          >
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-              <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
+        <DenseCoverageModal
+          previewImages={previewImages}
+          plannedCaptures={plannedCaptures}
+          onClose={() => setBannerOpen(false)}
+        />
       )}
     </div>
   );

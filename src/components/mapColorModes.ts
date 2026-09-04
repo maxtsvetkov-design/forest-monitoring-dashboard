@@ -11,7 +11,7 @@ export type MapColorMode = "normal" | "grayscale" | "night" | "thermal" | "sepia
  */
 export const MAP_COLOR_MODES: { id: MapColorMode; label: string; filter: string; swatch: string }[] = [
   { id: "normal", label: "Normal", filter: "none", swatch: "linear-gradient(135deg, #7fb88f, #b7d8a0)" },
-  { id: "grayscale", label: "Grayscale", filter: "grayscale(1)", swatch: "linear-gradient(135deg, #6b6b6b, #d9d9d9)" },
+  { id: "grayscale", label: "Grayscale", filter: "grayscale(1)", swatch: "linear-gradient(135deg, #5b5b66, #dedee3)" },
   {
     id: "night",
     label: "Night",

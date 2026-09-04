@@ -4,20 +4,15 @@ import type { TreeEvent } from "../data/events";
 import { generateTreeHistory } from "../data/treeHistory";
 import type { TreeRecord } from "../data/trees";
 import type { HealthKey } from "../data/types";
+import { CONDITIONS, CONDITION_COLOR } from "../data/taxonomy";
 
-const SEVERITY_COLOR: Record<HealthKey, string> = {
-  healthy: "#24A67A",
-  stressed: "#F0B429",
-  declining: "#E55C2F",
-  dead: "#8C8C8C",
-};
+const SEVERITY_COLOR = CONDITION_COLOR;
 
-const HEALTH_KEY: Record<string, HealthKey> = {
-  Healthy: "healthy",
-  Stressed: "stressed",
-  Declining: "declining",
-  Dead: "dead",
-};
+/** Display label back to its key — the inverse of CONDITION_LABEL, built from
+ * it so the two can't drift. */
+const HEALTH_KEY: Record<string, HealthKey> = Object.fromEntries(
+  CONDITIONS.map((c) => [c.label, c.key]),
+);
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -79,10 +74,10 @@ function CTAButton({
         setSent(true);
         window.setTimeout(() => setSent(false), 2600);
       }}
-      className={`u-press flex-1 flex items-center justify-center gap-[6px] px-[10px] py-[8px] rounded-[9px] text-[12px] font-medium font-['Inter',sans-serif] whitespace-nowrap cursor-pointer disabled:cursor-default ${
+      className={`u-press flex-1 flex items-center justify-center gap-[6px] px-[10px] py-[8px] rounded-[9px] text-[12px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer disabled:cursor-default ${
         variant === "primary"
           ? "bg-[#096151] text-white hover:bg-[#0a7761] disabled:bg-[#24A67A]"
-          : "border border-[#d9d9d9] text-[#141414] hover:bg-[#f2f2f2] disabled:bg-[#f0f9f5] disabled:border-[#bfe3d3] disabled:text-[#096151]"
+          : "border border-[#dedee3] text-[#18181c] hover:bg-[#ebece7] disabled:bg-[#f0f9f5] disabled:border-[#bfe3d3] disabled:text-[#096151]"
       }`}
     >
       {sent ? (
@@ -121,7 +116,7 @@ export function TreeMiniPopover({
   const color = SEVERITY_COLOR[HEALTH_KEY[tree.health]];
   return createPortal(
     <div
-      className="fixed z-[1100] -translate-x-1/2 -translate-y-full bg-white border border-[#d9d9d9] rounded-[10px] px-3 py-2 min-w-[160px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.12),0px_6px_20px_-4px_rgba(0,0,0,0.12)] font-['Inter',sans-serif] animate-fade-in"
+      className="fixed z-[1100] -translate-x-1/2 -translate-y-full bg-white rounded-[12px] px-3 py-2 min-w-[160px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.12),0px_6px_20px_-4px_rgba(0,0,0,0.12)] font-['Outfit',sans-serif] animate-fade-in"
       style={{ left: x, top: y - 14 }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -131,7 +126,7 @@ export function TreeMiniPopover({
           aria-label="Expand"
           title="Show full history"
           onClick={onExpand}
-          className="w-5 h-5 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636] transition-colors"
+          className="w-5 h-5 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] transition-colors"
         >
           <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
             <path
@@ -147,27 +142,27 @@ export function TreeMiniPopover({
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="w-5 h-5 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636] transition-colors"
+          className="w-5 h-5 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] transition-colors"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
         </button>
       </div>
-      <div className="text-[13px] font-bold text-[#141414] mb-1 pr-10">{tree.id}</div>
+      <div className="text-[13px] font-bold text-[#18181c] mb-1 pr-10">{tree.id}</div>
       <div className="flex items-center gap-[6px] mb-[6px]">
         <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
         <span className="text-[12px] font-medium" style={{ color }}>
           {tree.health}
         </span>
       </div>
-      <div className="text-[12px] text-[#363636]">
+      <div className="text-[12px] text-[#464650]">
         Canopy loss: <strong>{tree.canopyLossPct}%</strong>
       </div>
-      <div className="text-[11px] text-[#6b6b6b] mt-[2px]">Last surveyed {tree.lastSurveyed}</div>
+      <div className="text-[11px] text-[#5b5b66] mt-[2px]">Last surveyed {tree.lastSurveyed}</div>
       {/* Pointer tail, mirrors the full modal's own edge cases — points down
           at the pin this is anchored to. */}
-      <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px w-2 h-2 bg-white border-r border-b border-[#d9d9d9] rotate-45" />
+      <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px w-2 h-2 bg-white border-r border-b border-[#dedee3] rotate-45" />
     </div>,
     document.body,
   );
@@ -220,7 +215,7 @@ export default function TreeHistoryModal({
         aria-modal="false"
         aria-label={`Tree ${tree.id} history`}
         style={{ left, top, width: POPOVER_WIDTH, maxHeight: POPOVER_MAX_HEIGHT }}
-        className="tree-modal pointer-events-auto absolute bg-white rounded-[14px] border border-[#e5e5e5] shadow-[0px_12px_36px_-8px_rgba(0,0,0,0.25)] max-w-[92vw] flex flex-col overflow-hidden animate-fade-in"
+        className="tree-modal pointer-events-auto absolute bg-white rounded-[14px] border border-[#dedee3] shadow-[0px_12px_36px_-8px_rgba(0,0,0,0.25)] max-w-[92vw] flex flex-col overflow-hidden animate-fade-in"
         // The pin tooltip this can collapse into stops its own clicks from
         // bubbling for the same reason — a click on a header/footer button
         // here must not reach the map's "click anywhere outside closes the
@@ -230,13 +225,13 @@ export default function TreeHistoryModal({
         {/* Header: the tree id doubles as the "link to the pin" the modal was
             asked to carry — clicking it re-centres the map in case the user
             panned away while reading. */}
-        <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-[#f0f0f0] shrink-0">
+        <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-[#ebece7] shrink-0">
           <div className="min-w-0">
             <button
               type="button"
               onClick={onFlyToPin}
               disabled={!onFlyToPin}
-              className="u-press inline-flex items-center gap-[6px] text-[15px] font-bold text-[#096151] font-['Inter',sans-serif] hover:underline cursor-pointer disabled:no-underline disabled:cursor-default"
+              className="u-press inline-flex items-center gap-[6px] text-[15px] font-bold text-[#096151] font-['Outfit',sans-serif] hover:underline cursor-pointer disabled:no-underline disabled:cursor-default"
               title={onFlyToPin ? "Re-centre the map on this tree" : undefined}
             >
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0">
@@ -249,7 +244,7 @@ export default function TreeHistoryModal({
               </svg>
               {tree.id}
             </button>
-            <p className="text-[12px] text-[#6b6b6b] font-['Inter',sans-serif] mt-[2px] truncate">
+            <p className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif] mt-[2px] truncate">
               {tree.species} · {tree.diameter} · {tree.height} m
             </p>
           </div>
@@ -260,7 +255,7 @@ export default function TreeHistoryModal({
                 aria-label="Collapse to compact view"
                 title="Collapse to compact view"
                 onClick={onCollapse}
-                className="u-press w-7 h-7 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636] cursor-pointer"
+                className="u-press w-7 h-7 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] cursor-pointer"
               >
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
                   <path
@@ -277,7 +272,7 @@ export default function TreeHistoryModal({
               type="button"
               aria-label="Close"
               onClick={onClose}
-              className="u-press w-7 h-7 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636] cursor-pointer"
+              className="u-press w-7 h-7 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] cursor-pointer"
             >
               <svg width="12" height="12" viewBox="0 0 10 10" fill="none">
                 <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -290,13 +285,13 @@ export default function TreeHistoryModal({
           {/* Current status */}
           <div className="flex items-center gap-3">
             <span
-              className="inline-flex items-center gap-[6px] px-[10px] py-[4px] rounded-full text-[13px] font-medium font-['Inter',sans-serif]"
+              className="inline-flex items-center gap-[6px] px-[10px] py-[4px] rounded-full text-[13px] font-medium font-['Outfit',sans-serif]"
               style={{ background: `${color}14`, border: `1px solid ${color}33`, color }}
             >
               <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: color }} />
               {tree.health}
             </span>
-            <span className="text-[12px] text-[#6b6b6b] font-['Inter',sans-serif]">
+            <span className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif]">
               Canopy loss: {tree.canopyLossPct}%
             </span>
           </div>
@@ -304,18 +299,18 @@ export default function TreeHistoryModal({
           {/* The notification that opened this modal — absent when opened by
               expanding a plain pin click instead of a Recent Events row. */}
           {event && (
-            <div className="bg-[#fafafa] border border-[#f0f0f0] rounded-[10px] px-3 py-2.5">
+            <div className="bg-[#f6f6f8] border border-[#ebece7] rounded-[10px] px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[12px] font-bold text-[#141414] font-['Inter',sans-serif]">{event.title}</span>
-                <span className="text-[11px] text-[#9a9a9a] font-['Inter',sans-serif] shrink-0">{formatDate(event.date)}</span>
+                <span className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif]">{event.title}</span>
+                <span className="text-[11px] text-[#71717a] font-['Outfit',sans-serif] shrink-0">{formatDate(event.date)}</span>
               </div>
-              <p className="text-[12px] text-[#6b6b6b] font-['Inter',sans-serif] leading-[17px] mt-[3px]">{event.description}</p>
+              <p className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[17px] mt-[3px]">{event.description}</p>
             </div>
           )}
 
           {/* History */}
           <div>
-            <p className="text-[12px] font-bold text-[#141414] font-['Inter',sans-serif] mb-2">History of surveys</p>
+            <p className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-2">History of surveys</p>
             <div className="flex flex-col">
               {history.map((h, i) => (
                 <div key={i} className="relative flex gap-3 pb-3 last:pb-0">
@@ -323,14 +318,14 @@ export default function TreeHistoryModal({
                       last entry has no line below it since there's nothing after. */}
                   <div className="flex flex-col items-center shrink-0 w-[10px]">
                     <span className="w-[8px] h-[8px] rounded-full bg-[#096151] mt-[3px] shrink-0" />
-                    {i < history.length - 1 && <span className="w-px flex-1 bg-[#e5e5e5] mt-[2px]" />}
+                    {i < history.length - 1 && <span className="w-px flex-1 bg-[#dedee3] mt-[2px]" />}
                   </div>
                   <div className="min-w-0 pb-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-medium text-[#141414] font-['Inter',sans-serif]">{h.label}</span>
-                      <span className="text-[10px] text-[#9a9a9a] font-['Inter',sans-serif]">{formatDate(h.date)}</span>
+                      <span className="text-[11px] font-medium text-[#18181c] font-['Outfit',sans-serif]">{h.label}</span>
+                      <span className="text-[10px] text-[#71717a] font-['Outfit',sans-serif]">{formatDate(h.date)}</span>
                     </div>
-                    <p className="text-[11px] text-[#6b6b6b] font-['Inter',sans-serif] leading-[15px] mt-[1px]">{h.detail}</p>
+                    <p className="text-[11px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[15px] mt-[1px]">{h.detail}</p>
                   </div>
                 </div>
               ))}
@@ -340,7 +335,7 @@ export default function TreeHistoryModal({
 
         {/* Footer actions — the two next steps a flagged tree actually needs:
             loop in a person, or queue it for a second, more certain look. */}
-        <div className="flex items-center gap-[8px] px-4 py-3 border-t border-[#f0f0f0] shrink-0">
+        <div className="flex items-center gap-[8px] px-4 py-3 border-t border-[#ebece7] shrink-0">
           <CTAButton
             label="Contact ecologist"
             confirmedLabel="Request sent"

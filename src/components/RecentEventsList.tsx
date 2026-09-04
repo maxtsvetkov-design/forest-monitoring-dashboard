@@ -1,18 +1,13 @@
 import { useState } from "react";
-import { imgIcDownload01, imgIcInfoCircle, imgIcLink2 } from "../assets";
+import { imgIcInfoCircle } from "../assets";
 import { treePhotoTileFor } from "../data/treePhotoSprite";
 import type { TreeEvent } from "../data/events";
 import type { HealthKey } from "../data/types";
-import ChartActionBtn from "./ChartActionBtn";
+import { CONDITION_COLOR } from "../data/taxonomy";
 
-// Matches the health-donut / map-pin colour coding used elsewhere on the
+// Matches the condition-donut / map-pin colour coding used elsewhere on the
 // dashboard, so a reader who already learned that legend gets it for free here.
-const SEVERITY_COLOR: Record<HealthKey, string> = {
-  healthy: "#24A67A",
-  stressed: "#F0B429",
-  declining: "#E55C2F",
-  dead: "#8C8C8C",
-};
+const SEVERITY_COLOR = CONDITION_COLOR;
 
 /** Photo thumbnail for the tree in question, ringed in the event's severity
  * color. Sliced from the shared tree-photo sprite sheet (see
@@ -22,7 +17,7 @@ const SEVERITY_COLOR: Record<HealthKey, string> = {
 function TreePreview({ color, eventId }: { color: string; eventId: string }) {
   return (
     <div
-      className="w-10 h-10 rounded-[8px] overflow-hidden shrink-0 bg-[#f0eeec]"
+      className="w-10 h-10 rounded-[10px] overflow-hidden shrink-0 bg-[#dedee3]"
       style={{ boxShadow: `inset 0 0 0 2px ${color}`, ...treePhotoTileFor(eventId), backgroundSize: "auto" }}
     />
   );
@@ -39,12 +34,12 @@ function ImportantSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }
       onClick={onToggle}
       className="u-press flex items-center gap-[6px] shrink-0"
     >
-      <span className="text-[11px] font-medium text-[#6b6b6b] font-['Inter',sans-serif] whitespace-nowrap">
+      <span className="text-[11px] font-medium text-[#5b5b66] font-['Outfit',sans-serif] whitespace-nowrap">
         Important only
       </span>
       <span
         className={`relative w-[28px] h-[16px] rounded-full transition-colors duration-150 ${
-          on ? "bg-[#E5484D]" : "bg-[#d9d9d9]"
+          on ? "bg-[#E5484D]" : "bg-[#dedee3]"
         }`}
       >
         <span
@@ -56,12 +51,12 @@ function ImportantSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }
   );
 }
 
-/** Small red pill flagging a dead-tree event as needing attention now, not
- * just another log line — the same #E5484D used for "dead" everywhere else
- * on the dashboard (donuts, map pins), just louder here. */
+/** Small red pill flagging a fully-defoliated-tree event as needing attention
+ * now, not just another log line — the same #E5484D used for "Defoliated"
+ * everywhere else on the dashboard (donuts, map pins), just louder here. */
 function CriticalBadge() {
   return (
-    <span className="inline-flex items-center shrink-0 h-[18px] px-[6px] rounded-full text-[10px] font-bold font-['Inter',sans-serif] tracking-wide bg-[#E5484D] text-white">
+    <span className="inline-flex items-center shrink-0 h-[18px] px-[6px] rounded-full text-[10px] font-bold font-['Outfit',sans-serif] tracking-wide bg-[#E5484D] text-white">
       CRITICAL
     </span>
   );
@@ -87,10 +82,13 @@ export default function RecentEventsList({
   onSelectEvent: (event: TreeEvent) => void;
 }) {
   const [importantOnly, setImportantOnly] = useState(false);
-  // "Important" mirrors the CRITICAL badge below — dead trees, ground-truthed
-  // off the tree record rather than the event's own narrative severity, for
-  // the same reason the badge does (see the comment at the map site below).
-  const visibleEvents = importantOnly ? events.filter((e) => e.tree.health === "Dead") : events;
+  // "Important" mirrors the CRITICAL badge below — fully defoliated trees,
+  // ground-truthed off the tree record rather than the event's own narrative
+  // severity, for the same reason the badge does (see the comment at the map
+  // site below). Was stuck checking health === "Dead", a label from the old
+  // health scale that the taxonomy rewrite retired — every event silently
+  // failed this check forever, so "Important only" always showed nothing.
+  const visibleEvents = importantOnly ? events.filter((e) => e.tree.health === "Defoliated") : events;
 
   return (
     <div
@@ -101,31 +99,30 @@ export default function RecentEventsList({
       // against and the event list's full content height leaks into the
       // layout instead, stretching the whole row to match it. Anchoring to
       // 100vh sidesteps that and lets the list scroll internally instead.
-      className="max-h-[calc(100vh-160px)] min-h-0 min-w-0 bg-white border border-[rgba(0,0,0,0.06)] rounded-[12px] p-[12px] flex flex-col gap-[10px] animate-fade-in-up shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)] hover:shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] transition-shadow duration-200 group"
+      // No `surface-card--interactive` here: the lift is tuned for small
+      // cards you sweep across, and on a full-height sidebar it reads as the
+      // whole page shifting under the pointer.
+      className="max-h-[calc(100vh-160px)] min-h-0 min-w-0 surface-card p-[14px] flex flex-col gap-[10px] animate-fade-in-up group"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-[6px]">
-          <span className="text-[14px] font-bold text-[#141414] leading-[22px] font-['Inter',sans-serif]">
+          <span className="text-[14px] font-bold text-[#18181c] leading-[22px] font-['Outfit',sans-serif]">
             Recent events
           </span>
           <img src={imgIcInfoCircle} alt="info" className="w-4 h-4 opacity-50 group-hover:opacity-80 transition-opacity" />
         </div>
         <div className="flex items-center gap-[10px]">
           <ImportantSwitch on={importantOnly} onToggle={() => setImportantOnly((v) => !v)} />
-          <div className="flex gap-[2px]">
-            <ChartActionBtn src={imgIcLink2} alt="link" />
-            <ChartActionBtn src={imgIcDownload01} alt="download" />
-          </div>
         </div>
       </div>
 
       {visibleEvents.length === 0 ? (
-        <p className="text-[12px] text-[#9a9a9a] font-['Inter',sans-serif] py-6 text-center">
+        <p className="text-[12px] text-[#71717a] font-['Outfit',sans-serif] py-6 text-center">
           {importantOnly ? "No critical events in the selected range." : "No field events in the selected range."}
         </p>
       ) : (
-        <div className="scroll-slim flex flex-col divide-y divide-[#f0eeec] flex-1 min-h-0 overflow-y-auto">
+        <div className="scroll-slim flex flex-col divide-y divide-[#dedee3] flex-1 min-h-0 overflow-y-auto">
           {visibleEvents.map((event, i) => {
             // Ground-truthed against the actual tree record, not the event's
             // own narrative `severity` field: `event.severity` is picked to
@@ -137,7 +134,7 @@ export default function RecentEventsList({
             // what color — this exact tree gets a pin on the map, so keying
             // off it here is what actually keeps this badge truthful to what
             // clicking the row flies you to.
-            const critical = event.tree.health === "Dead";
+            const critical = event.tree.health === "Defoliated";
             return (
             <div
               key={event.id}
@@ -149,10 +146,10 @@ export default function RecentEventsList({
                 e.preventDefault();
                 onSelectEvent(event);
               }}
-              className={`u-press flex items-start gap-[10px] py-[10px] first:pt-0 last:pb-0 animate-fade-in cursor-pointer rounded-[6px] px-1 -mx-1 border-l-[3px] ${
+              className={`u-press flex items-start gap-[10px] py-[14px] first:pt-0 last:pb-0 animate-fade-in cursor-pointer rounded-[6px] px-1 -mx-1 border-l-[3px] ${
                 critical
                   ? "bg-[#fdf1f0] border-[#E5484D] hover:bg-[#fbe6e4]"
-                  : "border-transparent hover:bg-[#fafafa]"
+                  : "border-transparent hover:bg-[#f6f6f8]"
               }`}
               style={{ animationDelay: `${delay + Math.min(i, 10) * 40}ms` }}
             >
@@ -161,19 +158,19 @@ export default function RecentEventsList({
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-[6px] min-w-0">
                     <span
-                      className={`text-[12px] font-bold font-['Inter',sans-serif] truncate ${
-                        critical ? "text-[#B4231F]" : "text-[#141414]"
+                      className={`text-[12px] font-bold font-['Outfit',sans-serif] truncate ${
+                        critical ? "text-[#B4231F]" : "text-[#18181c]"
                       }`}
                     >
                       {event.title}
                     </span>
                     {critical && <CriticalBadge />}
                   </div>
-                  <span className="text-[11px] text-[#9a9a9a] font-['Inter',sans-serif] shrink-0 whitespace-nowrap">
+                  <span className="text-[11px] text-[#71717a] font-['Outfit',sans-serif] shrink-0 whitespace-nowrap">
                     {formatRelative(event.date)}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#6b6b6b] font-['Inter',sans-serif] leading-[16px] mt-[2px]">
+                <p className="text-[11px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[16px] mt-[2px]">
                   {event.description}
                 </p>
                 {critical && (
@@ -186,7 +183,7 @@ export default function RecentEventsList({
                       />
                       <circle cx="5" cy="3.6" r="1.2" fill="#B4231F" />
                     </svg>
-                    <span className="text-[10px] font-medium text-[#B4231F] font-['Inter',sans-serif]">
+                    <span className="text-[10px] font-medium text-[#B4231F] font-['Outfit',sans-serif]">
                       Flagged on map — {event.tree.id}
                     </span>
                   </div>

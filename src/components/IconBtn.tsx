@@ -9,10 +9,10 @@ export default function IconBtn({
 }) {
   return (
     <button
-      className={`u-press group flex items-center justify-center rounded-[8px] p-[8px] border ${
+      className={`u-press group flex items-center justify-center rounded-[10px] p-[8px] border ${
         active
-          ? "bg-[#141414] border-transparent"
-          : "border-[#d9d9d9] hover:bg-[#f2f2f2] hover:border-[#b9b9b9]"
+          ? "bg-[#18181c] border-transparent"
+          : "border-[#dedee3] hover:bg-[#ebece7] hover:border-[#b9b9b9]"
       }`}
     >
       <img src={src} alt={alt} className="u-icon w-4 h-4" />

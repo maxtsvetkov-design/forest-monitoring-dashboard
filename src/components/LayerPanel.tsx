@@ -2,6 +2,7 @@ import { useState, type ReactElement } from "react";
 import { firstFullTierIndex, LOCKED_AT_CURRENT_TIER, TIERS, type TierRow } from "../data/tiers";
 import type { PinSeverity } from "../data/treePins";
 import TierComparisonModal from "./TierComparisonModal";
+import { CONDITIONS, CONDITION_COLOR, CONDITION_LABEL } from "../data/taxonomy";
 
 /**
  * Left-docked layer control, adapted from the Figma "Data Layer Panel"
@@ -105,12 +106,9 @@ export const DEFAULT_LAYER_OPACITY: Record<ContentLayerId, number> = {
   dyingTrees: 1,
 };
 
-const SEVERITY_ORDER: PinSeverity[] = ["Dead", "Declining", "Stressed"];
-const SEVERITY_COLOR: Record<PinSeverity, string> = {
-  Dead: "#8C8C8C",
-  Declining: "#E55C2F",
-  Stressed: "#F0B429",
-};
+// The flagged bands only, worst first — read off the taxonomy rather than
+// restated, so this legend can never disagree with the pins it describes.
+const SEVERITY_ORDER: PinSeverity[] = CONDITIONS.filter((c) => c.flagged).map((c) => c.key);
 
 function IconButton({
   label,
@@ -127,7 +125,7 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="u-press flex items-center justify-center w-[28px] h-[28px] rounded-[8px] border border-[#d9d9d9] text-[#141414] hover:bg-[#f2f2f2] cursor-pointer shrink-0"
+      className="u-press flex items-center justify-center w-[28px] h-[28px] rounded-[10px] border border-[#dedee3] text-[#18181c] hover:bg-[#ebece7] cursor-pointer shrink-0"
     >
       {children}
     </button>
@@ -154,14 +152,14 @@ function LayerChip({
     <div className="border-b border-[rgba(0,0,0,0.06)] px-[8px] py-[8px] w-full last:border-b-0">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-[8px] min-w-0">
-          <div className="w-[24px] h-[24px] rounded-[6px] bg-[#f0eeec] flex items-center justify-center shrink-0 text-[#096151]">
+          <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#096151]">
             {meta.icon}
           </div>
           <div className="min-w-0">
-            <span className="text-[14px] font-bold text-[#141414] font-['Inter',sans-serif] leading-[22px] truncate block">
+            <span className="text-[14px] font-bold text-[#18181c] font-['Outfit',sans-serif] leading-[22px] truncate block">
               {meta.title}
             </span>
-            <span className="text-[10px] text-[#363636] font-['Inter',sans-serif] leading-[16px] block truncate">
+            <span className="text-[10px] text-[#464650] font-['Outfit',sans-serif] leading-[16px] block truncate">
               {subtitle}
             </span>
           </div>
@@ -171,7 +169,7 @@ function LayerChip({
           onClick={onHide}
           aria-label={`Hide ${meta.title}`}
           title={`Hide ${meta.title}`}
-          className="u-press flex items-center justify-center w-[24px] h-[24px] rounded-[8px] border border-[#d9d9d9] text-[#6b6b6b] hover:bg-[#f2f2f2] cursor-pointer shrink-0"
+          className="u-press flex items-center justify-center w-[24px] h-[24px] rounded-[10px] border border-[#dedee3] text-[#5b5b66] hover:bg-[#ebece7] cursor-pointer shrink-0"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" {...stroke}>
             <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
@@ -181,7 +179,7 @@ function LayerChip({
       {/* Opacity — every content layer gets one, pins included (a marker's
           own CSS opacity, not a raster paint property — see MapCanvas). */}
       <div className="flex items-center gap-[8px] mt-[8px] pl-[32px]">
-        <svg width="12" height="12" viewBox="0 0 16 16" className="shrink-0 text-[#9a9a9a]" {...stroke}>
+        <svg width="12" height="12" viewBox="0 0 16 16" className="shrink-0 text-[#71717a]" {...stroke}>
           <circle cx="8" cy="8" r="6" />
           <path d="M8 2a6 6 0 0 1 0 12" fill="currentColor" stroke="none" />
         </svg>
@@ -195,7 +193,7 @@ function LayerChip({
           aria-label={`${meta.title} opacity`}
           className="flex-1 h-[4px] accent-[#096151] cursor-pointer"
         />
-        <span className="w-[30px] shrink-0 text-right text-[10px] text-[#6b6b6b] font-['Inter',sans-serif] tabular-nums">
+        <span className="w-[30px] shrink-0 text-right text-[10px] text-[#5b5b66] font-['Outfit',sans-serif] tabular-nums">
           {Math.round(opacity * 100)}%
         </span>
       </div>
@@ -204,7 +202,7 @@ function LayerChip({
           {stats.map((s) => (
             <div key={s.label} className="flex items-center gap-[6px]">
               <span className="w-[8px] h-[8px] rounded-full shrink-0" style={{ background: s.color }} />
-              <span className="text-[11px] text-[#141414] font-['Inter',sans-serif] whitespace-nowrap">{s.label}</span>
+              <span className="text-[11px] text-[#18181c] font-['Outfit',sans-serif] whitespace-nowrap">{s.label}</span>
             </div>
           ))}
         </div>
@@ -224,19 +222,19 @@ function LockedLayerRow({ row, onClick }: { row: TierRow; onClick: () => void })
       onClick={onClick}
       className="u-press w-full flex items-center gap-[8px] px-[8px] py-[8px] border-b border-[rgba(0,0,0,0.06)] last:border-b-0 text-left hover:bg-[#f7f7f6] cursor-pointer"
     >
-      <div className="w-[24px] h-[24px] rounded-[6px] bg-[#f0eeec] flex items-center justify-center shrink-0 text-[#9a9a9a]">
+      <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#71717a]">
         <svg width="14" height="14" viewBox="0 0 14 14" {...stroke}>
           <rect x="2.5" y="6" width="9" height="6" rx="1.2" />
           <path d="M4.5 6V4a2.5 2.5 0 0 1 5 0v2" />
         </svg>
       </div>
       <div className="min-w-0 flex-1">
-        <span className="text-[13px] font-medium text-[#6b6b6b] font-['Inter',sans-serif] leading-[20px] truncate block">
+        <span className="text-[13px] font-medium text-[#5b5b66] font-['Outfit',sans-serif] leading-[20px] truncate block">
           {row.label}
         </span>
       </div>
       {unlockTier >= 0 && (
-        <span className="shrink-0 px-[7px] py-[1px] rounded-full border border-[#d9d9d9] text-[#6b6b6b] text-[10px] font-medium font-['Inter',sans-serif] whitespace-nowrap">
+        <span className="shrink-0 px-[7px] py-[1px] rounded-full border border-[#dedee3] text-[#5b5b66] text-[10px] font-medium font-['Outfit',sans-serif] whitespace-nowrap">
           {TIERS[unlockTier].label}+
         </span>
       )}
@@ -306,17 +304,17 @@ export default function LayerPanel({
 
   return (
     <>
-    <div className="absolute top-4 left-4 z-10 w-[276px] max-h-[calc(100%-32px)] bg-[#fafaf9] border border-[rgba(0,0,0,0.06)] rounded-[16px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] flex flex-col">
+    <div className="absolute top-4 left-4 z-10 w-[276px] max-h-[calc(100%-32px)] bg-[#ebece7] border border-[rgba(0,0,0,0.06)] rounded-[16px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-[8px] px-[12px] py-[10px] border-b border-[#dbd9d8] shrink-0">
+      <div className="flex items-center gap-[8px] px-[12px] py-[10px] border-b border-[#dedee3] shrink-0">
         <IconButton label="Collapse layers panel" onClick={() => setCollapsed(true)}>
           <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
             <path d="M10 3 6 8l4 5" />
           </svg>
         </IconButton>
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] text-[#363636] font-['Inter',sans-serif] leading-[18px] truncate">{projectName}</p>
-          <p className="text-[14px] text-[#141414] font-medium font-['Inter',sans-serif] leading-[22px] truncate">
+          <p className="text-[12px] text-[#464650] font-['Outfit',sans-serif] leading-[18px] truncate">{projectName}</p>
+          <p className="text-[14px] text-[#18181c] font-medium font-['Outfit',sans-serif] leading-[22px] truncate">
             {areaName}
           </p>
         </div>
@@ -328,13 +326,13 @@ export default function LayerPanel({
       </div>
 
       {/* Controls */}
-      <div className="flex gap-[8px] px-[12px] py-[8px] border-b border-[#dbd9d8] shrink-0 relative">
+      <div className="flex gap-[8px] px-[12px] py-[8px] border-b border-[#dedee3] shrink-0 relative">
         <div className="flex-1 relative">
           <button
             type="button"
             onClick={() => setAddMenuOpen((o) => !o)}
             aria-expanded={addMenuOpen}
-            className="u-press w-full flex items-center justify-center gap-[6px] bg-[#141414] text-[#f7f7f7] rounded-[8px] px-[12px] py-[8px] text-[14px] font-medium font-['Inter',sans-serif] whitespace-nowrap cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="u-press w-full flex items-center justify-center gap-[6px] bg-[#18181c] text-[#f6f6f8] rounded-[10px] px-[12px] py-[8px] text-[14px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             disabled={hiddenLayers.length === 0}
             title={hiddenLayers.length === 0 ? "All layers are already shown" : "Add a hidden layer back"}
           >
@@ -345,7 +343,7 @@ export default function LayerPanel({
             Add Layers
           </button>
           {addMenuOpen && hiddenLayers.length > 0 && (
-            <div className="absolute top-[calc(100%+4px)] left-0 w-full bg-white border border-[#d9d9d9] rounded-[8px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] z-20 py-[4px]">
+            <div className="absolute top-[calc(100%+4px)] left-0 w-full bg-white rounded-[16px] shadow-[var(--elev-3)] z-20 py-[4px]">
               {hiddenLayers.map((id) => (
                 <button
                   key={id}
@@ -354,7 +352,7 @@ export default function LayerPanel({
                     onShowLayer(id);
                     setAddMenuOpen(false);
                   }}
-                  className="u-press w-full flex items-center gap-[8px] px-[10px] py-[6px] text-left text-[12px] text-[#141414] font-['Inter',sans-serif] hover:bg-[#f2f2f2] cursor-pointer"
+                  className="u-press w-full flex items-center gap-[8px] px-[10px] py-[6px] text-left text-[12px] text-[#18181c] font-['Outfit',sans-serif] hover:bg-[#ebece7] cursor-pointer"
                 >
                   <span className="w-[16px] h-[16px] shrink-0 text-[#096151]">{LAYER_META[id].icon}</span>
                   {LAYER_META[id].title}
@@ -366,7 +364,7 @@ export default function LayerPanel({
         <button
           type="button"
           onClick={onReset}
-          className="u-press flex-1 flex items-center justify-center border border-[#d9d9d9] rounded-[8px] px-[12px] py-[8px] text-[14px] font-medium text-[#141414] font-['Inter',sans-serif] whitespace-nowrap cursor-pointer hover:bg-[#f2f2f2]"
+          className="u-press flex-1 flex items-center justify-center border border-[#dedee3] rounded-[10px] px-[12px] py-[8px] text-[14px] font-medium text-[#18181c] font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer hover:bg-[#ebece7]"
         >
           Reset
         </button>
@@ -374,7 +372,7 @@ export default function LayerPanel({
 
       {/* Layer list */}
       <div className="scroll-slim flex-1 min-h-0 overflow-y-auto p-[8px]">
-        <div className="bg-white rounded-[12px] border border-[rgba(0,0,0,0.06)] shadow-[0px_2px_8px_0px_rgba(0,0,0,0.07)] overflow-hidden flex flex-col">
+        <div className="surface-card  overflow-hidden flex flex-col">
           {visibility.aerial && (
             <LayerChip
               id="aerial"
@@ -396,10 +394,17 @@ export default function LayerPanel({
           {visibility.pins && (
             <LayerChip
               id="pins"
-              subtitle={pinCounts ? `${pinCounts.Dead + pinCounts.Declining + pinCounts.Stressed} flagged` : "No pins in range"}
+              subtitle={
+                pinCounts
+                  ? `${SEVERITY_ORDER.reduce((sum, s) => sum + pinCounts[s], 0)} flagged`
+                  : "No pins in range"
+              }
               stats={
                 pinCounts
-                  ? SEVERITY_ORDER.map((s) => ({ label: `${pinCounts[s]} ${s}`, color: SEVERITY_COLOR[s] }))
+                  ? SEVERITY_ORDER.map((s) => ({
+                      label: `${pinCounts[s]} ${CONDITION_LABEL[s]}`,
+                      color: CONDITION_COLOR[s],
+                    }))
                   : undefined
               }
               opacity={opacity.pins}
@@ -431,25 +436,25 @@ export default function LayerPanel({
               separate control elsewhere. */}
           <div className="px-[8px] py-[8px] w-full">
             <div className="flex items-center gap-[8px]">
-              <div className="w-[24px] h-[24px] rounded-[6px] bg-[#f0eeec] flex items-center justify-center shrink-0 text-[#096151]">
+              <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#096151]">
                 <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
                   <circle cx="8" cy="8" r="6.5" />
                   <path d="M1.5 8h13M8 1.5c1.8 1.8 2.8 4.1 2.8 6.5S9.8 12.7 8 14.5C6.2 12.7 5.2 10.4 5.2 8S6.2 3.3 8 1.5Z" />
                 </svg>
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-[14px] font-bold text-[#141414] font-['Inter',sans-serif] leading-[22px] block">
+                <span className="text-[14px] font-bold text-[#18181c] font-['Outfit',sans-serif] leading-[22px] block">
                   Basemap
                 </span>
                 <div className="flex items-center gap-[4px]">
-                  <span className="text-[10px] text-[#363636] font-['Inter',sans-serif] leading-[16px] truncate">
+                  <span className="text-[10px] text-[#464650] font-['Outfit',sans-serif] leading-[16px] truncate">
                     {basemapLabel}
                   </span>
                   <button
                     type="button"
                     onClick={onBasemapPrev}
                     aria-label="Previous basemap"
-                    className="u-press flex items-center justify-center w-[16px] h-[16px] text-[#6b6b6b] hover:text-[#141414] cursor-pointer shrink-0"
+                    className="u-press flex items-center justify-center w-[16px] h-[16px] text-[#5b5b66] hover:text-[#18181c] cursor-pointer shrink-0"
                   >
                     <svg width="10" height="10" viewBox="0 0 10 10" {...stroke}>
                       <path d="M6.5 1.5 3 5l3.5 3.5" />
@@ -459,7 +464,7 @@ export default function LayerPanel({
                     type="button"
                     onClick={onBasemapNext}
                     aria-label="Next basemap"
-                    className="u-press flex items-center justify-center w-[16px] h-[16px] text-[#6b6b6b] hover:text-[#141414] cursor-pointer shrink-0"
+                    className="u-press flex items-center justify-center w-[16px] h-[16px] text-[#5b5b66] hover:text-[#18181c] cursor-pointer shrink-0"
                   >
                     <svg width="10" height="10" viewBox="0 0 10 10" {...stroke}>
                       <path d="M3.5 1.5 7 5l-3.5 3.5" />
@@ -474,18 +479,18 @@ export default function LayerPanel({
         {LOCKED_AT_CURRENT_TIER.length > 0 && (
           <div className="mt-[8px]">
             <div className="flex items-center justify-between gap-2 px-[4px] pb-[4px]">
-              <p className="text-[10px] tracking-wide text-[#9a9a9a] font-medium font-['Inter',sans-serif] uppercase">
+              <p className="text-[10px] tracking-wide text-[#71717a] font-medium font-['Outfit',sans-serif] uppercase">
                 Unavailable at your tier
               </p>
               <button
                 type="button"
                 onClick={() => setTierModalRowId(LOCKED_AT_CURRENT_TIER[0].id)}
-                className="u-press shrink-0 text-[10px] font-bold text-[#096151] font-['Inter',sans-serif] hover:underline cursor-pointer"
+                className="u-press shrink-0 text-[10px] font-bold text-[#096151] font-['Outfit',sans-serif] hover:underline cursor-pointer"
               >
                 Upgrade
               </button>
             </div>
-            <div className="bg-white rounded-[12px] border border-[rgba(0,0,0,0.06)] shadow-[0px_2px_8px_0px_rgba(0,0,0,0.07)] overflow-hidden flex flex-col">
+            <div className="surface-card  overflow-hidden flex flex-col">
               {LOCKED_AT_CURRENT_TIER.map((row) => (
                 <LockedLayerRow key={row.id} row={row} onClick={() => setTierModalRowId(row.id)} />
               ))}

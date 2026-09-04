@@ -44,7 +44,7 @@ export default function AnimatedStackedBar({
   return (
     <div className="flex flex-col gap-[8px]">
       <div
-        className="relative flex w-full rounded-full bg-[#f0eeec] overflow-hidden"
+        className="relative flex w-full rounded-full bg-[#dedee3] overflow-hidden"
         style={{ height }}
       >
         {data.map((d, i) => {
@@ -81,13 +81,13 @@ export default function AnimatedStackedBar({
 
               {isHovered && (
                 <div className="absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 z-10 pointer-events-none animate-fade-in">
-                  <div className="bg-[#141414] text-white rounded-[6px] px-[8px] py-[4px] whitespace-nowrap shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.3)]">
-                    <span className="text-[11px] font-bold font-['Inter',sans-serif]">{d.name}</span>
-                    <span className="text-[11px] font-['Inter',sans-serif] text-white/70 ml-[6px]">
+                  <div className="bg-[#18181c] text-white rounded-[6px] px-[8px] py-[4px] whitespace-nowrap shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.3)]">
+                    <span className="text-[11px] font-bold font-['Outfit',sans-serif]">{d.name}</span>
+                    <span className="text-[11px] font-['Outfit',sans-serif] text-white/70 ml-[6px]">
                       {d.value.toLocaleString()} · {pct.toFixed(0)}%
                     </span>
                   </div>
-                  <div className="w-[6px] h-[6px] bg-[#141414] rotate-45 mx-auto -mt-[3px]" />
+                  <div className="w-[6px] h-[6px] bg-[#18181c] rotate-45 mx-auto -mt-[3px]" />
                 </div>
               )}
             </div>
@@ -150,8 +150,8 @@ function LegendRow({
         style={{ background: datum.color, transform: hovered ? "scale(1.6)" : "scale(1)" }}
       />
       <span
-        className={`text-[10px] font-['Inter',sans-serif] transition-colors duration-200 ${
-          hovered ? "text-[#141414] font-bold" : "text-[#6b6b6b]"
+        className={`text-[10px] font-['Outfit',sans-serif] transition-colors duration-200 ${
+          hovered ? "text-[#18181c] font-bold" : "text-[#5b5b66]"
         }`}
       >
         {datum.name} · {Math.round(animatedValue).toLocaleString()} ({((datum.value / total) * 100).toFixed(0)}%)

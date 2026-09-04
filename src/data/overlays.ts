@@ -2,6 +2,7 @@
 // corner coordinates so the image stays locked to the ground as the user pans,
 // zooms, rotates or tilts the map (MapLibre `image` source + `raster` layer).
 
+import { areas } from "./areas";
 import { publicUrl } from "../lib/publicUrl";
 
 export interface MapOverlay {
@@ -72,15 +73,48 @@ export function pointInQuad(
 // Source image is 2752 × 1536 px.
 const AERIAL_ASPECT = 2752 / 1536;
 
-// Keyed by Area id (see areas.ts). Areas with no entry simply render no overlay.
-export const areaOverlays: Record<string, MapOverlay> = {
-  "al-maha": {
-    url: publicUrl("/overlays/al-maha-aerial.png"),
-    // ~1.5 km wide plot centred on the Al Maha area centre.
-    coordinates: boxAround([55.688, 24.766], 1500, AERIAL_ASPECT),
-    opacity: 1,
-  },
+/**
+ * Keyed by Area id (see areas.ts). Every area in `areas` needs an entry:
+ * callers dereference this map directly (App.tsx's generateEvents,
+ * Areas/Maps views' baseOverlay), so a missing one is a crash, not an area
+ * that quietly renders without imagery — which is exactly what selecting
+ * anything but Al Maha in the area switcher used to do.
+ *
+ * Only Al Maha has its own drone capture. The other pilot plots reuse that
+ * same image, re-georeferenced to their own centre and scaled to their own
+ * footprint: honest for a demo (the imagery is openly the same, and every
+ * plot's *data* is its own — see areas.ts's per-area snapshot seeds) and it
+ * keeps the map, pins, table and events consistent for all four.
+ */
+const PLOT_WIDTH_M: Record<string, number> = {
+  "al-maha": 1500,
+  hatta: 1200,
+  "sir-bani-yas": 1800,
+  "wadi-wurayah": 900,
 };
+
+export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
+  areas.map((area) => [
+    area.id,
+    {
+      url: publicUrl("/overlays/al-maha-aerial.png"),
+      coordinates: boxAround(area.center, PLOT_WIDTH_M[area.id] ?? 1200, AERIAL_ASPECT),
+      opacity: 1,
+    } satisfies MapOverlay,
+  ]),
+);
+
+/**
+ * An area's size in hectares, measured off the very box its overlay is
+ * draped over rather than stored as a second, independently-maintained
+ * number — so what the project overview lists always matches the footprint
+ * actually drawn on the map.
+ */
+export function areaHectares(areaId: string): number {
+  const widthM = PLOT_WIDTH_M[areaId] ?? 1200;
+  const heightM = widthM / AERIAL_ASPECT;
+  return Math.round((widthM * heightM) / 10_000);
+}
 
 /**
  * Alternate drone frames of the same plot — same pixel dimensions as the base
@@ -178,15 +212,57 @@ export const areaGenerativeOverlays: Record<string, MapOverlay> = {
 /**
  * A second generative-art pass over the same footprint, tracing only the
  * trees flagged as dying/declining — same rasterization story as the mask
- * above (`al-maha-generative_red.svg` → PNG at the same 2754×1537, transparent
- * background, MapLibre `image` sources can't decode SVG bytes directly), kept
- * as its own layer/toggle rather than merged into the green trace so it can
- * be shown or hidden independently in the layer panel.
+ * above (transparent-background PNGs, since MapLibre `image` sources can't
+ * decode SVG bytes directly), kept as its own layer/toggle rather than merged
+ * into the green trace so it can be shown or hidden independently in the
+ * layer panel.
+ *
+ * `areaDyingTreeOverlays` is the mildest frame — the right default for a
+ * caller with no timeline of its own (the project-overview screen) or as the
+ * starting point before `dyingTreeOverlayForRange` picks a sharper one.
  */
 export const areaDyingTreeOverlays: Record<string, MapOverlay> = {
   "al-maha": {
-    url: publicUrl("/overlays/al-maha-generative_red.png"),
+    url: publicUrl("/overlays/al-maha-generative_red1.png"),
     coordinates: areaOverlays["al-maha"].coordinates,
     opacity: 1,
   },
 };
+
+/**
+ * Three successive frames of the same trace, each showing more of the plot
+ * dying than the last — al-maha-generative_red1/2/7.png, ordered mild to
+ * severe by their own filenames. Matches the tree population's own
+ * DECLINE_MONTHS=3 (see treePopulation.ts): the dataset's dieback plays out
+ * over exactly the final three months of the window, so this sequence is
+ * meant to land one frame per one of those months, not spread evenly across
+ * the whole timeline the way `areaTimelapseImages` is.
+ */
+const areaDyingTreeSequence: Record<string, string[]> = {
+  "al-maha": [
+    "/overlays/al-maha-generative_red1.png",
+    "/overlays/al-maha-generative_red2.png",
+    "/overlays/al-maha-generative_red7.png",
+  ].map(publicUrl),
+};
+
+/**
+ * Picks the dieback frame for the selected range's END month — the same "as
+ * of this date" rule MapCanvas's flagged pins and the Areas table both use.
+ * Months before the sequence's own window (`totalMonths - sequence.length`)
+ * get the mildest frame, since nothing has visibly failed yet; the sequence's
+ * own last frame covers the final month and everything past it (there is
+ * nothing worse to show).
+ */
+export function dyingTreeOverlayForRange(
+  base: MapOverlay,
+  areaId: string,
+  range: { endIndex: number },
+  totalMonths: number,
+): MapOverlay {
+  const sequence = areaDyingTreeSequence[areaId];
+  if (!sequence || sequence.length === 0) return base;
+  const monthsIntoWindow = range.endIndex - (totalMonths - sequence.length);
+  const index = Math.max(0, Math.min(sequence.length - 1, monthsIntoWindow));
+  return { ...base, url: sequence[index] };
+}

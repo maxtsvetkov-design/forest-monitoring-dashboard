@@ -5,7 +5,7 @@ import { MAP_COLOR_MODES } from "./mapColorModes";
 /**
  * Floating map navigation bar. Replaces MapLibre's default NavigationControl so
  * the map's controls use the same visual language as the rest of the dashboard
- * (white card, #d9d9d9 border, Inter, the shared elevation tokens).
+ * (white card, #dedee3 border, Inter, the shared elevation tokens).
  */
 
 function ToolButton({
@@ -25,8 +25,8 @@ function ToolButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex items-center justify-center w-[32px] h-[32px] rounded-[8px] transition-all duration-150 ${
-        active ? "bg-[#096151] text-[#f2f2f2]" : "text-[#141414] hover:bg-[#f0f0f0]"
+      className={`flex items-center justify-center w-[32px] h-[32px] rounded-[10px] transition-all duration-150 ${
+        active ? "bg-[#096151] text-[#ebece7]" : "text-[#18181c] hover:bg-[#ebece7]"
       }`}
     >
       {children}
@@ -35,7 +35,7 @@ function ToolButton({
 }
 
 function Divider() {
-  return <div className="h-px w-[20px] bg-[#e5e5e5] my-[2px] shrink-0" />;
+  return <div className="h-px w-[20px] bg-[#dedee3] my-[2px] shrink-0" />;
 }
 
 const stroke = {
@@ -75,7 +75,7 @@ export default function MapToolbar({
 }: MapToolbarProps) {
   const [colorPanelOpen, setColorPanelOpen] = useState(false);
   return (
-    <div className="absolute top-1/2 right-4 -translate-y-1/2 z-10 flex flex-col items-center gap-[2px] bg-white border border-[#d9d9d9] rounded-[10px] p-[4px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)]">
+    <div className="absolute top-1/2 right-4 -translate-y-1/2 z-10 flex flex-col items-center gap-[2px] bg-white rounded-[14px] p-[4px] shadow-[var(--elev-3)]">
       <ToolButton label="Zoom in" onClick={onZoomIn}>
         <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
           <path d="M8 3.5v9M3.5 8h9" />
@@ -117,7 +117,7 @@ export default function MapToolbar({
         <>
           <Divider />
           <ToolButton label={is3D ? "Switch to 2D" : "Switch to 3D"} onClick={onToggle3D} active={is3D}>
-            <span className="text-[12px] font-bold font-['Inter',sans-serif] leading-none">
+            <span className="text-[12px] font-bold font-['Outfit',sans-serif] leading-none">
               {is3D ? "2D" : "3D"}
             </span>
           </ToolButton>
@@ -143,14 +143,14 @@ export default function MapToolbar({
             </ToolButton>
 
             {colorPanelOpen && (
-              <div className="absolute top-0 right-[40px] z-20 w-[208px] bg-white border border-[#d9d9d9] rounded-[10px] p-[10px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)]">
+              <div className="absolute top-0 right-[40px] z-20 w-[208px] bg-white rounded-[14px] p-[10px] shadow-[var(--elev-3)]">
                 <div className="flex items-center justify-between mb-[8px]">
-                  <span className="text-[12px] font-bold text-[#141414] font-['Inter',sans-serif]">Map colour</span>
+                  <span className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif]">Map colour</span>
                   <button
                     type="button"
                     aria-label="Close"
                     onClick={() => setColorPanelOpen(false)}
-                    className="u-press w-5 h-5 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636]"
+                    className="u-press w-5 h-5 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650]"
                   >
                     <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
                       <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -167,12 +167,12 @@ export default function MapToolbar({
                       title={mode.label}
                       aria-label={mode.label}
                       aria-pressed={colorMode === mode.id}
-                      className={`u-press flex flex-col items-center gap-[3px] rounded-[8px] p-[4px] transition-colors ${
-                        colorMode === mode.id ? "bg-[#eaf3ef] ring-1 ring-[#096151]" : "hover:bg-[#f5f5f5]"
+                      className={`u-press flex flex-col items-center gap-[3px] rounded-[10px] p-[4px] transition-colors ${
+                        colorMode === mode.id ? "bg-[#eaf3ef] ring-1 ring-[#096151]" : "hover:bg-[#f6f6f8]"
                       }`}
                     >
                       <span className="w-6 h-6 rounded-full border border-[rgba(0,0,0,0.1)]" style={{ background: mode.swatch }} />
-                      <span className="text-[9px] font-medium text-[#363636] font-['Inter',sans-serif] leading-tight text-center">
+                      <span className="text-[9px] font-medium text-[#464650] font-['Outfit',sans-serif] leading-tight text-center">
                         {mode.label}
                       </span>
                     </button>
@@ -182,8 +182,8 @@ export default function MapToolbar({
                 {onContrastChange && (
                   <div>
                     <div className="flex items-baseline justify-between mb-[4px]">
-                      <span className="text-[11px] font-medium text-[#6b6b6b] font-['Inter',sans-serif]">Contrast</span>
-                      <span className="text-[11px] font-medium text-[#096151] font-['Inter',sans-serif] tabular-nums">
+                      <span className="text-[11px] font-medium text-[#5b5b66] font-['Outfit',sans-serif]">Contrast</span>
+                      <span className="text-[11px] font-medium text-[#096151] font-['Outfit',sans-serif] tabular-nums">
                         {Math.round(contrast * 100)}%
                       </span>
                     </div>

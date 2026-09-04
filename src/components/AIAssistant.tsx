@@ -67,6 +67,35 @@ function pickReply(question: string): string {
   return hit ? hit.reply : FALLBACK_REPLY;
 }
 
+/** Alma's avatar — a small gradient orb (green→blue, echoing the app's
+ * forest-health brand colours) standing in for the reference design's
+ * blurred photo avatar, since there's no real bot photo to use here. */
+function AssistantAvatar() {
+  return (
+    <span
+      className="shrink-0 w-8 h-8 rounded-full"
+      style={{ backgroundImage: "linear-gradient(135deg, #6ac88e 0%, #2f7fb0 100%)" }}
+      aria-hidden="true"
+    />
+  );
+}
+
+/** Plain person-glyph avatar for the user's own messages, matching the
+ * reference design's generic account icon. */
+function UserAvatar() {
+  return (
+    <span
+      className="shrink-0 w-8 h-8 rounded-full bg-[#e7e7eb] flex items-center justify-center"
+      aria-hidden="true"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="5.5" r="2.75" fill="#71717a" />
+        <path d="M2.5 14c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5" stroke="#71717a" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}
+
 function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
@@ -207,7 +236,7 @@ export default function AIAssistant() {
 
       {open && (
         <div
-          className={`fixed z-30 bg-[#f4f2f0] border border-[rgba(240,154,255,0.22)] rounded-[12px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] flex flex-col overflow-hidden animate-fade-in-up ${
+          className={`fixed z-30 bg-[#f6f6f8] border border-[rgba(240,154,255,0.22)] rounded-[12px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] flex flex-col overflow-hidden animate-fade-in-up ${
             interaction ? "select-none" : ""
           }`}
           style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
@@ -216,7 +245,7 @@ export default function AIAssistant() {
               centred between a drag handle (the bar itself) and the two
               window actions. */}
           <div
-            className="relative shrink-0 flex items-center justify-center h-[52px] px-3 bg-[#141414] cursor-move overflow-hidden"
+            className="relative shrink-0 flex items-center justify-center h-[52px] px-3 bg-[#18181c] cursor-move overflow-hidden"
             style={{
               touchAction: "none",
               backgroundImage:
@@ -224,7 +253,7 @@ export default function AIAssistant() {
             }}
             onPointerDown={beginDrag}
           >
-            <span className="text-[15px] font-medium text-white font-['Inter',sans-serif]">Alma</span>
+            <span className="text-[15px] font-medium text-white font-['Outfit',sans-serif]">Alma</span>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -239,11 +268,14 @@ export default function AIAssistant() {
 
           <div ref={listRef} className="scroll-slim flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-[10px] min-h-[160px]">
             {/* Fixed intro bubble — Alma's opening line, always shown first. */}
-            <div className="bg-white rounded-tl-[16px] rounded-tr-[16px] rounded-br-[16px] rounded-bl-[4px] px-4 py-3 max-w-[85%] shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)]">
-              <p className="text-[14px] text-[#141414] font-['Inter',sans-serif] leading-[22px]">
-                Tell me, what would you like to see in this project? Maybe it's canopy health, flagged trees, or
-                where recovery is strongest.
-              </p>
+            <div className="flex items-start gap-2">
+              <AssistantAvatar />
+              <div className="bg-white rounded-tl-[20px] rounded-tr-[20px] rounded-br-[20px] rounded-bl-[6px] px-4 py-3 max-w-[80%] shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)]">
+                <p className="text-[14px] text-[#2b2b2b] font-['Outfit',sans-serif] leading-[22px]">
+                  Tell me, what would you like to see in this project? Maybe it's canopy health, flagged trees, or
+                  where recovery is strongest.
+                </p>
+              </div>
             </div>
 
             {messages.length === 0 && (
@@ -253,7 +285,7 @@ export default function AIAssistant() {
                     key={chip}
                     type="button"
                     onClick={() => sendMessage(chip)}
-                    className="u-press bg-[#85e3b9] hover:bg-[#6fd9a8] text-[#096151] text-[13px] font-['Inter',sans-serif] px-3 py-1.5 rounded-full cursor-pointer whitespace-nowrap"
+                    className="u-press bg-[#85e3b9] hover:bg-[#6fd9a8] text-[#096151] text-[13px] font-['Outfit',sans-serif] px-3 py-1.5 rounded-full cursor-pointer whitespace-nowrap"
                   >
                     {chip}
                   </button>
@@ -266,25 +298,29 @@ export default function AIAssistant() {
                 {newMessageAt === i && (
                   <div className="flex items-center gap-2 px-2">
                     <div className="flex-1 h-px bg-[#e5484d33]" />
-                    <span className="text-[10px] text-[#d83020] font-['Inter',sans-serif] whitespace-nowrap">
+                    <span className="text-[10px] text-[#d83020] font-['Outfit',sans-serif] whitespace-nowrap">
                       New Message
                     </span>
                     <div className="flex-1 h-px bg-[#e5484d33]" />
                   </div>
                 )}
-                <div className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
-                  <div
-                    className={`text-[14px] font-['Inter',sans-serif] leading-[22px] px-4 py-2.5 max-w-[85%] whitespace-pre-wrap ${
-                      m.role === "user"
-                        ? "bg-[#f4f2f0] border border-black/[0.06] text-[#141414] rounded-tl-[16px] rounded-tr-[16px] rounded-bl-[16px] rounded-br-[4px]"
-                        : "bg-white text-[#141414] rounded-tl-[16px] rounded-tr-[16px] rounded-br-[16px] rounded-bl-[4px] shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)]"
-                    }`}
-                  >
-                    {m.content}
+                <div className={`flex items-start gap-2 ${m.role === "user" ? "justify-end" : ""}`}>
+                  {m.role === "assistant" && <AssistantAvatar />}
+                  <div className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+                    <div
+                      className={`text-[14px] font-['Outfit',sans-serif] leading-[22px] px-4 py-2.5 max-w-[85%] whitespace-pre-wrap ${
+                        m.role === "user"
+                          ? "bg-[#e7e7eb] text-[#2b2b2b] rounded-tl-[20px] rounded-tr-[20px] rounded-bl-[20px] rounded-br-[6px]"
+                          : "bg-white text-[#2b2b2b] rounded-tl-[20px] rounded-tr-[20px] rounded-br-[20px] rounded-bl-[6px] shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)]"
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+                    <span className="text-[10px] text-[#5b5b66] font-['Outfit',sans-serif] mt-1 px-1">
+                      {m.timestamp}
+                    </span>
                   </div>
-                  <span className="text-[10px] text-[#6b6b6b] font-['Inter',sans-serif] mt-1 px-1">
-                    {m.timestamp}
-                  </span>
+                  {m.role === "user" && <UserAvatar />}
                 </div>
               </div>
             ))}
@@ -296,7 +332,7 @@ export default function AIAssistant() {
                   <span className="relative w-3 h-3 rounded-full bg-[#096151]" />
                 </span>
                 <span
-                  className="text-[13px] font-['Inter',sans-serif] bg-clip-text text-transparent"
+                  className="text-[13px] font-['Outfit',sans-serif] bg-clip-text text-transparent"
                   style={{
                     backgroundImage: "linear-gradient(101deg, #6ac88e 1%, #3aba9e 80%)",
                   }}
@@ -308,12 +344,12 @@ export default function AIAssistant() {
           </div>
 
           {/* Input footer — "+" (decorative), text field, dark send button. */}
-          <div className="shrink-0 border-t border-[#d9d9d9] bg-[#fafaf9] flex items-center gap-[6px] px-2 py-2">
+          <div className="shrink-0 border-t border-[#dedee3] bg-[#ebece7] flex items-center gap-[6px] px-2 py-2">
             <button
               type="button"
               aria-label="Add attachment"
               title="Add attachment (not wired up in this demo)"
-              className="u-press w-7 h-7 flex items-center justify-center rounded-[8px] text-[#6b6b6b] hover:bg-[#f0f0f0] cursor-pointer shrink-0"
+              className="u-press w-7 h-7 flex items-center justify-center rounded-[10px] text-[#5b5b66] hover:bg-[#ebece7] cursor-pointer shrink-0"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path d="M8 2.5v11M2.5 8h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -324,14 +360,14 @@ export default function AIAssistant() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage(input)}
               placeholder="Give Alma a task to work…"
-              className="flex-1 text-[14px] font-['Inter',sans-serif] bg-white border border-black/[0.09] rounded-[8px] h-8 px-3 outline-none focus:border-[#096151]"
+              className="flex-1 text-[14px] font-['Outfit',sans-serif] bg-white border border-black/[0.09] rounded-[10px] h-8 px-3 outline-none focus:border-[#096151]"
             />
             <button
               type="button"
               onClick={() => sendMessage(input)}
               disabled={thinking || !input.trim()}
               aria-label="Send"
-              className="u-press w-8 h-8 flex items-center justify-center rounded-[8px] bg-[#141414] text-white disabled:opacity-40 cursor-pointer shrink-0"
+              className="u-press w-8 h-8 flex items-center justify-center rounded-[10px] bg-[#18181c] text-white disabled:opacity-40 cursor-pointer shrink-0"
             >
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                 <path d="M14 2 2 7.2l4.8 1.8L9 14l5-12Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -351,7 +387,7 @@ export default function AIAssistant() {
               height="10"
               viewBox="0 0 10 10"
               fill="none"
-              className="absolute bottom-[3px] right-[3px] text-[#b4b4b4]"
+              className="absolute bottom-[3px] right-[3px] text-[#a6a6b0]"
             >
               <path d="M9 1L1 9M9 5L5 9M9 9L9 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>

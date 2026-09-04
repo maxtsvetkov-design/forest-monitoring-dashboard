@@ -3,8 +3,17 @@
 // running total) — selecting a range on the timeline sums/averages these
 // across the selected months to produce the values the dashboard renders.
 
-export type SpeciesKey = "ghaf" | "sidr" | "palm";
-export type HealthKey = "healthy" | "stressed" | "declining" | "dead";
+// Species and condition vocabularies live in taxonomy.ts, which owns the
+// botanical table they index into. Re-exported here so the many modules that
+// already import their key types from this file keep working, and so there is
+// still exactly one definition of each.
+export type { SpeciesKey, ConditionKey } from "./taxonomy";
+import type { SpeciesKey, ConditionKey } from "./taxonomy";
+
+/** Historical alias. The five-band canopy scale is a *condition*, not a binary
+ * health flag, but a lot of call sites still say "health" — they mean this. */
+export type HealthKey = ConditionKey;
+
 export type DiameterKey = "L" | "M" | "S";
 export type HeightKey = "h1" | "h2" | "h3";
 export type CrownKey = "b1" | "b2" | "b3" | "b4" | "b5";
@@ -75,6 +84,9 @@ export interface EcosystemCondition {
 
 export interface AggregatedSnapshot {
   totalTrees: KpiValue;
+  /** Trees in an unflagged condition (Normal or Vigorous) as of the range's
+   * last month — see aggregate.ts's healthyTreesFor. */
+  healthyTrees: KpiValue;
   canopyCoverPct: KpiValue;
   /** 0–1, derived from canopy cover and health mix — see aggregate.ts's
    * ndviFor for why this dataset has no independent spectral signal to draw

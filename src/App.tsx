@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   imgBell04,
   imgFilterFunnel01,
@@ -23,7 +23,9 @@ import KpiCard from "./components/KpiCard";
 import LandingScreen from "./components/LandingScreen";
 import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./components/LayerPanel";
 import MapsView from "./components/MapsView";
+import MetaStatsCard from "./components/MetaStatsCard";
 import NdviCard from "./components/NdviCard";
+import OverallHealthCard from "./components/OverallHealthCard";
 import TreeHistoryModal, { TreeMiniPopover } from "./components/TreeHistoryModal";
 import RecentEventsList from "./components/RecentEventsList";
 import TimelineRangeSlider from "./components/TimelineRangeSlider";
@@ -33,9 +35,18 @@ import { areas } from "./data/areas";
 import { eventsInRange, generateEvents, type TreeEvent } from "./data/events";
 import { areaOverlays, getTimelapseImages, PROMO_PLANNED_CAPTURES } from "./data/overlays";
 import { healthScoreSeries, maxScatterCount } from "./data/aggregate";
+import { CONDITIONS } from "./data/taxonomy";
 import { useDateRange } from "./hooks/useDateRange";
+import type { PendingAreaFilter } from "./hooks/useTreeFilters";
 
 const TOTAL_AREA = "12 ha";
+// Condition labels split the way the KPI row talks about them, derived from
+// the taxonomy rather than retyped: "healthy" is the two unflagged bands (what
+// "Total healthy trees" counts), "flagged" the three that pull NDVI and the
+// condition score down. Both feed the health filter when their card is
+// clicked, so the Areas view lands on exactly the trees the number counted.
+const HEALTHY_CONDITION_LABELS = CONDITIONS.filter((c) => !c.flagged).map((c) => c.label);
+const FLAGGED_CONDITION_LABELS = CONDITIONS.filter((c) => c.flagged).map((c) => c.label);
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 560;
 const SIDEBAR_DEFAULT_WIDTH = 320;
@@ -69,10 +80,9 @@ export default function App() {
   // real one would make this its own "/" entry instead of a boolean gate.
   const [showLanding, setShowLanding] = useState(true);
   const [activeTab, setActiveTab] = useState("Insights");
-  // A health value clicked on the Insights donut, waiting to be applied once
-  // AreasView mounts and consumed — see AreasView's pendingHealthFilter effect.
-  const [pendingHealthFilter, setPendingHealthFilter] = useState<string | null>(null);
-  const [pendingCrownFilter, setPendingCrownFilter] = useState<string | null>(null);
+  // A filter from a clicked Insights widget, waiting to be applied once
+  // AreasView mounts and consumed — see AreasView's pendingFilter effect.
+  const [pendingFilter, setPendingFilter] = useState<PendingAreaFilter | null>(null);
   // An event clicked in Recent Events, on its way to being shown on the map.
   // Two states rather than one: `pendingTreeFocus` drives the camera fly-to,
   // and the modal opens only once MapCanvas reports arrival (onFocusArrived)
@@ -120,6 +130,16 @@ export default function App() {
     setFocusNonce((n) => n + 1);
     setActiveTab("Maps");
   }
+
+  // Every widget that drills into Areas does the same three things: stash the
+  // filter, drop any tree popover/fly-to left over from a previous visit
+  // (which would otherwise reopen over an unrelated tree), and switch tab.
+  const drillIntoAreas = useCallback((filter: PendingAreaFilter) => {
+    setPendingFilter(filter);
+    setOpenTreeEvent(null);
+    setPendingTreeFocus(null);
+    setActiveTab("Areas");
+  }, []);
   const [visible, setVisible] = useState(false);
   // Whether the timeline is currently stepping through months on its own —
   // read by MapCanvas to pulse the canopy-health gradient while playback runs.
@@ -170,9 +190,9 @@ export default function App() {
   // KPI cards read, not a separate figure.
   const treeCountSeries = useMemo(
     () =>
-      activeArea.snapshots.map(
-        (s) => s.speciesCounts.ghaf + s.speciesCounts.sidr + s.speciesCounts.palm,
-      ),
+      // Every species, summed — naming them individually was only ever
+      // possible while there were three of them.
+      activeArea.snapshots.map((s) => Object.values(s.speciesCounts).reduce((a, b) => a + b, 0)),
     [activeArea],
   );
   // At-risk health breakdown per month, same order as `months` — read by the
@@ -228,23 +248,46 @@ export default function App() {
     return () => cancelAnimationFrame(frame);
   }, [pill.width]);
 
+  // Squash-and-stretch wobble layered on top of the pill's left/width slide —
+  // a liquid travel reads as stretching wide+flat as it sets off, overshooting
+  // narrow+tall, then settling, not just a rectangle interpolating position.
+  // Skipped on the very first render (nothing has moved yet to wobble about)
+  // and timed to roughly the pill's own travel duration so the wobble finishes
+  // alongside the slide instead of snapping back mid-flight.
+  const [pillMorphing, setPillMorphing] = useState(false);
+  const pillMounted = useRef(false);
+  useEffect(() => {
+    if (!pillMounted.current) {
+      pillMounted.current = true;
+      return;
+    }
+    setPillMorphing(true);
+    const t = setTimeout(() => setPillMorphing(false), 650);
+    return () => clearTimeout(t);
+  }, [activeTab]);
+
   const treesChange = formatKpiChange(aggregated.totalTrees.change, (n) => Math.round(n).toLocaleString());
+  const healthyTreesChange = formatKpiChange(aggregated.healthyTrees.change, (n) => Math.round(n).toLocaleString());
   const canopyChange = formatKpiChange(aggregated.canopyCoverPct.change, (n) => `${n.toFixed(1)}%`);
   const crownMatureChange = formatKpiChange(aggregated.crownMaturePct.change, (n) => `${n.toFixed(1)}pp`);
   const ndviChange = formatKpiChange(aggregated.ndvi.change, (n) => n.toFixed(2));
 
+  // Each card's drill-down lands on the trees its own number is counting, so
+  // the filtered Areas view is a genuine "show me these" rather than a
+  // loosely-related jump. The two canopy cards share a target because they
+  // are the same underlying quantity (canopyCoverPct) shown two ways, and
+  // neither has a per-tree equivalent beyond each tree's own canopy loss.
   const kpis = [
     {
-      label: "Total trees",
-      value: aggregated.totalTrees.value.toLocaleString(),
-      change: treesChange?.change ?? null,
+      label: "Total healthy trees",
+      value: aggregated.healthyTrees.value.toLocaleString(),
+      change: healthyTreesChange?.change ?? null,
       changeNote: "vs. prior period",
-      trend: treesChange?.trend,
+      trend: healthyTreesChange?.trend,
       hasInfo: true,
+      onDrillDown: () => drillIntoAreas({ kind: "health", values: HEALTHY_CONDITION_LABELS }),
+      drillDownLabel: "Show these trees in Areas",
     },
-    { label: "Total area", value: TOTAL_AREA },
-    { label: "Most recent survey", value: formatMonthYear(aggregated.mostRecentSurvey) },
-    { label: "Last activity", value: formatMonthYear(aggregated.lastActivity) },
     {
       label: "Image composition",
       // canopyCoverPct is exactly this: the share of the plot the aerial
@@ -254,6 +297,8 @@ export default function App() {
       value: `${aggregated.canopyCoverPct.value.toFixed(1)}% trees`,
       secondaryValue: `${(100 - aggregated.canopyCoverPct.value).toFixed(1)}% ground`,
       hasInfo: true,
+      onDrillDown: () => drillIntoAreas({ kind: "canopyLoss" }),
+      drillDownLabel: "Show the trees losing the most canopy",
     },
     {
       label: "% Canopy cover",
@@ -262,16 +307,37 @@ export default function App() {
       changeNote: "vs. prior period",
       trend: canopyChange?.trend,
       hasInfo: true,
+      onDrillDown: () => drillIntoAreas({ kind: "canopyLoss" }),
+      drillDownLabel: "Show the trees losing the most canopy",
     },
   ];
 
   if (showLanding) {
-    return <LandingScreen onEnter={() => setShowLanding(false)} />;
+    return (
+      <LandingScreen
+        onEnter={(areaId) => {
+          // Picking an area on the overview map opens the dashboard already
+          // scoped to it, rather than dropping the user on whatever area
+          // happened to be selected before.
+          if (areaId) setActiveAreaId(areaId);
+          setShowLanding(false);
+        }}
+      />
+    );
   }
 
   return (
     <div
-      className="flex w-full min-h-screen bg-[#fafaf9] overflow-x-hidden"
+      // No `overflow-x-hidden`: CSS computes `overflow-y` to `auto` on any
+      // element whose `overflow-x` isn't `visible` (the same rule already
+      // documented on the old main-content scroll bug) — which silently
+      // makes THIS div, not the window, the "nearest scrolling ancestor" the
+      // browser resolves `position: sticky` against below. It never actually
+      // scrolls itself (no bounded height, `min-h-screen` only), so nothing
+      // ever asked it to stick — the timeline header just scrolled away with
+      // the page. There's no horizontal overflow here to clip in the first
+      // place (measured: scrollWidth === clientWidth with or without it).
+      className="flex w-full min-h-screen bg-[#ebece7]"
       style={{ opacity: visible ? 1 : 0, transition: "opacity 0.3s ease-out" }}
     >
       {/* Reserves the space the fixed sidebar below no longer occupies in flow */}
@@ -279,12 +345,18 @@ export default function App() {
 
       {/* Sidebar — the very first thing to land: icons sweep in from the
           left, top to bottom, leading the eye into the rest of the page. */}
-      <aside className="w-[48px] shrink-0 flex flex-col items-center justify-between py-3 px-2 bg-[#fafaf9] border-r border-[rgba(0,0,0,0.06)] fixed top-0 left-0 h-screen z-10">
+      <aside className="w-[48px] shrink-0 flex flex-col items-center justify-between py-3 px-2 bg-[#ebece7] border-r border-[rgba(0,0,0,0.06)] fixed top-0 left-0 h-screen z-10">
         <div className="flex flex-col items-center gap-2 w-full">
-          <div className="flex items-center justify-center w-8 h-8 p-[6px] animate-fade-in-left" style={{ animationDelay: "0ms" }}>
-            <img src={imgUnion} alt="logo" className="w-full h-full" />
-          </div>
-          <div className="w-full border-t border-[#e5e5e5] my-1 animate-fade-in-left" style={{ animationDelay: "20ms" }} />
+          <button
+            type="button"
+            aria-label="Back to project overview"
+            onClick={() => setShowLanding(true)}
+            className="u-press flex items-center justify-center w-8 h-8 p-[6px] rounded-[10px] cursor-pointer animate-fade-in-left"
+            style={{ animationDelay: "0ms" }}
+          >
+            <img src={imgUnion} alt="" className="w-full h-full" />
+          </button>
+          <div className="w-full border-t border-[#dedee3] my-1 animate-fade-in-left" style={{ animationDelay: "20ms" }} />
           <div className="animate-fade-in-left" style={{ animationDelay: "50ms" }}>
             <IconBtn src={imgIcHome} alt="home" active />
           </div>
@@ -294,12 +366,12 @@ export default function App() {
           <div className="animate-fade-in-left" style={{ animationDelay: "110ms" }}>
             <IconBtn src={imgIcHelpCircle} alt="help" />
           </div>
-          <div className="w-full border-t border-[#e5e5e5] my-1 animate-fade-in-left" style={{ animationDelay: "130ms" }} />
+          <div className="w-full border-t border-[#dedee3] my-1 animate-fade-in-left" style={{ animationDelay: "130ms" }} />
           <div
-            className="w-8 h-8 rounded-full bg-[#f2f2f2] border border-[#d9d9d9] flex items-center justify-center animate-fade-in-left"
+            className="w-8 h-8 rounded-full bg-[#ebece7] border border-[#dedee3] flex items-center justify-center animate-fade-in-left"
             style={{ animationDelay: "150ms" }}
           >
-            <span className="text-[11px] font-medium text-[#363636] font-['Inter',sans-serif]">AZ</span>
+            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">AZ</span>
           </div>
         </div>
         <div className="flex flex-col items-center gap-2">
@@ -307,34 +379,40 @@ export default function App() {
             <IconBtn src={imgBell04} alt="notifications" />
           </div>
           <div
-            className="w-8 h-8 rounded-full bg-[#f2f2f2] border border-[#d9d9d9] flex items-center justify-center animate-fade-in-left"
+            className="w-8 h-8 rounded-full bg-[#ebece7] border border-[#dedee3] flex items-center justify-center animate-fade-in-left"
             style={{ animationDelay: "90ms" }}
           >
-            <span className="text-[11px] font-medium text-[#363636] font-['Inter',sans-serif]">AZ</span>
+            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">AZ</span>
           </div>
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="scroll-slim flex-1 flex flex-col min-w-0 overflow-y-auto">
+      {/* Main content. No overflow-y-auto here: this column has no bounded
+          height to clip against (its scrollHeight always equals its own
+          clientHeight — see the sibling views below, which rely on
+          document-level scroll instead), so `overflow-y: auto` here only
+          ever creates an inert "auto" scroll container with nothing of its
+          own to scroll. Paired with `.scroll-slim`'s `overscroll-behavior:
+          contain`, that inert container swallows every wheel event at its
+          own permanently-at-limit boundary instead of letting it chain up to
+          the page's actual scroller — breaking scroll entirely rather than
+          doing nothing harmlessly. */}
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <div className="sticky top-0 z-10 bg-[#fafaf9] flex flex-col gap-[4px] px-4 pt-2 pb-1 border-b border-[rgba(0,0,0,0.06)]">
+        <div className="sticky top-0 z-10 bg-[#ebece7] flex flex-col gap-[4px] px-5 pt-2 pb-1">
           {/* Reserves the space the fixed bar below no longer occupies in flow */}
           <div className="min-h-[56px]" aria-hidden="true" />
           <div
-            className="fixed top-2 left-[64px] right-4 z-20 bg-[#fafaf9] border border-[rgba(0,0,0,0.06)] rounded-[16px] flex items-center px-2 py-1 min-h-[56px] shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)] animate-fade-in-down"
+            className="fixed top-2 left-[64px] right-4 z-20 surface-card flex items-center px-2 py-1 min-h-[56px] animate-fade-in-down"
             style={{ animationDelay: "90ms" }}
           >
             <AreaSwitcher areas={areas} activeAreaId={activeAreaId} onSelect={setActiveAreaId} />
 
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border border-[#d9d9d9] rounded-[12px] p-1 shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)]">
-              <div
-                ref={tabBarRef}
-                className="relative flex gap-[2px] bg-[#fafafa] border border-[#d9d9d9] rounded-[10px] p-[2px]"
-              >
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+              <div ref={tabBarRef} className="seg-track relative">
                 <div
                   aria-hidden="true"
-                  className={`tab-pill ${pillReady ? "" : "tab-pill--instant"}`}
+                  className={`tab-pill ${pillReady ? "" : "tab-pill--instant"} ${pillMorphing ? "tab-pill--morphing" : ""}`}
                   style={{ left: `${pill.left}px`, width: `${pill.width}px` }}
                 />
                 {tabs.map((tab) => (
@@ -345,8 +423,8 @@ export default function App() {
                     }}
                     onClick={() => switchTab(tab)}
                     aria-current={activeTab === tab ? "page" : undefined}
-                    className={`relative z-[1] px-[12px] py-[6px] rounded-[8px] text-[14px] font-medium font-['Inter',sans-serif] leading-[22px] whitespace-nowrap transition-colors duration-200 ${
-                      activeTab === tab ? "text-[#f2f2f2]" : "text-[#363636] hover:text-[#141414]"
+                    className={`relative z-[1] px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap transition-colors duration-200 ${
+                      activeTab === tab ? "text-[#ebece7]" : "text-[#464650] hover:text-[#18181c]"
                     }`}
                   >
                     {tab}
@@ -413,10 +491,8 @@ export default function App() {
               area={activeArea}
               range={range}
               isTimelinePlaying={isTimelinePlaying}
-              pendingHealthFilter={pendingHealthFilter}
-              onPendingHealthFilterApplied={() => setPendingHealthFilter(null)}
-              pendingCrownFilter={pendingCrownFilter}
-              onPendingCrownFilterApplied={() => setPendingCrownFilter(null)}
+              pendingFilter={pendingFilter}
+              onPendingFilterApplied={() => setPendingFilter(null)}
               layerVisibility={layerVisibility}
               onLayerVisibilityChange={setLayerVisibility}
               layerOpacity={layerOpacity}
@@ -426,70 +502,101 @@ export default function App() {
             />
           </div>
         ) : activeTab === "Assets" ? (
-          <AssetsView area={activeArea} />
+          <AssetsView area={activeArea} range={range} />
         ) : (
-          <div className="view-enter flex gap-[12px] items-stretch px-4 pb-6">
+          <div className="view-enter flex gap-[16px] items-stretch px-5 pb-6">
             {/* Main column */}
             <div className="flex-1 min-w-0 flex flex-col gap-0">
               {/* KPI row */}
-              <div className="py-[10px]">
-                <div className="flex gap-[8px] flex-wrap lg:flex-nowrap">
-                  {kpis.map((k, i) => (
-                    <KpiCard key={k.label} {...k} delay={CHROME_SEQUENCE_MS + i * 60} />
-                  ))}
+              <div className="py-[16px]">
+                <div className="flex gap-[12px] flex-wrap lg:flex-nowrap">
+                  <OverallHealthCard
+                    score={aggregated.ecosystemCondition.score}
+                    change={aggregated.ecosystemCondition.change}
+                    delay={CHROME_SEQUENCE_MS}
+                  />
+                  <KpiCard {...kpis[0]} delay={CHROME_SEQUENCE_MS + 60} />
+                  <MetaStatsCard
+                    items={[
+                      { label: "Total area", value: TOTAL_AREA },
+                      { label: "Most recent survey", value: formatMonthYear(aggregated.mostRecentSurvey) },
+                      { label: "Last activity", value: formatMonthYear(aggregated.lastActivity) },
+                    ]}
+                    delay={CHROME_SEQUENCE_MS + 120}
+                  />
+                  <KpiCard {...kpis[1]} delay={CHROME_SEQUENCE_MS + 180} />
+                  <KpiCard {...kpis[2]} delay={CHROME_SEQUENCE_MS + 240} />
                 </div>
               </div>
 
-              <div className="border-t border-[rgba(0,0,0,0.08)] my-1" />
+              <div className="border-t border-[rgba(0,0,0,0.08)] my-2" />
 
               {/* Donut charts row */}
-              <div className="py-[10px]">
+              <div className="py-[16px]">
                 <div className="flex gap-[12px] flex-wrap xl:flex-nowrap">
-                  <AnimatedDonutChart data={aggregated.speciesData} title="Tree count - by species" delay={CHROME_SEQUENCE_MS + 100} />
+                  {/* NDVI is derived from canopy cover and the unflagged-tree
+                      fraction (aggregate.ts's ndviFor) — there is no per-tree
+                      NDVI to filter on, so drilling in shows the trees that
+                      actually drag it down: the three flagged condition
+                      bands. */}
+                  <NdviCard
+                    value={aggregated.ndvi.value}
+                    change={ndviChange}
+                    delay={CHROME_SEQUENCE_MS + 100}
+                    onDrillDown={() => drillIntoAreas({ kind: "health", values: FLAGGED_CONDITION_LABELS })}
+                  />
                   <AnimatedDonutChart
                     data={aggregated.healthData}
                     title="Tree count - by health condition"
                     delay={CHROME_SEQUENCE_MS + 180}
-                    onSliceClick={(name) => {
-                      setPendingHealthFilter(name);
-                      setOpenTreeEvent(null);
-                      setPendingTreeFocus(null);
-                      setActiveTab("Areas");
-                    }}
+                    onSliceClick={(name) => drillIntoAreas({ kind: "health", values: [name] })}
                   />
-                  <AnimatedDonutChart data={aggregated.diameterData} title="Tree count - by diameter" delay={CHROME_SEQUENCE_MS + 260} />
-                  <AnimatedDonutChart data={aggregated.heightData} title="Tree count - by height" delay={CHROME_SEQUENCE_MS + 340} />
+                  <AnimatedDonutChart
+                    data={aggregated.diameterData}
+                    title="Tree count - by diameter"
+                    delay={CHROME_SEQUENCE_MS + 260}
+                    // The slice name IS the record's `diameter` string
+                    // ("L (>5 m)") — see aggregate.ts's DIAMETER_META.
+                    onSliceClick={(name) => drillIntoAreas({ kind: "diameter", value: name })}
+                  />
+                  <AnimatedDonutChart
+                    data={aggregated.heightData}
+                    title="Tree count - by height"
+                    delay={CHROME_SEQUENCE_MS + 340}
+                    // HEIGHT_META labels its slices "1"/"2"/"3" for keys
+                    // h1/h2/h3, so the key is the label with an `h` in front.
+                    onSliceClick={(name) => drillIntoAreas({ kind: "height", value: `h${name}` })}
+                  />
                 </div>
               </div>
 
-              <div className="border-t border-[rgba(0,0,0,0.08)] my-1" />
+              <div className="border-t border-[rgba(0,0,0,0.08)] my-2" />
 
               {/* Analysis widgets — chart trio, then the three derived stat
                   cards. NDVI, Tree Survey and the blended condition score are
                   all derived from this same dataset (see aggregate.ts's
                   ndviFor/healthScoreFor/ecosystemConditionFor) rather than
                   measured, since no spectral imagery backs this mock plot. */}
-              <div className="py-[8px]">
-                <div className="flex gap-[10px] flex-wrap xl:flex-nowrap">
+              <div className="py-[16px]">
+                <div className="flex gap-[12px] flex-wrap xl:flex-nowrap">
                   <CrownRadiusTreemap
                     data={aggregated.crownData}
                     delay={CHROME_SEQUENCE_MS + 420}
                     trend={crownMatureChange}
-                    onSelectBucket={(i) => {
-                      setPendingCrownFilter(`b${i + 1}`);
-                      setOpenTreeEvent(null);
-                      setPendingTreeFocus(null);
-                      setActiveTab("Areas");
-                    }}
+                    onSelectBucket={(i) => drillIntoAreas({ kind: "crown", value: `b${i + 1}` })}
                   />
                   <HealthPerSpeciesChart series={aggregated.scatterSeries} delay={CHROME_SEQUENCE_MS + 500} zMax={scatterZMax} />
-                  <HealthScoreTrendChart data={healthScoreTrend} delay={CHROME_SEQUENCE_MS + 580} />
                 </div>
               </div>
 
-              <div className="py-[8px]">
-                <div className="flex gap-[8px] flex-wrap lg:flex-nowrap">
-                  <NdviCard value={aggregated.ndvi.value} change={ndviChange} delay={CHROME_SEQUENCE_MS + 660} />
+              <div className="py-[16px]">
+                <div className="flex gap-[12px] flex-wrap lg:flex-nowrap">
+                  <AnimatedDonutChart
+                    data={aggregated.speciesData}
+                    title="Tree count - by species"
+                    delay={CHROME_SEQUENCE_MS + 660}
+                    legendColumns={2}
+                  />
                   <TreeSurveyCard
                     totalSurveyed={aggregated.totalTrees.value}
                     change={treesChange}
@@ -497,6 +604,7 @@ export default function App() {
                     delay={CHROME_SEQUENCE_MS + 700}
                   />
                   <EcosystemConditionCard condition={aggregated.ecosystemCondition} delay={CHROME_SEQUENCE_MS + 740} />
+                  <HealthScoreTrendChart data={healthScoreTrend} delay={CHROME_SEQUENCE_MS + 780} />
                 </div>
               </div>
             </div>
@@ -516,14 +624,30 @@ export default function App() {
             >
               <div
                 className={`w-[2px] h-[32px] rounded-full transition-colors ${
-                  resizingSidebar ? "bg-[#096151]" : "bg-[#d9d9d9] group-hover:bg-[#096151]"
+                  resizingSidebar ? "bg-[#096151]" : "bg-[#dedee3] group-hover:bg-[#096151]"
                 }`}
               />
             </div>
 
-            {/* Right sidebar */}
+            {/* Right sidebar — sticky under the timeline header, the same
+                document-level-scroll precedent as that header's own `sticky
+                top-0` (see its comment above): no `overflow` property on any
+                ancestor between this and the scrolling root, or that ancestor
+                would silently become the sticky positioning context instead
+                of the window. `top` matches the header's own rendered height
+                so the sidebar tucks in just below it rather than sliding
+                underneath.
+
+                `self-start` is load-bearing, not decorative: the row above
+                uses the flex default `items-stretch`, which was stretching
+                this wrapper to match the main column's full scroll height —
+                a sticky element exactly as tall as its own containing block
+                has no room to move within it, so it rendered indistinguishable
+                from `position: static`. `self-start` lets it size to its
+                actual content (RecentEventsList's own bounded height) instead,
+                which is what gives `sticky` somewhere to hold. */}
             <div
-              className={`shrink-0 flex flex-col py-[10px] min-h-0 ${resizingSidebar ? "select-none" : ""}`}
+              className={`sticky top-[144px] self-start shrink-0 flex flex-col py-[10px] min-h-0 ${resizingSidebar ? "select-none" : ""}`}
               style={{ width: sidebarWidth }}
             >
               <RecentEventsList events={visibleEvents} delay={CHROME_SEQUENCE_MS + 580} onSelectEvent={selectTreeEvent} />

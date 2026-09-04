@@ -58,13 +58,26 @@ export function treePhotoTileFor(seedId: string): SpriteTileStyle {
 }
 
 /** Picks a specific tile by its position in the sprite (0-based, row-major) —
- * for a gallery that wants to show every photo rather than one per id. */
+ * for a gallery that wants to show every photo rather than one per id.
+ *
+ * Positioned in percentages, not the sprite's native pixel grid: a fixed-px
+ * background-size only renders a tile correctly at the one container size
+ * that happens to match its native 200x200 cell — anywhere else (a bento
+ * grid's whole point is tiles at several different sizes) it either crops
+ * into a corner or bleeds into neighbouring tiles. `background-size: N*100%`
+ * scales the whole sheet to exactly fill whatever box it's in, and
+ * `background-position` in the matching percentage always lands on the same
+ * tile regardless of that box's actual pixel size — the standard CSS-sprite
+ * technique for a responsive sheet. Relies on every container using this
+ * tile keeping the sheet's own per-cell aspect ratio (square, here). */
 export function spriteTileAt(index: number): SpriteTileStyle {
   const col = index % TREE_PHOTO_SPRITE_COLS;
   const row = Math.floor(index / TREE_PHOTO_SPRITE_COLS);
+  const xPct = (col / (TREE_PHOTO_SPRITE_COLS - 1)) * 100;
+  const yPct = (row / (TREE_PHOTO_SPRITE_ROWS - 1)) * 100;
   return {
     backgroundImage: `url(${TREE_PHOTO_SPRITE_URL})`,
-    backgroundPosition: `-${col * TREE_PHOTO_TILE_SIZE}px -${row * TREE_PHOTO_TILE_SIZE}px`,
-    backgroundSize: `${TREE_PHOTO_SPRITE_COLS * TREE_PHOTO_TILE_SIZE}px ${TREE_PHOTO_SPRITE_ROWS * TREE_PHOTO_TILE_SIZE}px`,
+    backgroundPosition: `${xPct}% ${yPct}%`,
+    backgroundSize: `${TREE_PHOTO_SPRITE_COLS * 100}% ${TREE_PHOTO_SPRITE_ROWS * 100}%`,
   };
 }

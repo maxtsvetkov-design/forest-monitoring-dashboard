@@ -3,25 +3,29 @@ import { CROWN_LABEL, type TreeRecord } from "../data/trees";
 import FilterDropdown from "./FilterDropdown";
 import { clamp, useDragResize } from "../hooks/useDragResize";
 import type { TreeFilters } from "../hooks/useTreeFilters";
+import { CONDITIONS } from "../data/taxonomy";
 
-const HEALTH_COLOR: Record<TreeRecord["health"], string> = {
-  Healthy: "#24A67A",
-  Stressed: "#F0B429",
-  Declining: "#E55C2F",
-  Dead: "#9A9A9A",
-};
+// Keyed by display label and derived from the taxonomy — see HEALTH_RANK below
+// for why a hand-written map here is a silent failure rather than a loud one.
+const HEALTH_COLOR: Record<string, string> = Object.fromEntries(
+  CONDITIONS.map((c) => [c.label, c.color]),
+);
 
-const HEALTH_ORDER: TreeRecord["health"][] = ["Healthy", "Stressed", "Declining", "Dead"];
+/** Best first, for the filter chips. */
+const HEALTH_ORDER: string[] = [...CONDITIONS].reverse().map((c) => c.label);
 
-// Health and diameter are ordinals, not words: sorting them alphabetically
-// would order Declining < Dead < Healthy < Stressed, which means nothing to a
-// ranger. These rank maps are what the comparator actually sorts on.
-const HEALTH_RANK: Record<TreeRecord["health"], number> = {
-  Healthy: 0,
-  Stressed: 1,
-  Declining: 2,
-  Dead: 3,
-};
+// Condition and diameter are ordinals, not words: sorting them alphabetically
+// would order Defoliated < Moderate < Normal < Sparse < Vigorous, which means
+// nothing to a ranger. These rank maps are what the comparator actually sorts
+// on.
+//
+// Built from CONDITIONS rather than written out, because `TreeRecord["health"]`
+// is a display string — a hand-written map here still typechecks perfectly
+// after the labels change and simply returns `undefined` for every row, which
+// is a sort that silently does nothing rather than an error anyone would see.
+const HEALTH_RANK: Record<string, number> = Object.fromEntries(
+  [...CONDITIONS].reverse().map((c, i) => [c.label, i]),
+);
 
 const DIAMETER_RANK: Record<TreeRecord["diameter"], number> = {
   "L (>5 m)": 0,
@@ -44,7 +48,16 @@ interface Column {
 
 const COLUMNS: Column[] = [
   { key: "id", label: "ID", defaultWidth: 90, minWidth: 64, sortValue: (t) => t.id, defaultDir: "asc" },
-  { key: "species", label: "Species", defaultWidth: 140, minWidth: 90, sortValue: (t) => t.species, defaultDir: "asc" },
+  { key: "species", label: "Species", defaultWidth: 110, minWidth: 84, sortValue: (t) => t.species, defaultDir: "asc" },
+  { key: "genus", label: "Genus", defaultWidth: 105, minWidth: 80, sortValue: (t) => t.genus, defaultDir: "asc" },
+  {
+    key: "scientificName",
+    label: "Scientific name",
+    defaultWidth: 165,
+    minWidth: 110,
+    sortValue: (t) => t.scientificName,
+    defaultDir: "asc",
+  },
   // Worst-first: "show me what's dying" is the reason anyone sorts this column.
   { key: "health", label: "Health", defaultWidth: 115, minWidth: 88, sortValue: (t) => HEALTH_RANK[t.health], defaultDir: "desc" },
   { key: "diameter", label: "Diameter", defaultWidth: 105, minWidth: 80, sortValue: (t) => DIAMETER_RANK[t.diameter], defaultDir: "asc" },
@@ -57,12 +70,27 @@ const COLUMNS: Column[] = [
 
 const CROWN_ORDER = ["b1", "b2", "b3", "b4", "b5"] as const;
 
+// The diameter values are the record's own `diameter` strings (see
+// data/trees.ts's DIAMETER_LABEL) — the filter matches them directly, so the
+// dropdown offers exactly those, not a parallel set of labels that could
+// drift out of sync with them.
+const DIAMETER_ORDER = ["L (>5 m)", "M (2–5 m)", "S (<1 m)"] as const;
+
+// Height bands, worded from the thresholds in monthlySnapshots.ts's
+// heightBucketFor — the donut labels these "1"/"2"/"3", which says nothing on
+// its own once it's a filter chip sitting next to "Crown r." and "Diameter".
+const HEIGHT_ORDER = [
+  { key: "h1", label: "Tall (≥5.5 m)" },
+  { key: "h2", label: "Mid (2–5.5 m)" },
+  { key: "h3", label: "Short (<2 m)" },
+] as const;
+
 const KEYBOARD_RESIZE_STEP = 16;
 
 function HealthBadge({ health }: { health: TreeRecord["health"] }) {
   return (
     <span
-      className="inline-flex items-center gap-[6px] px-[8px] py-[2px] rounded-full text-[12px] font-['Inter',sans-serif] whitespace-nowrap"
+      className="inline-flex items-center gap-[6px] px-[8px] py-[2px] rounded-full text-[12px] font-['Outfit',sans-serif] whitespace-nowrap"
       style={{ background: `${HEALTH_COLOR[health]}1a`, color: HEALTH_COLOR[health] }}
     >
       <span className="w-[6px] h-[6px] rounded-full shrink-0" style={{ background: HEALTH_COLOR[health] }} />
@@ -104,11 +132,11 @@ function FacetChip({
       type="button"
       onClick={onToggle}
       aria-pressed={selected}
-      className="inline-flex items-center gap-[5px] px-[8px] py-[3px] rounded-full text-[11px] font-['Inter',sans-serif] border transition-all duration-150 cursor-pointer"
+      className="inline-flex items-center gap-[5px] px-[8px] py-[3px] rounded-full text-[11px] font-['Outfit',sans-serif] border transition-all duration-150 cursor-pointer"
       style={{
         background: selected ? `${tint}1a` : "transparent",
-        borderColor: selected ? `${tint}66` : "#e5e5e5",
-        color: selected ? tint : "#6b6b6b",
+        borderColor: selected ? `${tint}66` : "#dedee3",
+        color: selected ? tint : "#5b5b66",
       }}
     >
       {color && <span className="w-[6px] h-[6px] rounded-full shrink-0" style={{ background: tint }} />}
@@ -200,12 +228,12 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
   const totalWidth = COLUMNS.reduce((sum, c) => sum + widths[c.key], 0);
 
   return (
-    <div className="h-full flex flex-col bg-white border border-[rgba(0,0,0,0.06)] rounded-[12px] overflow-hidden">
-      <div className="px-4 pt-3 pb-2 border-b border-[#e5e5e5] shrink-0 flex flex-col gap-[8px]">
+    <div className="h-full flex flex-col surface-card overflow-hidden">
+      <div className="px-4 pt-3 pb-2 border-b border-[#dedee3] shrink-0 flex flex-col gap-[8px]">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[14px] font-bold text-[#141414] font-['Inter',sans-serif]">
+          <span className="text-[14px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
             Trees in {areaName}{" "}
-            <span className="font-normal text-[#6b6b6b]">
+            <span className="font-normal text-[#5b5b66]">
               {visible.length === records.length
                 ? `(${records.length})`
                 : `(${visible.length} of ${records.length})`}
@@ -215,7 +243,7 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
             <button
               type="button"
               onClick={clearFilters}
-              className="text-[11px] text-[#096151] hover:underline font-['Inter',sans-serif] shrink-0 cursor-pointer"
+              className="text-[11px] text-[#096151] hover:underline font-['Outfit',sans-serif] shrink-0 cursor-pointer"
             >
               Clear all
             </button>
@@ -228,7 +256,7 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
           onChange={(e) => filters.setQuery(e.target.value)}
           placeholder="Search ID or species…"
           aria-label="Search trees by ID or species"
-          className="w-full px-[10px] py-[5px] text-[12px] font-['Inter',sans-serif] border border-[#e5e5e5] rounded-[6px] outline-none focus:border-[#096151] transition-colors duration-150"
+          className="w-full px-[10px] py-[5px] text-[12px] font-['Outfit',sans-serif] border border-[#dedee3] rounded-[6px] outline-none focus:border-[#096151] transition-colors duration-150"
         />
 
         <div className="flex flex-wrap gap-[6px]">
@@ -250,13 +278,44 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
             selected={filters.crownFilter}
             onToggle={filters.toggleCrown}
           />
+          {/* Diameter and height have no dropdown of their own elsewhere, but
+              the KPI donuts can hand a filter over on either — without these
+              the user would land on a filtered table with no visible reason
+              for it and nothing to toggle off. */}
+          <FilterDropdown
+            label="Diameter"
+            options={DIAMETER_ORDER.map((value) => ({ value, label: value }))}
+            selected={filters.diameterFilter}
+            onToggle={filters.toggleDiameter}
+          />
+          <FilterDropdown
+            label="Height"
+            options={HEIGHT_ORDER.map(({ key, label }) => ({ value: key, label }))}
+            selected={filters.heightFilter}
+            onToggle={filters.toggleHeight}
+          />
+          {/* A toggle rather than a dropdown: it's one derived condition
+              ("worse than this selection's own average"), not a list. */}
+          <button
+            type="button"
+            onClick={filters.toggleCanopyLoss}
+            aria-pressed={filters.canopyLossOnly}
+            title={`Trees losing more than the ${filters.canopyLossMean.toFixed(0)}% average canopy across this selection`}
+            className={`u-press flex items-center gap-[5px] px-[10px] py-[5px] rounded-[6px] border text-[12px] font-['Outfit',sans-serif] cursor-pointer transition-colors duration-150 ${
+              filters.canopyLossOnly
+                ? "bg-[#096151] border-[#096151] text-white"
+                : "border-[#dedee3] text-[#464650] hover:border-[#b9b9b9]"
+            }`}
+          >
+            Above-avg. canopy loss
+          </button>
         </div>
       </div>
 
       <div ref={scrollRef} className="scroll-slim flex-1 overflow-auto">
         {visible.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center gap-[10px] px-6 text-center">
-            <span className="text-[13px] text-[#6b6b6b] font-['Inter',sans-serif]">
+            <span className="text-[13px] text-[#5b5b66] font-['Outfit',sans-serif]">
               {records.length === 0
                 ? "No trees surveyed in the selected date range."
                 : "No trees match the current filters."}
@@ -265,7 +324,7 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
               <button
                 type="button"
                 onClick={clearFilters}
-                className="px-[12px] py-[5px] text-[12px] font-['Inter',sans-serif] text-white bg-[#096151] rounded-[6px] hover:bg-[#0b7a64] transition-colors duration-150 cursor-pointer"
+                className="px-[12px] py-[5px] text-[12px] font-['Outfit',sans-serif] text-white bg-[#096151] rounded-[6px] hover:bg-[#0b7a64] transition-colors duration-150 cursor-pointer"
               >
                 Clear filters
               </button>
@@ -285,8 +344,8 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
                 <col key={c.key} style={{ width: `${widths[c.key]}px` }} />
               ))}
             </colgroup>
-            <thead className="sticky top-0 bg-[#fafafa] z-10">
-              <tr className="text-[12px] text-[#6b6b6b] font-['Inter',sans-serif]">
+            <thead className="sticky top-0 bg-[#f6f6f8] z-10">
+              <tr className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif]">
                 {COLUMNS.map((column) => {
                   const active = sort.key === column.key;
                   return (
@@ -294,12 +353,12 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
                       key={column.key}
                       scope="col"
                       aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                      className="relative px-0 py-0 font-medium border-b border-[#e5e5e5]"
+                      className="relative px-0 py-0 font-medium border-b border-[#dedee3]"
                     >
                       <button
                         type="button"
                         onClick={() => toggleSort(column)}
-                        className={`group w-full flex items-center gap-[4px] px-4 py-2 text-left hover:bg-[#f0f0f0] transition-colors duration-100 cursor-pointer ${
+                        className={`group w-full flex items-center gap-[4px] px-4 py-2 text-left hover:bg-[#ebece7] transition-colors duration-100 cursor-pointer ${
                           active ? "text-[#096151]" : ""
                         }`}
                       >
@@ -342,23 +401,30 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
                     e.preventDefault();
                     onSelect(t);
                   }}
-                  className={`border-t border-[#f0f0f0] cursor-pointer transition-colors duration-100 outline-none focus-visible:bg-[#0961511a] ${
+                  className={`border-t border-[#ebece7] cursor-pointer transition-colors duration-100 outline-none focus-visible:bg-[#0961511a] ${
                     selectedId === t.id
                       ? "bg-[#0961511a]"
                       : hoveredId === t.id
                         ? "bg-[#09615110]"
-                        : "hover:bg-[#fafafa]"
+                        : "hover:bg-[#f6f6f8]"
                   }`}
                 >
-                  <td className="px-4 py-2 text-[13px] text-[#141414] font-['Inter',sans-serif] truncate">{t.id}</td>
-                  <td className="px-4 py-2 text-[13px] text-[#363636] font-['Inter',sans-serif] truncate">{t.species}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#18181c] font-['Outfit',sans-serif] truncate">{t.id}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.species}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#5b5b66] font-['Outfit',sans-serif] truncate">{t.genus}</td>
+                  {/* Italic because it is a binomial, which is how a botanical
+                      name is set — and it doubles as a visual cue that this
+                      column is the formal name, not another local one. */}
+                  <td className="px-4 py-2 text-[13px] text-[#5b5b66] font-['Outfit',sans-serif] italic truncate">
+                    {t.scientificName}
+                  </td>
                   <td className="px-4 py-2 overflow-hidden">
                     <HealthBadge health={t.health} />
                   </td>
-                  <td className="px-4 py-2 text-[13px] text-[#363636] font-['Inter',sans-serif] truncate">{t.diameter}</td>
-                  <td className="px-4 py-2 text-[13px] text-[#363636] font-['Inter',sans-serif] truncate">{t.height}</td>
-                  <td className="px-4 py-2 text-[13px] text-[#363636] font-['Inter',sans-serif] truncate">{t.crownRadius}</td>
-                  <td className="px-4 py-2 text-[13px] text-[#363636] font-['Inter',sans-serif] truncate">{t.lastSurveyed}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.diameter}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.height}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.crownRadius}</td>
+                  <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.lastSurveyed}</td>
                 </tr>
               ))}
             </tbody>

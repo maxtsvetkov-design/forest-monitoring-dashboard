@@ -5,6 +5,7 @@ import {
   areaDyingTreeOverlays,
   areaGenerativeOverlays,
   areaOverlays,
+  dyingTreeOverlayForRange,
   getTimelapseImages,
   timelapseBucketIndex,
 } from "../data/overlays";
@@ -61,6 +62,13 @@ export default function MapsView({
     [baseOverlay, timelapseImages, timelapseBucket],
   );
 
+  // See AreasView's identical use — escalates through the dieback sequence as
+  // the range's end month moves into the final three months of the window.
+  const dyingTreeOverlay = useMemo(
+    () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, range, area.snapshots.length),
+    [area.id, area.snapshots.length, range.endIndex],
+  );
+
   return (
     <div className="flex flex-col px-4 pb-6">
       <MapCanvas
@@ -69,7 +77,7 @@ export default function MapsView({
         show3DToggle
         overlay={overlay}
         generativeOverlay={areaGenerativeOverlays[area.id]}
-        dyingTreeOverlay={areaDyingTreeOverlays[area.id]}
+        dyingTreeOverlay={dyingTreeOverlay}
         areaId={area.id}
         areaName={area.name}
         snapshots={area.snapshots}

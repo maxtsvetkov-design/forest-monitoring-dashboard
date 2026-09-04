@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type Dispatch, type Se
 import { createPortal } from "react-dom";
 import type { DateRange } from "../data/aggregate";
 import type { MapOverlay } from "../data/overlays";
-import { generateTreePins, SEVERITY_COLOR, type PinSeverity, type TreePin } from "../data/treePins";
+import { generateTreePins, pinSeverityAt, SEVERITY_COLOR, type PinSeverity, type TreePin } from "../data/treePins";
 import { generateTreeRecords, type TreeRecord } from "../data/trees";
 import type { MonthSnapshot } from "../data/types";
 import { publicUrl } from "../lib/publicUrl";
@@ -12,6 +12,7 @@ import LayerPanel, { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type Conte
 import { buildMapFilter, DEFAULT_MAP_CONTRAST, type MapColorMode } from "./mapColorModes";
 import MapToolbar from "./MapToolbar";
 import TreeHistoryModal from "./TreeHistoryModal";
+import { CONDITION_KEYS, CONDITION_LABEL, type ConditionKey } from "../data/taxonomy";
 
 // OpenStreetMap data served as vector tiles by OpenFreeMap: free, unlimited,
 // no API key, and intended for embedding in third-party apps (unlike raw
@@ -81,11 +82,11 @@ function readDiagnostics(el: HTMLElement | null): Diagnostics {
 
 function StatusOverlay({ title, message, diagnostics }: { title: string; message: string; diagnostics: Diagnostics }) {
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-[#fafafa] px-6 z-20">
+    <div className="absolute inset-0 flex items-center justify-center bg-[#f6f6f8] px-6 z-20">
       <div className="max-w-[420px] text-center">
-        <p className="text-[13px] font-bold text-[#141414] font-['Inter',sans-serif] mb-1">{title}</p>
-        <p className="text-[12px] text-[#6b6b6b] font-['Inter',sans-serif] leading-[18px] mb-2">{message}</p>
-        <p className="text-[11px] text-[#9a9a9a] font-['Inter',sans-serif]">
+        <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-1">{title}</p>
+        <p className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[18px] mb-2">{message}</p>
+        <p className="text-[11px] text-[#71717a] font-['Outfit',sans-serif]">
           container {diagnostics.width}×{diagnostics.height}px · WebGL {diagnostics.webgl ? "available" : "unavailable"}
         </p>
       </div>
@@ -143,10 +144,20 @@ const CANOPY_PULSE_MAX_WIDTH = 640;
 // imagery at a steep tilt; that's the trade-off of the wider range, not a bug.
 const GENERATIVE_DEFAULT_HEIGHT_M = 0;
 const GENERATIVE_MAX_HEIGHT_M = 300;
-// The "mask": dim until the pointer is actually over the artwork's own ground
-// footprint, then it lights up — see the hover effect below.
-const GENERATIVE_DIM_OPACITY = 0.28;
-const GENERATIVE_LIT_OPACITY = 1;
+// The reveal window: Oct '25 (index 0) through May '26 (index 7) — the
+// recovery half of the 12-month timeline, before the final-quarter dieback
+// window the dying-trees overlay owns instead. Opacity ramps linearly across
+// it rather than snapping, so dragging the range's end handle reads as the
+// artwork gradually emerging, not a threshold flipping.
+const GENERATIVE_REVEAL_END_INDEX = 7;
+
+/** 0 at Oct '25, 1 at May '26 or later — driven by the range's end month, not
+ * pointer position (that used to be a dim/hover-to-light mask; see the
+ * removed hover effect this replaced). */
+function generativeRevealOpacity(range: DateRange | undefined): number {
+  if (!range) return 0;
+  return Math.max(0, Math.min(1, range.endIndex / GENERATIVE_REVEAL_END_INDEX));
+}
 
 /**
  * The generative layer must always render above the aerial photo, but each
@@ -157,25 +168,6 @@ const GENERATIVE_LIT_OPACITY = 1;
  * stacked underneath, invisible. Called after *either* probe resolves so the
  * order comes out right regardless of which one wins the race.
  */
-/**
- * Standard ray-casting point-in-polygon test, used to tell whether the cursor
- * is over the generative overlay's own ground quad rather than just anywhere
- * on the map — lng/lat are used directly rather than converting to metres,
- * which is fine at the scale of one small plot (edges don't curve enough
- * over ~1.5km to matter for a hit test).
- */
-function pointInPolygon(point: [number, number], polygon: readonly [number, number][]): boolean {
-  const [px, py] = point;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
-    const intersects = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
 /**
  * Shifts a ground quad by the same "Overlay height" slider's apparent lift
  * the generative layer has always used (d = h·tan(pitch) along the camera's
@@ -332,14 +324,16 @@ function renderGlowHalo(img: HTMLImageElement, maxWidth: number): string {
 
 /** Builds the floating pin element for one flagged tree. */
 function buildPinElement(pin: TreePin, index: number): HTMLDivElement {
-  const color = SEVERITY_COLOR[pin.severity];
   const el = document.createElement("div");
   // Starts hidden: the range-visibility effect (which runs immediately after
   // this one builds the marker pool, in the same commit) is what decides
   // which pins should actually show, so starting visible would flash every
   // pin on screen for a frame before the out-of-range ones fade back out.
   el.className = "tree-pin tree-pin--hidden";
-  el.style.setProperty("--pin-color", color);
+  // Left unset here on purpose: one marker now serves a tree for the whole
+  // window, and the range-visibility effect paints it with the colour for
+  // whichever month is on screen. Baking a colour in at build time would mean
+  // rebuilding every marker to recolour it.
   // Stagger the float/pulse so the pins don't bob in lockstep. Derived from the
   // index rather than Math.random() so a remount reproduces the same phases.
   const floatDelay = ((index * 0.37) % 2.5).toFixed(2);
@@ -360,18 +354,23 @@ function buildPinElement(pin: TreePin, index: number): HTMLDivElement {
       <div class="tree-pin__body">
         <svg width="26" height="34" viewBox="0 0 26 34" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M13 33.5C13 33.5 24.5 20.8 24.5 13A11.5 11.5 0 1 0 1.5 13C1.5 20.8 13 33.5 13 33.5Z"
-                fill="${color}" stroke="#ffffff" stroke-width="2"/>
+                fill="var(--pin-color)" stroke="#ffffff" stroke-width="2"/>
         </svg>
         <span class="tree-pin__label">!</span>
       </div>
     </div>
   `;
-  el.setAttribute("aria-label", `${pin.severity} tree ${pin.id}`);
+  // Condition is added by the visibility effect along with the colour, since
+  // both depend on the month being shown.
+  el.setAttribute("aria-label", `Flagged tree ${pin.id}`);
   return el;
 }
 
 interface PinTooltipState {
   pin: TreePin;
+  /** Which month the tooltip is describing. A pin now spans the whole window,
+   * so its condition and canopy loss are only meaningful alongside a month. */
+  monthIndex: number;
   /** Viewport pixels — this is portaled to `document.body`, not map-relative. */
   x: number;
   y: number;
@@ -401,11 +400,12 @@ function PinTooltip({
    * backs it in MapCanvas). */
   onExpand?: () => void;
 }) {
-  const { pin, x, y } = state;
-  const color = SEVERITY_COLOR[pin.severity];
+  const { pin, monthIndex, x, y } = state;
+  const severity = pinSeverityAt(pin, monthIndex);
+  const color = severity ? SEVERITY_COLOR[severity] : "#86868f";
   return createPortal(
     <div
-      className="pin-tooltip fixed z-[1000] -translate-x-1/2 -translate-y-full bg-white border border-[#d9d9d9] rounded-[10px] px-3 py-2 min-w-[160px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.12),0px_6px_20px_-4px_rgba(0,0,0,0.12)] font-['Inter',sans-serif] animate-fade-in"
+      className="pin-tooltip fixed z-[1000] -translate-x-1/2 -translate-y-full bg-white rounded-[12px] px-3 py-2 min-w-[160px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.12),0px_6px_20px_-4px_rgba(0,0,0,0.12)] font-['Outfit',sans-serif] animate-fade-in"
       style={{ left: x, top: y - 14 }}
       // Marker clicks don't reach the map canvas (see the click handler below),
       // but a click landing on the tooltip itself must not fall through to the
@@ -419,7 +419,7 @@ function PinTooltip({
             aria-label="Expand"
             title="Show full history"
             onClick={onExpand}
-            className="w-5 h-5 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636] transition-colors"
+            className="w-5 h-5 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] transition-colors"
           >
             <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
               <path
@@ -436,26 +436,28 @@ function PinTooltip({
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="w-5 h-5 flex items-center justify-center rounded-full text-[#9a9a9a] hover:bg-[#f0f0f0] hover:text-[#363636] transition-colors"
+          className="w-5 h-5 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] transition-colors"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
         </button>
       </div>
-      <div className="text-[13px] font-bold text-[#141414] mb-1 pr-10">{pin.id}</div>
+      <div className="text-[13px] font-bold text-[#18181c] mb-1 pr-10">{pin.id}</div>
       <div className="flex items-center gap-[6px] mb-[6px]">
         <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
         <span className="text-[12px] font-medium" style={{ color }}>
-          {pin.severity}
+          {severity ? CONDITION_LABEL[severity] : "Not flagged"}
         </span>
       </div>
-      <div className="text-[12px] text-[#363636]">
-        Canopy loss: <strong>{pin.canopyLossPct}%</strong>
+      <div className="text-[12px] text-[#464650]">
+        Canopy loss: <strong>{pin.canopyLossByMonth[monthIndex] ?? 0}%</strong>
       </div>
-      <div className="text-[11px] text-[#6b6b6b] mt-[2px]">Last surveyed {pin.lastSurveyed}</div>
+      <div className="text-[11px] text-[#5b5b66] mt-[2px]">
+        Last surveyed {pin.monthLabels[monthIndex] ?? ""}
+      </div>
       {/* Pointer tail, mirrors the old popup's tip. */}
-      <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px w-2 h-2 bg-white border-r border-b border-[#d9d9d9] rotate-45" />
+      <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px w-2 h-2 bg-white border-r border-b border-[#dedee3] rotate-45" />
     </div>,
     document.body,
   );
@@ -487,6 +489,7 @@ export default function MapCanvas({
   onFocusMove,
   onPinClick,
   onPinHover,
+  chrome = true,
 }: {
   center: [number, number];
   zoom?: number;
@@ -550,6 +553,11 @@ export default function MapCanvas({
    * to highlight the matching table row without selecting it or moving the
    * camera. */
   onPinHover?: (treeId: string | null) => void;
+  /** Set false to render the map bare — no layer panel, toolbar or overlay-
+   * height slider. The project-overview first screen (LandingScreen) brings
+   * its own sidebar and tool strip from the Figma design and would otherwise
+   * stack two competing sets of map chrome on top of each other. */
+  chrome?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -591,6 +599,10 @@ export default function MapCanvas({
   const [pinCounts, setPinCounts] = useState<Record<PinSeverity, number> | null>(null);
   const [bearing, setBearing] = useState(0);
   const [activePin, setActivePin] = useState<PinTooltipState | null>(null);
+  // The month the pins are currently painted for. Held in a ref because the
+  // marker click handlers are bound once when the pool is built and would
+  // otherwise close over a stale month for the rest of the session.
+  const displayMonthRef = useRef(0);
   // Whether the open pin popover is showing its full history form instead of
   // the compact tooltip — toggled by the expand/collapse affordances on each,
   // not a state of its own separate from `activePin`.
@@ -612,6 +624,11 @@ export default function MapCanvas({
   // render cycle) can read it too.
   const layerOpacityRef = useRef(layerOpacity);
   layerOpacityRef.current = layerOpacity;
+  // Read by generativeRevealOpacity below, and by anything else that needs
+  // the live selection outside React's render cycle (paint-property updates
+  // fire from map event handlers, not renders).
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
   // Separation between the generative overlay and the aerial photo, in metres.
   // Mirrored into a ref because the custom layer's render loop reads it every
   // frame outside React's render cycle.
@@ -730,7 +747,7 @@ export default function MapCanvas({
           type: "raster",
           source: GENERATIVE_SOURCE_ID,
           paint: {
-            "raster-opacity": GENERATIVE_DIM_OPACITY * layerOpacityRef.current.generative,
+            "raster-opacity": generativeRevealOpacity(rangeRef.current) * layerOpacityRef.current.generative,
             "raster-opacity-transition": { duration: 250 },
             "raster-fade-duration": 0,
           },
@@ -1123,7 +1140,7 @@ export default function MapCanvas({
         type: "raster",
         source: GENERATIVE_SOURCE_ID,
         paint: {
-          "raster-opacity": GENERATIVE_DIM_OPACITY * layerOpacityRef.current.generative,
+          "raster-opacity": generativeRevealOpacity(rangeRef.current) * layerOpacityRef.current.generative,
           "raster-opacity-transition": { duration: 250 },
           "raster-fade-duration": 0,
         },
@@ -1296,43 +1313,19 @@ export default function MapCanvas({
     dyingUpdatePositionRef.current?.();
   }, [generativeHeight]);
 
-  // The "mask": the generative layer sits dim by default and only lights up
-  // while the pointer is actually over its own footprint on the ground, not
-  // just anywhere on the map — a plain CSS opacity-on-hover would light up
-  // for a hover anywhere over the WebGL canvas, including the far side of the
-  // basemap the artwork has nothing to do with.
+  // Reveals the artwork as the timeline's end handle moves through the
+  // recovery window (Oct '25 → May '26) — see generativeRevealOpacity. Was a
+  // pointer-hover dim/light mask; replaced because the brief asked for the
+  // reveal tied to the selected range instead of pointer position.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !loaded || !generativeOverlay) return;
-
-    const quad = generativeOverlay.coordinates;
-    let inside = false;
-
-    function handleMove(e: maplibregl.MapMouseEvent) {
-      const m = mapRef.current;
-      if (!m || !m.getLayer(GENERATIVE_LAYER_ID)) return;
-      const nowInside = pointInPolygon([e.lngLat.lng, e.lngLat.lat], quad);
-      if (nowInside === inside) return;
-      inside = nowInside;
-      const base = inside ? GENERATIVE_LIT_OPACITY : GENERATIVE_DIM_OPACITY;
-      m.setPaintProperty(GENERATIVE_LAYER_ID, "raster-opacity", base * layerOpacityRef.current.generative);
-    }
-    function handleLeave() {
-      const m = mapRef.current;
-      if (!m || !inside || !m.getLayer(GENERATIVE_LAYER_ID)) return;
-      inside = false;
-      m.setPaintProperty(GENERATIVE_LAYER_ID, "raster-opacity", GENERATIVE_DIM_OPACITY * layerOpacityRef.current.generative);
-    }
-
-    // "mouseleave" is layer-scoped in MapLibre's types (needs a layer id);
-    // "mouseout" is the map-level "pointer left the container" event.
-    map.on("mousemove", handleMove);
-    map.on("mouseout", handleLeave);
-    return () => {
-      map.off("mousemove", handleMove);
-      map.off("mouseout", handleLeave);
-    };
-  }, [generativeOverlay, loaded]);
+    if (!map || !loaded || !map.getLayer(GENERATIVE_LAYER_ID)) return;
+    map.setPaintProperty(
+      GENERATIVE_LAYER_ID,
+      "raster-opacity",
+      generativeRevealOpacity(range) * layerOpacityRef.current.generative,
+    );
+  }, [generativeOverlay, loaded, range?.endIndex]);
 
   // Rasterise the mask once per mount and wait for it -- the layer-creation
   // effect below depends on this being ready.
@@ -1434,10 +1427,11 @@ export default function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded || !map.getLayer(GENERATIVE_LAYER_ID)) return;
-    // Reapplies at the dim baseline; if the pointer is hovering the artwork at
-    // this exact moment, the hover effect's own next "mousemove" tick (which
-    // reads this same factor) restores the lit value right after.
-    map.setPaintProperty(GENERATIVE_LAYER_ID, "raster-opacity", GENERATIVE_DIM_OPACITY * layerOpacity.generative);
+    map.setPaintProperty(
+      GENERATIVE_LAYER_ID,
+      "raster-opacity",
+      generativeRevealOpacity(rangeRef.current) * layerOpacity.generative,
+    );
   }, [layerOpacity.generative, loaded]);
 
   useEffect(() => {
@@ -1566,7 +1560,18 @@ export default function MapCanvas({
     return () => {
       cancelled = true;
     };
-  }, [show3DToggle, overlay, overlayReady, focusTree]);
+    // Deliberately `overlay?.coordinates`, not `overlay` itself: MapsView and
+    // AreasView swap `overlay.url` as the timeline crosses each timelapse
+    // bucket (see their `{ ...baseOverlay, url: ... }`), which hands this
+    // effect a new overlay object on every image change while `coordinates`
+    // — spread from the same stable `baseOverlay` — keeps its original array
+    // reference. Depending on the whole object meant every bucket swap during
+    // a slider drag re-ran fitBounds and the 3D tilt reset, snapping the
+    // camera back to the framed view and undoing whatever pan/zoom/tilt the
+    // user had just set. `coordinates` only actually changes when the area
+    // itself does, which is the one case this auto-fit is meant to cover.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show3DToggle, overlay?.coordinates, overlayReady, focusTree]);
 
   // Builds the full-timeline pool of flagged-tree pins once per overlay/area.
   // Positions come from the overlay's own image space (see generateTreePins),
@@ -1608,7 +1613,7 @@ export default function MapCanvas({
         const point = mapRef.current?.project([pin.lng, pin.lat]);
         const rect = mapRef.current?.getContainer().getBoundingClientRect();
         if (!point || !rect) return;
-        setActivePin({ pin, x: rect.left + point.x, y: rect.top + point.y });
+        setActivePin({ pin, monthIndex: displayMonthRef.current, x: rect.left + point.x, y: rect.top + point.y });
         setPinExpanded(false);
         onPinClick?.(pin.id);
       });
@@ -1683,23 +1688,41 @@ export default function MapCanvas({
     }
 
     const effectiveRange = range ?? { startIndex: 0, endIndex: snapshots.length - 1 };
+    // The END month, not the whole range. The population persists now, so every
+    // tree exists in every month; "the plot as of this date" is the reading
+    // that makes dragging the timeline into the final three months light up the
+    // dieback zones, with the same individuals staying lit rather than a fresh
+    // random set each frame.
+    const month = Math.max(0, Math.min(effectiveRange.endIndex, snapshots.length - 1));
+    displayMonthRef.current = month;
     const visible = pinsRef.current.filter(
       ({ pin }) =>
-        pin.monthIndex >= effectiveRange.startIndex &&
-        pin.monthIndex <= effectiveRange.endIndex &&
-        (visibleTreeIds === undefined || visibleTreeIds.has(pin.id)),
+        pinSeverityAt(pin, month) !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id)),
     );
     const visibleIds = new Set(visible.map(({ pin }) => pin.id));
 
+    // One marker per tree, repainted for the month on screen: show it only if
+    // this tree is flagged that month, and give it that month's colour. This is
+    // why the pool doesn't need a marker per (tree, month) — swapping a CSS
+    // variable is enough to move the whole map through time.
     pinsRef.current.forEach(({ pin, marker }) => {
-      marker.getElement().classList.toggle("tree-pin--hidden", !visibleIds.has(pin.id));
+      const severity = pinSeverityAt(pin, month);
+      const el = marker.getElement();
+      const show = severity !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id));
+      el.classList.toggle("tree-pin--hidden", !show);
+      if (severity) {
+        el.style.setProperty("--pin-color", SEVERITY_COLOR[severity]);
+        el.setAttribute("aria-label", `${CONDITION_LABEL[severity]} tree ${pin.id}`);
+      }
     });
 
-    setPinCounts({
-      Dead: visible.filter(({ pin }) => pin.severity === "Dead").length,
-      Declining: visible.filter(({ pin }) => pin.severity === "Declining").length,
-      Stressed: visible.filter(({ pin }) => pin.severity === "Stressed").length,
-    });
+    // Counted per condition band straight off the taxonomy, so adding or
+    // renaming a band never leaves a stale key behind here.
+    setPinCounts(
+      Object.fromEntries(
+        CONDITION_KEYS.map((key) => [key, visible.filter(({ pin }) => pinSeverityAt(pin, month) === key).length]),
+      ) as Record<ConditionKey, number>,
+    );
 
     // A pin that just faded out of range shouldn't leave its tooltip dangling.
     setActivePin((prev) => (prev && !visibleIds.has(prev.pin.id) ? null : prev));
@@ -1736,13 +1759,21 @@ export default function MapCanvas({
     // Open the flagged tree's tooltip once the camera settles — projecting any
     // earlier would place it against the pre-flight screen position. A healthy
     // tree simply has no pin to find, and the ring carries the selection alone.
+    //
+    // Only when the caller has no `onFocusArrived` of its own (AreasView):
+    // a caller that passes it (MapsView/App.tsx) is about to open its own
+    // bigger popover for this same tree, and showing this compact tooltip
+    // underneath it too meant both were open at once — this tooltip is that
+    // caller's fallback for when it doesn't have a bigger one of its own.
     function revealTooltip() {
-      const found = pinsRef.current.find(({ pin }) => pin.id === focusTree?.id);
-      if (found && map) {
-        const rect = map.getContainer().getBoundingClientRect();
-        const point = map.project([found.pin.lng, found.pin.lat]);
-        setActivePin({ pin: found.pin, x: rect.left + point.x, y: rect.top + point.y });
-        setPinExpanded(false);
+      if (!onFocusArrived) {
+        const found = pinsRef.current.find(({ pin }) => pin.id === focusTree?.id);
+        if (found && map) {
+          const rect = map.getContainer().getBoundingClientRect();
+          const point = map.project([found.pin.lng, found.pin.lat]);
+          setActivePin({ pin: found.pin, monthIndex: displayMonthRef.current, x: rect.left + point.x, y: rect.top + point.y });
+          setPinExpanded(false);
+        }
       }
       onFocusArrived?.(focusScreenPos());
     }
@@ -1890,7 +1921,7 @@ export default function MapCanvas({
         />
       )}
 
-      {loaded && !error && (
+      {chrome && loaded && !error && (
         <LayerPanel
           areaName={areaName ?? areaId ?? "Area"}
           visibility={layerVisibility}
@@ -1914,11 +1945,11 @@ export default function MapCanvas({
         />
       )}
 
-      {loaded && !error && generativeOverlay && !overlayMissing && (
-        <div className="absolute top-4 right-4 z-10 w-[196px] bg-white border border-[#d9d9d9] rounded-[10px] px-[12px] py-[10px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)]">
+      {chrome && loaded && !error && generativeOverlay && !overlayMissing && (
+        <div className="absolute top-4 right-4 z-10 w-[196px] bg-white rounded-[14px] px-[12px] py-[10px] shadow-[var(--elev-3)]">
           <div className="flex items-baseline justify-between mb-[6px] gap-2">
-            <span className="text-[12px] font-bold text-[#141414] font-['Inter',sans-serif]">Overlay height</span>
-            <span className="text-[12px] font-medium text-[#096151] font-['Inter',sans-serif] tabular-nums">
+            <span className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif]">Overlay height</span>
+            <span className="text-[12px] font-medium text-[#096151] font-['Outfit',sans-serif] tabular-nums">
               {generativeHeight} m
             </span>
           </div>
@@ -1932,13 +1963,13 @@ export default function MapCanvas({
             aria-label="Height of the generative canopy art and dying-trees overlays above the aerial image, in metres"
             className="w-full accent-[#096151] cursor-pointer"
           />
-          <p className="text-[10px] text-[#9a9a9a] font-['Inter',sans-serif] leading-[14px] mt-[4px]">
+          <p className="text-[10px] text-[#71717a] font-['Outfit',sans-serif] leading-[14px] mt-[4px]">
             {is3D ? "Distance above the aerial image — canopy art and dying-trees trace both lift together." : "Tilt into 3D to see the separation."}
           </p>
         </div>
       )}
 
-      {loaded && !error && (
+      {chrome && loaded && !error && (
         <MapToolbar
           onZoomIn={() => mapRef.current?.zoomIn({ duration: 300 })}
           onZoomOut={() => mapRef.current?.zoomOut({ duration: 300 })}
@@ -1981,10 +2012,10 @@ export default function MapCanvas({
         })()}
 
       {loaded && !error && overlay && overlayMissing && (
-        <div className="absolute bottom-4 left-4 z-10 bg-white border border-[#E0B4A0] rounded-[8px] px-[12px] py-[6px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08)] max-w-[420px]">
-          <span className="text-[12px] text-[#B4531F] font-['Inter',sans-serif]">
+        <div className="absolute bottom-4 left-4 z-10 bg-white border border-[#E0B4A0] rounded-[10px] px-[12px] py-[6px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08)] max-w-[420px]">
+          <span className="text-[12px] text-[#B4531F] font-['Outfit',sans-serif]">
             Overlay image not found — save it to{" "}
-            <code className="text-[11px] bg-[#f5f5f5] px-1 rounded">public{overlay.url}</code>
+            <code className="text-[11px] bg-[#f6f6f8] px-1 rounded">public{overlay.url}</code>
           </span>
         </div>
       )}

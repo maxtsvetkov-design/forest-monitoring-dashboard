@@ -1,4 +1,4 @@
-import { seededRandom } from "./random";
+import { CONDITION_LABEL, type ConditionKey } from "./taxonomy";
 import type { TreeRecord } from "./trees";
 
 export interface TreeHistoryEntry {
@@ -7,50 +7,76 @@ export interface TreeHistoryEntry {
   detail: string;
 }
 
-const HEALTH_ORDER: TreeRecord["health"][] = ["Healthy", "Stressed", "Declining", "Dead"];
-
-const HEALTH_NOTE: Record<TreeRecord["health"], string> = {
-  Healthy: "Canopy full, no visible stress.",
-  Stressed: "Early leaf discolouration noted.",
-  Declining: "Significant crown thinning observed.",
-  Dead: "No live canopy remaining.",
+const CONDITION_NOTE: Record<ConditionKey, string> = {
+  vigorous: "Full crown, strong new growth.",
+  normal: "Canopy healthy, no visible stress.",
+  moderate: "Some thinning and leaf discolouration.",
+  sparse: "Significant crown thinning observed.",
+  defoliated: "No live canopy remaining.",
 };
 
 /**
- * Synthesizes a plausible prior-survey timeline for one tree, ending exactly
- * at its actual recorded health — there is no real longitudinal record behind
- * a mock tree, so this fabricates one deterministically rather than leaving
- * the tree modal's history section empty. Seeded by the tree's own id, so
- * reopening the same tree always shows the same timeline instead of
- * reshuffling on every click.
+ * This tree's actual survey history, read straight off its condition timeline.
  *
- * The walk moves backward from the current health toward "Healthy" one rank
- * at a time, so a "Dead" tree reads as a decline over several visits rather
- * than a single unexplained jump.
+ * It used to fabricate one: there was no longitudinal record behind a mock
+ * tree, because the old data model rebuilt a fresh batch of trees every month,
+ * so "this tree last March" did not exist as a thing to look up. All this
+ * function could do was walk a plausible-looking decline backwards from the
+ * tree's current state and hope it read as a history.
+ *
+ * With a persistent population (see treePopulation.ts) the history is real:
+ * every tree carries the condition it was actually in for each month of the
+ * window, and those are the same values the donut counted and the map pinned.
+ * So the modal now reports what happened to this individual rather than a
+ * story invented at the moment it was opened — and for a tree in the dieback
+ * zone, that history genuinely shows a year of recovery followed by the
+ * collapse of the last three months.
+ *
+ * Returns newest-last (oldest first), matching how the modal renders it.
  */
-export function generateTreeHistory(tree: TreeRecord, surveyCount = 4): TreeHistoryEntry[] {
-  const rand = seededRandom(`history:${tree.id}`);
-  const targetRank = HEALTH_ORDER.indexOf(tree.health);
+export function generateTreeHistory(
+  tree: TreeRecord,
+  /**
+   * Real date per month index, oldest first. Optional: the window always ends
+   * at the current calendar month, so counting back from today reproduces the
+   * same dates — a caller deep in the component tree doesn't have to drill the
+   * snapshots down just to label a timeline.
+   */
+  monthDates: Date[] = [],
+  surveyCount = 6,
+): TreeHistoryEntry[] {
+  const history = tree.conditionHistory;
+  if (history.length === 0) return [];
 
-  let rank = targetRank;
-  const ranks: number[] = [rank];
-  for (let i = 1; i < surveyCount; i++) {
-    if (rank > 0 && rand() < 0.7) rank -= 1;
-    ranks.push(rank);
+  // The window ends at the month this record is from, so opening a tree while
+  // the timeline sits in March shows its history up to March, not a spoiler of
+  // the months after it.
+  const end = Math.min(tree.monthIndex, history.length - 1);
+  const start = Math.max(0, end - surveyCount + 1);
+
+  const entries: TreeHistoryEntry[] = [];
+  for (let m = start; m <= end; m++) {
+    const condition = history[m];
+    const previous = m > 0 ? history[m - 1] : null;
+    const changed = previous !== null && previous !== condition;
+
+    entries.push({
+      // Falls back to a computed month if the caller didn't pass dates, so this
+      // never renders an Invalid Date.
+      date: monthDates[m] ?? monthFallback(history.length - 1 - m),
+      label:
+        m === end ? "Most recent survey" : changed ? `Condition changed to ${CONDITION_LABEL[condition]}` : "Field survey",
+      detail:
+        `Condition recorded as ${CONDITION_LABEL[condition]}. ${CONDITION_NOTE[condition]}` +
+        (changed ? ` Previously ${CONDITION_LABEL[previous]}.` : ""),
+    });
   }
-  ranks.reverse(); // oldest first
+  return entries;
+}
 
-  // Surveys land roughly monthly, spaced back from today.
-  return ranks.map((r, i) => {
-    const monthsBack = surveyCount - 1 - i;
-    const date = new Date();
-    date.setMonth(date.getMonth() - monthsBack);
-    date.setDate(1 + Math.floor(rand() * 26));
-    const health = HEALTH_ORDER[r];
-    return {
-      date,
-      label: i === surveyCount - 1 ? "Most recent survey" : "Field survey",
-      detail: `Condition recorded as ${health}. ${HEALTH_NOTE[health]}`,
-    };
-  });
+function monthFallback(monthsBack: number): Date {
+  const date = new Date();
+  date.setMonth(date.getMonth() - monthsBack);
+  date.setDate(15);
+  return date;
 }

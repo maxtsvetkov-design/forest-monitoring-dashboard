@@ -1,19 +1,50 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
+import { eventsInRange, generateEvents, type TreeEvent } from "../data/events";
 import {
   areaDyingTreeOverlays,
   areaGenerativeOverlays,
   areaOverlays,
+  dyingTreeOverlayForRange,
   getTimelapseImages,
   timelapseBucketIndex,
 } from "../data/overlays";
-import { generateTreeRecords } from "../data/trees";
+import { generateTreeRecordsAt } from "../data/trees";
 import { clamp, useDragResize } from "../hooks/useDragResize";
-import { useTreeFilters } from "../hooks/useTreeFilters";
+import { applyPendingFilter, useTreeFilters, type PendingAreaFilter } from "../hooks/useTreeFilters";
 import type { ContentLayerId } from "./LayerPanel";
 import MapCanvas from "./MapCanvas";
+import RecentEventsList from "./RecentEventsList";
 import TreeTable from "./TreeTable";
+
+type RightPanel = "table" | "events";
+
+/** Small segmented control — the right pane's own view switch, distinct
+ * from the top-bar's Insights/Areas/Maps/Assets tabs one level up. */
+function RightPanelSwitcher({ value, onChange }: { value: RightPanel; onChange: (v: RightPanel) => void }) {
+  const OPTIONS: { key: RightPanel; label: string }[] = [
+    { key: "table", label: "Trees table" },
+    { key: "events", label: "Recent events" },
+  ];
+  return (
+    <div className="inline-flex gap-[2px] bg-[#f6f6f8] border border-[#dedee3] rounded-[10px] p-[2px] shrink-0">
+      {OPTIONS.map((opt) => (
+        <button
+          key={opt.key}
+          type="button"
+          onClick={() => onChange(opt.key)}
+          aria-pressed={value === opt.key}
+          className={`u-press px-[10px] py-[4px] rounded-[6px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
+            value === opt.key ? "bg-[#096151] text-white" : "text-[#5b5b66] hover:text-[#18181c]"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // Neither pane may be squeezed to uselessness: below ~30% the map is too small
 // to orient in and the table can't show a single full row.
@@ -26,10 +57,8 @@ export default function AreasView({
   area,
   range,
   isTimelinePlaying,
-  pendingHealthFilter,
-  onPendingHealthFilterApplied,
-  pendingCrownFilter,
-  onPendingCrownFilterApplied,
+  pendingFilter,
+  onPendingFilterApplied,
   layerVisibility,
   onLayerVisibilityChange,
   layerOpacity,
@@ -42,13 +71,10 @@ export default function AreasView({
   /** Whether the timeline's play button is currently stepping through
    * months — see MapCanvas's canopy gradient pulse. */
   isTimelinePlaying?: boolean;
-  /** A health value handed over from outside (the Insights donut's slices) to
-   * apply once, then consumed — see App.tsx's pendingHealthFilter. */
-  pendingHealthFilter?: string | null;
-  onPendingHealthFilterApplied?: () => void;
-  /** A crown-radius bucket (b1..b5) handed over from the Insights treemap. */
-  pendingCrownFilter?: string | null;
-  onPendingCrownFilterApplied?: () => void;
+  /** A filter handed over from a clicked Insights widget, to apply once and
+   * then report consumed — see App.tsx's pendingFilter. */
+  pendingFilter?: PendingAreaFilter | null;
+  onPendingFilterApplied?: () => void;
   /** Shared across every map view — see App.tsx. */
   layerVisibility: Record<ContentLayerId, boolean>;
   onLayerVisibilityChange: Dispatch<SetStateAction<Record<ContentLayerId, boolean>>>;
@@ -72,43 +98,51 @@ export default function AreasView({
     [baseOverlay, timelapseImages, timelapseBucket],
   );
 
-  // The single source of truth for individual trees — the map's flagged pins
-  // are a projection of this same pool (see treePins.ts), so the two views can
-  // never disagree about how many trees a given month flagged.
-  const allRecords = useMemo(
-    () => generateTreeRecords(overlay, area.id, area.snapshots),
-    [overlay, area.id, area.snapshots],
+  // Same "as of the range's end month" rule as the tree inventory below —
+  // dragging into the final three months escalates this from the mild frame
+  // to the severe one.
+  const dyingTreeOverlay = useMemo(
+    () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, range, area.snapshots.length),
+    [area.id, area.snapshots.length, range.endIndex],
   );
 
-  // Exactly the rule MapCanvas applies to pins, so table rows and map pins
-  // appear and disappear together as the timeline moves.
+  // The plot's standing inventory as of the LAST month in the selected range:
+  // one row per tree, showing the condition that tree was in that month.
+  //
+  // Not every month in the range concatenated together — the population
+  // persists now (see treePopulation.ts), so a tree exists in all twelve
+  // months and listing the range would repeat every tree once per month
+  // selected. "The plot as it stands at this date" is both the smaller list
+  // and the true one, and it is exactly the rule MapCanvas applies to pins, so
+  // rows and pins keep showing the same trees.
   const inRange = useMemo(
-    () => allRecords.filter((t) => t.monthIndex >= range.startIndex && t.monthIndex <= range.endIndex),
-    [allRecords, range],
+    () => generateTreeRecordsAt(overlay, area.id, area.snapshots, range.endIndex),
+    [overlay, area.id, area.snapshots, range.endIndex],
   );
 
   const filters = useTreeFilters(inRange);
 
-  // Applies a filter handed in from outside the table (a donut slice click on
+  // Same source and range-filtering as the Insights sidebar's own Recent
+  // Events list (App.tsx) — generated off the base (non-timelapse-swapped)
+  // overlay there too, so switching to this panel here shows the identical
+  // set rather than a second, independently-rolled one.
+  const areaEvents = useMemo(() => generateEvents(baseOverlay, area.snapshots, area.id), [baseOverlay, area.snapshots, area.id]);
+  const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
+
+  const [rightPanel, setRightPanel] = useState<RightPanel>("table");
+
+  // Applies a filter handed in from outside the table (a clicked widget on
   // Insights) exactly once, then reports it consumed so App.tsx clears the
   // pending value — otherwise navigating back to Areas later would re-apply a
   // stale filter the user never asked for on that visit.
   useEffect(() => {
-    if (!pendingHealthFilter) return;
-    filters.setHealthOnly(pendingHealthFilter);
-    onPendingHealthFilterApplied?.();
-    // filters and onPendingHealthFilterApplied are stable across renders of
-    // this hook/prop, and including them would re-fire on every filter change.
+    if (!pendingFilter) return;
+    applyPendingFilter(filters, pendingFilter);
+    onPendingFilterApplied?.();
+    // filters and onPendingFilterApplied are stable across renders of this
+    // hook/prop, and including them would re-fire on every filter change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingHealthFilter]);
-
-  // Same one-shot handover for a crown-radius band clicked on the treemap.
-  useEffect(() => {
-    if (!pendingCrownFilter) return;
-    filters.setCrownOnly(pendingCrownFilter);
-    onPendingCrownFilterApplied?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingCrownFilter]);
+  }, [pendingFilter]);
 
   // The map honours the same filters as the table. Memoised so the identity is
   // stable — MapCanvas's visibility effect depends on this set, and a fresh one
@@ -132,6 +166,16 @@ export default function AreasView({
   // an action that only asked to highlight a table row would be an
   // unrequested camera hijack, not a convenience.
   const [flyToId, setFlyToId] = useState<string | null>(null);
+
+  // An event's tree is selected/flown-to exactly like a table row click —
+  // this panel and the table are two views onto the same right-hand pane
+  // for the same map, so "select this tree" should mean the same thing
+  // from either one rather than jumping to a different tab.
+  function handleSelectEvent(event: TreeEvent) {
+    setSelectedId(event.tree.id);
+    setFlyToId(event.tree.id);
+    setRightPanel("table");
+  }
 
   // Derived from the visible set rather than stored alongside it: a tree that
   // the timeline or a filter has just excluded should stop being focused, and
@@ -163,7 +207,7 @@ export default function AreasView({
         zoom={11.5}
         overlay={overlay}
         generativeOverlay={areaGenerativeOverlays[area.id]}
-        dyingTreeOverlay={areaDyingTreeOverlays[area.id]}
+        dyingTreeOverlay={dyingTreeOverlay}
         areaId={area.id}
         areaName={area.name}
         snapshots={area.snapshots}
@@ -214,18 +258,27 @@ export default function AreasView({
         }`}
       />
 
-      <div className="flex-1 min-w-0 h-[calc(100vh_-_150px)] min-h-[400px] mt-[10px]">
-        <TreeTable
-          records={inRange}
-          filters={filters}
-          areaName={area.name}
-          onSelect={(t) => {
-            setSelectedId(t.id);
-            setFlyToId(t.id);
-          }}
-          selectedId={selectedId}
-          hoveredId={hoveredId}
-        />
+      <div className="flex-1 min-w-0 h-[calc(100vh_-_150px)] min-h-[400px] mt-[10px] flex flex-col gap-[8px]">
+        <div className="flex justify-center shrink-0">
+          <RightPanelSwitcher value={rightPanel} onChange={setRightPanel} />
+        </div>
+        <div className="flex-1 min-h-0">
+          {rightPanel === "table" ? (
+            <TreeTable
+              records={inRange}
+              filters={filters}
+              areaName={area.name}
+              onSelect={(t) => {
+                setSelectedId(t.id);
+                setFlyToId(t.id);
+              }}
+              selectedId={selectedId}
+              hoveredId={hoveredId}
+            />
+          ) : (
+            <RecentEventsList events={visibleEvents} delay={0} onSelectEvent={handleSelectEvent} />
+          )}
+        </div>
       </div>
     </div>
   );

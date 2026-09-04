@@ -7,28 +7,21 @@ import type {
   ScatterSeries,
 } from "./types";
 import { scatterCategories, scatterPosition, speciesColor, speciesLabel } from "./scatterLayout";
+import { CONDITIONS, SPECIES } from "./taxonomy";
 
 export interface DateRange {
   startIndex: number;
   endIndex: number; // inclusive
 }
 
-const SPECIES_META = [
-  { key: "ghaf" as const, name: "Ghaf canopy", color: "#E07B39" },
-  { key: "sidr" as const, name: "Sidr underneath", color: "#1A9E7A" },
-  { key: "palm" as const, name: "Palm beneath", color: "#5BA4CF" },
-];
+// Both derived from the taxonomy table rather than restated here, so the
+// donut, the map pins and the table legend cannot end up assigning the same
+// species or condition two different colours.
+const SPECIES_META = SPECIES.map((s) => ({ key: s.key, name: s.common, color: s.color }));
 
-// Dead is shown alongside the other three: with the recovery dataset it is a
-// quarter of the plot in the earliest months and near-nothing in the latest, so
-// leaving it out would hide the most striking part of the change. Colours match
-// the map's degrading-tree pins (see treePins.ts) so the two views read as one.
-const HEALTH_META = [
-  { key: "healthy" as const, name: "Healthy", color: "#24A67A" },
-  { key: "stressed" as const, name: "Stressed", color: "#F0B429" },
-  { key: "declining" as const, name: "Declining", color: "#E55C2F" },
-  { key: "dead" as const, name: "Dead", color: "#8C8C8C" },
-];
+// Shown best-first, the reverse of CONDITIONS' worst-first severity order, so
+// the donut reads top-down from Vigorous to Defoliated.
+const HEALTH_META = [...CONDITIONS].reverse().map((c) => ({ key: c.key, name: c.label, color: c.color }));
 
 const DIAMETER_META = [
   { key: "L" as const, name: "L (>5 m)", color: "#E07B39" },
@@ -50,12 +43,29 @@ const CROWN_META = [
   { key: "b5" as const, label: "0.8 – 1.2", color: "#C8B420" },
 ];
 
-function sumBy<K extends string>(
+/**
+ * The count for one category as of the LAST month in the range, not summed
+ * across it.
+ *
+ * This changed with the move to a persistent population (treePopulation.ts).
+ * When each month invented its own fresh batch of trees, adding twelve months
+ * together was the only way to get a plot-sized number. Now the same ~340
+ * trees are present in every month, so summing would report twelve times the
+ * trees that exist — which is exactly what the old "13,353 total" donut labels
+ * were, for a plot with roughly a thousand trees in it.
+ *
+ * Reading the final month instead makes every total a real inventory: "this is
+ * the plot as it stands at the end of the window you selected". Dragging the
+ * range end backwards now walks the population back through its own history
+ * rather than just adding up fewer copies of it.
+ */
+function countAtEnd<K extends string>(
   months: MonthSnapshot[],
   field: "speciesCounts" | "healthCounts" | "diameterCounts" | "heightCounts" | "crownCounts",
   key: K,
 ): number {
-  return months.reduce((total, m) => total + (m[field] as Record<K, number>)[key], 0);
+  const last = months[months.length - 1];
+  return last ? (last[field] as Record<K, number>)[key] : 0;
 }
 
 function rangeMonths(all: MonthSnapshot[], range: DateRange): MonthSnapshot[] {
@@ -69,12 +79,36 @@ function previousRange(range: DateRange): DateRange | null {
   return prevStart >= 0 ? { startIndex: prevStart, endIndex: prevEnd } : null;
 }
 
+/** Standing inventory at the end of the range — see countAtEnd for why this
+ * is a read rather than a sum. */
 function totalTreesFor(months: MonthSnapshot[]): number {
-  return months.reduce((total, m) => total + m.newTreesLogged, 0);
+  return months[months.length - 1]?.newTreesLogged ?? 0;
 }
 
+/** Trees in an unflagged condition (Normal or Vigorous) as of the range's
+ * last month — same end-of-range read as totalTreesFor, since the population
+ * persists and summing months would multiply the count by how many months
+ * are selected. */
+function healthyTreesFor(months: MonthSnapshot[]): number {
+  const last = months[months.length - 1];
+  if (!last) return 0;
+  return last.healthCounts.vigorous + last.healthCounts.normal;
+}
+
+/**
+ * Canopy cover as of the range's LAST month, matching countAtEnd rather than
+ * averaging across the window.
+ *
+ * Averaging actively hid the story. Over a range that runs from a degraded
+ * October to a dieback in September, the mean sits somewhere in the middle and
+ * reports a placid 34% for a plot that climbed to 50% and then fell back to
+ * 41% — the two things anyone would want to see, cancelled against each other.
+ * Reading the end month makes every KPI on the row describe the same instant
+ * ("the plot as it stands at the end of your selection") and leaves the
+ * period-over-period delta to carry the direction of travel.
+ */
 function avgCanopyFor(months: MonthSnapshot[]): number {
-  return months.reduce((total, m) => total + m.canopyCoverPct, 0) / months.length;
+  return months[months.length - 1]?.canopyCoverPct ?? 0;
 }
 
 // No spectral-band imagery backs this dataset, so NDVI is derived rather than
@@ -85,36 +119,42 @@ function avgCanopyFor(months: MonthSnapshot[]): number {
 // inventing an independent, disconnected number.
 function ndviFor(month: MonthSnapshot): number {
   const c = month.healthCounts;
-  const total = c.healthy + c.stressed + c.declining + c.dead || 1;
-  const healthyFrac = c.healthy / total;
-  const raw = 0.15 + 0.55 * (month.canopyCoverPct / 100) + 0.3 * healthyFrac;
+  const total = CONDITIONS.reduce((sum, cond) => sum + c[cond.key], 0) || 1;
+  // The two unflagged bands are the "reads green from above" fraction.
+  const greenFrac = (c.vigorous + c.normal) / total;
+  const raw = 0.15 + 0.55 * (month.canopyCoverPct / 100) + 0.3 * greenFrac;
   return Math.max(0, Math.min(1, raw));
 }
 
+/** End of range — see avgCanopyFor. */
 function avgNdviFor(months: MonthSnapshot[]): number {
-  return months.reduce((total, m) => total + ndviFor(m), 0) / months.length;
+  const last = months[months.length - 1];
+  return last ? ndviFor(last) : 0;
 }
 
-// A single 0-100 "how is this tree doing" figure, letting Average health
-// score plot one line instead of four separate category counts. Dead trees
-// score 0, healthy trees 100 -- the two intermediate categories split the
-// range roughly where "stressed but alive" and "actively declining" belong.
-const HEALTH_SCORE_WEIGHT: Record<HealthKey, number> = { healthy: 100, stressed: 60, declining: 30, dead: 0 };
+// A single 0-100 "how is this plot doing" figure, letting Average health score
+// plot one line instead of five separate category counts. A fully defoliated
+// canopy scores 0 and a vigorous one 100, with the middle bands spaced evenly
+// across the range the five-step scale describes.
+const HEALTH_SCORE_WEIGHT: Record<HealthKey, number> = {
+  defoliated: 0,
+  sparse: 25,
+  moderate: 50,
+  normal: 78,
+  vigorous: 100,
+};
 
 function healthScoreFor(month: MonthSnapshot): number {
   const c = month.healthCounts;
-  const total = c.healthy + c.stressed + c.declining + c.dead || 1;
-  return (
-    (c.healthy * HEALTH_SCORE_WEIGHT.healthy +
-      c.stressed * HEALTH_SCORE_WEIGHT.stressed +
-      c.declining * HEALTH_SCORE_WEIGHT.declining +
-      c.dead * HEALTH_SCORE_WEIGHT.dead) /
-    total
-  );
+  const total = CONDITIONS.reduce((sum, cond) => sum + c[cond.key], 0) || 1;
+  const weighted = CONDITIONS.reduce((sum, cond) => sum + c[cond.key] * HEALTH_SCORE_WEIGHT[cond.key], 0);
+  return weighted / total;
 }
 
+/** End of range — see avgCanopyFor. */
 function avgHealthScoreFor(months: MonthSnapshot[]): number {
-  return months.reduce((total, m) => total + healthScoreFor(m), 0) / months.length;
+  const last = months[months.length - 1];
+  return last ? healthScoreFor(last) : 0;
 }
 
 /**
@@ -159,22 +199,20 @@ function ecosystemConditionFor(ndvi: number, healthScore: number, change: number
  * makes narrowing the range visibly shrink the bubbles.
  */
 export function maxScatterCount(all: MonthSnapshot[]): number {
-  // The chart's own z value is a SUM across every month in the selected range
-  // (see scatterSeries below), not a single month's count — so the ceiling
-  // has to be the largest such sum too, or a real full-range value legitimately
-  // exceeds it and every over-ceiling point silently clamps to the same
-  // maximum radius, which is what made two different ranges render identically
-  // despite genuinely different totals.
-  const totals: Record<string, number> = {};
+  // The chart's z is a single month's count (see scatterSeries below), so the
+  // ceiling is the largest single (species, condition) count anywhere in the
+  // window — the peak any bubble can legitimately reach. Anchoring every render
+  // to this one fixed number is what makes moving the range visibly resize the
+  // bubbles instead of Recharts re-normalising each frame to its own maximum.
+  let peak = 1;
   for (const m of all) {
-    for (const [species, categories] of Object.entries(m.scatterCounts)) {
-      for (const [category, count] of Object.entries(categories as Record<string, number>)) {
-        const key = `${species}:${category}`;
-        totals[key] = (totals[key] ?? 0) + count;
+    for (const categories of Object.values(m.scatterCounts)) {
+      for (const count of Object.values(categories as Record<string, number>)) {
+        if (count > peak) peak = count;
       }
     }
   }
-  return Math.max(1, ...Object.values(totals));
+  return peak;
 }
 
 export function aggregateRange(all: MonthSnapshot[], range: DateRange): AggregatedSnapshot {
@@ -183,6 +221,7 @@ export function aggregateRange(all: MonthSnapshot[], range: DateRange): Aggregat
   const prevMonths = prev ? rangeMonths(all, prev) : null;
 
   const totalTrees = totalTreesFor(months);
+  const healthyTrees = healthyTreesFor(months);
   const canopyCoverPct = avgCanopyFor(months);
   const ndvi = avgNdviFor(months);
   const healthScore = avgHealthScoreFor(months);
@@ -195,7 +234,7 @@ export function aggregateRange(all: MonthSnapshot[], range: DateRange): Aggregat
     change: prevConditionScore !== null ? ecosystemConditionValue.score - prevConditionScore : null,
   };
 
-  const crownCounts = CROWN_META.map((c) => ({ ...c, count: sumBy(months, "crownCounts", c.key) }));
+  const crownCounts = CROWN_META.map((c) => ({ ...c, count: countAtEnd(months, "crownCounts", c.key) }));
   const crownTotal = crownCounts.reduce((s, c) => s + c.count, 0) || 1;
   const crownData: CrownBucketDatum[] = crownCounts.map((c) => ({
     label: c.label,
@@ -205,9 +244,9 @@ export function aggregateRange(all: MonthSnapshot[], range: DateRange): Aggregat
   }));
 
   const matureCrownPct = (m: MonthSnapshot[]): number => {
-    const total = sumBy(m, "crownCounts", "b1") + sumBy(m, "crownCounts", "b2") + sumBy(m, "crownCounts", "b3") +
-      sumBy(m, "crownCounts", "b4") + sumBy(m, "crownCounts", "b5") || 1;
-    return ((sumBy(m, "crownCounts", "b4") + sumBy(m, "crownCounts", "b5")) / total) * 100;
+    const total = countAtEnd(m, "crownCounts", "b1") + countAtEnd(m, "crownCounts", "b2") + countAtEnd(m, "crownCounts", "b3") +
+      countAtEnd(m, "crownCounts", "b4") + countAtEnd(m, "crownCounts", "b5") || 1;
+    return ((countAtEnd(m, "crownCounts", "b4") + countAtEnd(m, "crownCounts", "b5")) / total) * 100;
   };
   const crownMaturePctValue = matureCrownPct(months);
 
@@ -216,7 +255,10 @@ export function aggregateRange(all: MonthSnapshot[], range: DateRange): Aggregat
     color: speciesColor[key],
     data: scatterCategories.map((category) => {
       const pos = scatterPosition(key, category);
-      const z = months.reduce((total, m) => total + m.scatterCounts[key][category], 0);
+      // End-of-range, for the same reason countAtEnd exists: the population
+      // persists, so summing months would multiply every bubble by the number
+      // of months selected instead of sizing it by the trees actually there.
+      const z = months[months.length - 1]?.scatterCounts[key][category] ?? 0;
       return { ...pos, z, species: speciesLabel[key], color, category };
     }),
   }));
@@ -225,6 +267,10 @@ export function aggregateRange(all: MonthSnapshot[], range: DateRange): Aggregat
     totalTrees: {
       value: totalTrees,
       change: prevMonths ? totalTrees - totalTreesFor(prevMonths) : null,
+    },
+    healthyTrees: {
+      value: healthyTrees,
+      change: prevMonths ? healthyTrees - healthyTreesFor(prevMonths) : null,
     },
     canopyCoverPct: {
       value: canopyCoverPct,
@@ -237,10 +283,10 @@ export function aggregateRange(all: MonthSnapshot[], range: DateRange): Aggregat
     ecosystemCondition,
     mostRecentSurvey: months[months.length - 1].date,
     lastActivity: months[months.length - 1].date,
-    speciesData: SPECIES_META.map((s) => ({ name: s.name, color: s.color, value: sumBy(months, "speciesCounts", s.key) })),
-    healthData: HEALTH_META.map((h) => ({ name: h.name, color: h.color, value: sumBy(months, "healthCounts", h.key) })),
-    diameterData: DIAMETER_META.map((d) => ({ name: d.name, color: d.color, value: sumBy(months, "diameterCounts", d.key) })),
-    heightData: HEIGHT_META.map((h) => ({ name: h.name, color: h.color, value: sumBy(months, "heightCounts", h.key) })),
+    speciesData: SPECIES_META.map((s) => ({ name: s.name, color: s.color, value: countAtEnd(months, "speciesCounts", s.key) })),
+    healthData: HEALTH_META.map((h) => ({ name: h.name, color: h.color, value: countAtEnd(months, "healthCounts", h.key) })),
+    diameterData: DIAMETER_META.map((d) => ({ name: d.name, color: d.color, value: countAtEnd(months, "diameterCounts", d.key) })),
+    heightData: HEIGHT_META.map((h) => ({ name: h.name, color: h.color, value: countAtEnd(months, "heightCounts", h.key) })),
     crownData,
     crownMaturePct: {
       value: crownMaturePctValue,

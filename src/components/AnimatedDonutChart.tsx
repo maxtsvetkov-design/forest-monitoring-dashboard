@@ -27,17 +27,17 @@ function DonutCenterStat({
   return (
     <div className="donut-center-pop flex flex-col items-center justify-center pointer-events-none px-2">
       <span
-        className="text-[19px] font-bold font-['Inter',sans-serif] leading-none tabular-nums"
+        className="text-[19px] font-bold font-['Outfit',sans-serif] leading-none tabular-nums"
         style={{ color }}
       >
         {Math.round(animatedValue).toLocaleString()}
       </span>
       {percent !== null && (
-        <span className="text-[10px] font-bold font-['Inter',sans-serif] mt-[1px]" style={{ color }}>
+        <span className="text-[10px] font-bold font-['Outfit',sans-serif] mt-[1px]" style={{ color }}>
           {percent.toFixed(1)}%
         </span>
       )}
-      <span className="text-[9px] text-[#9a9a9a] font-medium font-['Inter',sans-serif] mt-[2px] max-w-[76px] text-center leading-[11px] truncate">
+      <span className="text-[9px] text-[#71717a] font-medium font-['Outfit',sans-serif] mt-[2px] max-w-[76px] text-center leading-[11px] truncate">
         {label}
       </span>
     </div>
@@ -49,6 +49,7 @@ export default function AnimatedDonutChart({
   title,
   delay,
   onSliceClick,
+  legendColumns = 1,
 }: {
   data: CategoryDatum[];
   title: string;
@@ -57,6 +58,10 @@ export default function AnimatedDonutChart({
    * back with that row's `name`. Used by the health chart to jump into Areas
    * pre-filtered to the clicked condition — see App.tsx. */
   onSliceClick?: (name: string) => void;
+  /** 1 (default) stacks the legend as a single list; 2 wraps it into a
+   * two-column grid instead — for the species legend, which at 11 rows runs
+   * noticeably taller than every other donut on the row otherwise. */
+  legendColumns?: 1 | 2;
 }) {
   const [mounted, setMounted] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -69,13 +74,13 @@ export default function AnimatedDonutChart({
 
   return (
     <div
-      className="flex-1 min-w-0 bg-[#f4f2f0] border border-[rgba(0,0,0,0.09)] rounded-[12px] p-[12px] flex flex-col gap-[6px] animate-fade-in-up shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)] hover:shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] transition-shadow duration-200 group"
+      className="flex-1 min-w-0 surface-card p-[14px] flex flex-col gap-[6px] animate-fade-in-up surface-card--interactive group"
       style={{ animationDelay: `${delay}ms` }}
     >
       {/* Header */}
       <div className="flex items-center justify-between w-full shrink-0">
         <div className="flex items-center gap-[6px]">
-          <span className="text-[14px] font-bold text-[#141414] leading-[22px] font-['Inter',sans-serif] truncate">
+          <span className="text-[14px] font-bold text-[#18181c] leading-[22px] font-['Outfit',sans-serif] truncate">
             {title}
           </span>
           <img src={imgIcInfoCircle} alt="info" className="w-4 h-4 opacity-50 group-hover:opacity-80 transition-opacity" />
@@ -137,13 +142,15 @@ export default function AnimatedDonutChart({
             label={hoveredIndex !== null ? data[hoveredIndex].name : "Total"}
             value={hoveredIndex !== null ? data[hoveredIndex].value : total}
             percent={hoveredIndex !== null ? (data[hoveredIndex].value / total) * 100 : null}
-            color={hoveredIndex !== null ? data[hoveredIndex].color : "#141414"}
+            color={hoveredIndex !== null ? data[hoveredIndex].color : "#18181c"}
           />
         </div>
       </div>
 
       {/* Legend */}
-      <div className="flex flex-col gap-[4px] w-full">
+      <div
+        className={`w-full ${legendColumns === 2 ? "grid grid-cols-2 gap-x-[8px] gap-y-[4px]" : "flex flex-col gap-[4px]"}`}
+      >
         {data.map((d, i) => (
           <div
             key={d.name}
@@ -159,7 +166,7 @@ export default function AnimatedDonutChart({
                   }
                 : undefined
             }
-            className={`u-press flex items-center gap-[4px] w-full group/item hover:bg-white/50 rounded px-1 py-0.5 ${
+            className={`u-press flex items-center gap-[4px] min-w-0 w-full group/item hover:bg-white/50 rounded px-1 py-0.5 ${
               onSliceClick ? "cursor-pointer" : ""
             }`}
             onMouseEnter={() => setHoveredIndex(i)}
@@ -167,12 +174,12 @@ export default function AnimatedDonutChart({
           >
             <div className="flex items-center gap-[6px] shrink-0">
               <div className="w-[11px] h-[11px] rounded-sm shrink-0" style={{ background: d.color }} />
-              <span className="text-[12px] text-[#141414] font-normal font-['Inter',sans-serif] whitespace-nowrap">
+              <span className="text-[12px] text-[#18181c] font-normal font-['Outfit',sans-serif] whitespace-nowrap">
                 {d.name}
               </span>
             </div>
             <div className="flex-1 border-t border-dashed border-[#d4d0cd] mx-1" />
-            <span className="text-[12px] text-[#141414] font-normal font-['Inter',sans-serif] shrink-0">
+            <span className="text-[12px] text-[#18181c] font-normal font-['Outfit',sans-serif] shrink-0">
               {d.value.toLocaleString()}
             </span>
           </div>

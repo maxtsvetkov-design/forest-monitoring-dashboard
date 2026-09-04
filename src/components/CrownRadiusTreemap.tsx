@@ -19,7 +19,7 @@ function CrownDotField({ count, divisor }: { count: number; divisor: number }) {
   const dots = Math.max(1, Math.round(count / divisor));
   return (
     <div
-      className="absolute inset-0 flex flex-wrap content-start gap-[3px] p-[8px] pointer-events-none overflow-hidden"
+      className="absolute inset-0 flex flex-wrap content-start gap-[3px] p-[14px] pointer-events-none overflow-hidden"
       aria-hidden="true"
     >
       {Array.from({ length: dots }, (_, i) => (
@@ -55,12 +55,12 @@ export default function CrownRadiusTreemap({
 
   return (
     <div
-      className="flex-1 min-w-0 bg-white border border-[rgba(0,0,0,0.06)] rounded-[12px] p-[12px] flex flex-col gap-[10px] animate-fade-in-up shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)] hover:shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] transition-shadow duration-200 group"
+      className="flex-1 min-w-0 surface-card p-[14px] flex flex-col gap-[10px] animate-fade-in-up surface-card--interactive group"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-[6px]">
-          <span className="text-[14px] font-bold text-[#141414] leading-[22px] font-['Inter',sans-serif]">
+          <span className="text-[14px] font-bold text-[#18181c] leading-[22px] font-['Outfit',sans-serif]">
             Tree count - by crown radius
           </span>
           <img src={imgIcInfoCircle} alt="info" className="u-icon w-4 h-4 opacity-50 group-hover:opacity-80" />
@@ -93,7 +93,7 @@ export default function CrownRadiusTreemap({
                     }
                   : undefined
               }
-              className="relative flex items-end p-3 rounded-[8px] cursor-pointer transition-all duration-200 overflow-hidden"
+              className="relative flex items-end p-3 rounded-[10px] cursor-pointer transition-all duration-200 overflow-hidden"
               style={{
                 flex: d.pct,
                 background: d.color,
@@ -105,9 +105,9 @@ export default function CrownRadiusTreemap({
             >
               <CrownDotField count={d.count} divisor={dotDivisor} />
               <div className="absolute top-3 left-3">
-                <span className="text-white text-[13px] font-medium font-['Inter',sans-serif]">{d.label}</span>
+                <span className="text-white text-[13px] font-medium font-['Outfit',sans-serif]">{d.label}</span>
               </div>
-              <span className="text-white text-[20px] font-bold font-['Inter',sans-serif]">{d.pct}%</span>
+              <span className="text-white text-[20px] font-bold font-['Outfit',sans-serif]">{d.pct}%</span>
             </div>
           ))}
         </div>
@@ -128,7 +128,7 @@ export default function CrownRadiusTreemap({
                     }
                   : undefined
               }
-              className="relative flex items-end p-3 rounded-[8px] cursor-pointer transition-all duration-200 overflow-hidden"
+              className="relative flex items-end p-3 rounded-[10px] cursor-pointer transition-all duration-200 overflow-hidden"
               style={{
                 flex: d.pct,
                 background: d.color,
@@ -140,9 +140,9 @@ export default function CrownRadiusTreemap({
             >
               <CrownDotField count={d.count} divisor={dotDivisor} />
               <div className="absolute top-3 left-3">
-                <span className="text-white text-[12px] font-medium font-['Inter',sans-serif]">{d.label}</span>
+                <span className="text-white text-[12px] font-medium font-['Outfit',sans-serif]">{d.label}</span>
               </div>
-              <span className="text-white text-[18px] font-bold font-['Inter',sans-serif]">{d.pct}%</span>
+              <span className="text-white text-[18px] font-bold font-['Outfit',sans-serif]">{d.pct}%</span>
             </div>
           ))}
         </div>

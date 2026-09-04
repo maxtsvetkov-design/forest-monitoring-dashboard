@@ -17,3 +17,16 @@ export const imgUpload01 = `${assetPathPrefix}/a1c5e.svg`;
 export const imgIcInfoCircle = `${assetPathPrefix}/b95f0.svg`;
 export const imgIcLink2 = `${assetPathPrefix}/ae809.svg`;
 export const imgIcDownload01 = `${assetPathPrefix}/04dac.svg`;
+
+// Exported from the "Project - Map 3D (Layers Panel)" Figma frame (node
+// 840:11439) for the project-overview first screen — downloaded and committed
+// rather than hot-linked, since Figma's own asset URLs expire after ~7 days.
+export const imgIcChevronLeft = `${assetPathPrefix}/ic-chevron-left.svg`;
+export const imgIcCollapse = `${assetPathPrefix}/ic-collapse.svg`;
+export const imgIcLayers = `${assetPathPrefix}/ic-layers.svg`;
+export const imgIcPinDecorative = `${assetPathPrefix}/ic-pin-decorative.svg`;
+export const imgIcTrendingUp = `${assetPathPrefix}/ic-trending-up.svg`;
+export const imgIcPin = `${assetPathPrefix}/ic-pin.svg`;
+export const imgIcHexagon = `${assetPathPrefix}/ic-hexagon.svg`;
+export const imgIcExpand = `${assetPathPrefix}/ic-expand.svg`;
+export const imgIcPolygon = `${assetPathPrefix}/ic-polygon.svg`;

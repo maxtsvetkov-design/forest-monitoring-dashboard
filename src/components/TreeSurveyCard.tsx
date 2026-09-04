@@ -24,12 +24,12 @@ export default function TreeSurveyCard({
   const animatedTotal = useCountUp(totalSurveyed, 1000, delay + 150);
   return (
     <div
-      className="flex-1 min-w-0 bg-white border border-[rgba(0,0,0,0.06)] rounded-[12px] p-[12px] flex flex-col gap-[6px] animate-fade-in-up shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)] hover:shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] transition-shadow duration-200 group"
+      className="flex-1 min-w-0 surface-card p-[14px] flex flex-col gap-[6px] animate-fade-in-up surface-card--interactive group"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-[6px]">
-          <span className="text-[14px] font-bold text-[#141414] leading-[22px] font-['Inter',sans-serif]">
+          <span className="text-[14px] font-bold text-[#18181c] leading-[22px] font-['Outfit',sans-serif]">
             Tree Survey
           </span>
           <img src={imgIcInfoCircle} alt="info" className="u-icon w-4 h-4 opacity-50 group-hover:opacity-80" />
@@ -43,8 +43,8 @@ export default function TreeSurveyCard({
           />
         )}
       </div>
-      <p className="text-[11px] text-[#6b6b6b] font-['Inter',sans-serif]">Individual trees surveyed across the site.</p>
-      <span className="text-[28px] font-bold text-[#141414] leading-none font-['Inter',sans-serif] tabular-nums">
+      <p className="text-[11px] text-[#5b5b66] font-['Outfit',sans-serif]">Individual trees surveyed across the site.</p>
+      <span className="text-[28px] font-bold text-[#18181c] leading-none font-['Outfit',sans-serif] tabular-nums">
         {Math.round(animatedTotal).toLocaleString()}
       </span>
       <div className="mt-1">

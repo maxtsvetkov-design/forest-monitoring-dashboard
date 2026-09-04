@@ -1,9 +1,10 @@
 import type { MapOverlay } from "./overlays";
 import { pickWeighted, seededRandom } from "./random";
 import { speciesLabel } from "./scatterLayout";
-import { generateTreeRecords, type TreeRecord } from "./trees";
+import { CONDITIONS, CONDITION_LABEL, isFlaggedCondition, type ConditionKey } from "./taxonomy";
+import { generateTreeRecordsAt, type TreeRecord } from "./trees";
 import type { DateRange } from "./aggregate";
-import type { HealthKey, MonthSnapshot, SpeciesKey } from "./types";
+import type { MonthSnapshot, SpeciesKey } from "./types";
 
 export type EventKind = "survey" | "decline" | "milestone";
 
@@ -15,7 +16,7 @@ export interface TreeEvent {
   title: string;
   description: string;
   species: SpeciesKey;
-  severity: HealthKey;
+  severity: ConditionKey;
   /** The real tree this event is about — see generateEvents for why this must
    * come from the same pool the map and table use, not a fabricated string. */
   tree: TreeRecord;
@@ -32,72 +33,77 @@ function randomDayInMonth(monthDate: Date, rand: () => number, today: Date): Dat
   return new Date(monthDate.getFullYear(), monthDate.getMonth(), 1 + Math.floor(rand() * daysInMonth));
 }
 
-const SPECIES_KEY_BY_LABEL: Record<string, SpeciesKey> = {
-  [speciesLabel.ghaf]: "ghaf",
-  [speciesLabel.sidr]: "sidr",
-  [speciesLabel.palm]: "palm",
-};
+/** Severity rank, worst = 0. Used to tell an improvement from a decline. */
+const RANK: Record<ConditionKey, number> = Object.fromEntries(
+  CONDITIONS.map((c, i) => [c.key, i]),
+) as Record<ConditionKey, number>;
 
-const HEALTH_KEY_BY_LABEL: Record<TreeRecord["health"], HealthKey> = {
-  Healthy: "healthy",
-  Stressed: "stressed",
-  Declining: "declining",
-  Dead: "dead",
-};
+const SPECIES_KEY_BY_LABEL: Record<string, SpeciesKey> = Object.fromEntries(
+  (Object.keys(speciesLabel) as SpeciesKey[]).map((key) => [speciesLabel[key], key]),
+);
 
 /**
- * Picks the real tree an event is "about", from that month's slice of the
- * shared tree pool. Tries progressively looser matches against the narrative
- * so the pick reads as plausible (a "decline flagged" event lands on an
- * actually-declining tree of the species mentioned) without ever failing —
- * the loosest fallback is just "any tree surveyed that month".
+ * Picks the real tree an event is "about", from that month's inventory. Tries
+ * progressively looser matches against the narrative so the pick reads as
+ * plausible (a "decline flagged" event lands on an actually-declining tree of
+ * the species mentioned) without ever failing — the loosest fallback is just
+ * "any tree standing that month".
  */
 function pickTreeForEvent(
   monthRecords: TreeRecord[],
   rand: () => number,
   wantSpecies: SpeciesKey,
-  wantHealth?: HealthKey,
+  wantCondition?: ConditionKey,
 ): TreeRecord {
-  const bySpeciesAndHealth = wantHealth
-    ? monthRecords.filter((t) => SPECIES_KEY_BY_LABEL[t.species] === wantSpecies && HEALTH_KEY_BY_LABEL[t.health] === wantHealth)
+  const bySpeciesAndCondition = wantCondition
+    ? monthRecords.filter((t) => SPECIES_KEY_BY_LABEL[t.species] === wantSpecies && t.condition === wantCondition)
     : [];
   const bySpecies = monthRecords.filter((t) => SPECIES_KEY_BY_LABEL[t.species] === wantSpecies);
-  const byHealth = wantHealth ? monthRecords.filter((t) => HEALTH_KEY_BY_LABEL[t.health] === wantHealth) : [];
-  const pool = bySpeciesAndHealth.length ? bySpeciesAndHealth : bySpecies.length ? bySpecies : byHealth.length ? byHealth : monthRecords;
+  const byCondition = wantCondition ? monthRecords.filter((t) => t.condition === wantCondition) : [];
+  const pool = bySpeciesAndCondition.length
+    ? bySpeciesAndCondition
+    : bySpecies.length
+      ? bySpecies
+      : byCondition.length
+        ? byCondition
+        : monthRecords;
   return pool[Math.floor(rand() * pool.length)];
 }
 
 /**
  * Synthesizes a feed of discrete field events — surveys, flagged declines,
- * canopy-cover milestones — from the same monthly snapshots that back the
- * charts, so the dashboard has a human-readable narrative next to the
- * aggregates rather than a second, disconnected dataset. Seeded per area, so
- * it's stable across reloads but distinct per area (same discipline as
- * treePins.ts).
+ * canopy-cover milestones — off the same population that backs the charts, so
+ * the dashboard has a human-readable narrative next to the aggregates rather
+ * than a second, disconnected dataset. Seeded per area, so it's stable across
+ * reloads but distinct per area.
  *
- * Each event carries a real `tree` record from `generateTreeRecords` — the
- * exact pool the map's pins and the Areas table are built from — rather than
- * a fabricated ID string. That's what lets "open this event" jump the map to
- * an actual point on the imagery: earlier, `treeId()` here returned a random
- * string with no lng/lat behind it, so the same event could never be more
- * than text. Calling `generateTreeRecords` again with the same
- * (overlay, areaId, snapshots) is safe and free of drift: it's a pure
- * function of a seeded PRNG, so this reproduces byte-for-byte the same pool
- * AreasView built, without the two needing to share state.
+ * Every event carries a real `tree` record from the shared population — the
+ * exact trees the map's pins and the Areas table are built from — rather than a
+ * fabricated ID, which is what lets "open this event" jump the map to an actual
+ * point on the imagery.
  *
- * Decline events lean heavily on the early, degraded months and milestones
- * cluster later, mirroring the recovery curve in monthlySnapshots.ts — the
- * feed tells the same story the charts do, just at the level of one tree.
+ * Decline events are no longer a dice roll against an aggregate ratio. Because
+ * the population persists month to month, this can compare each tree against
+ * its own previous month and report a genuine transition: a specific, named
+ * tree that really did drop a condition band. That is only expressible with a
+ * stable population — with the old month-by-month resampling there was no
+ * "same tree last month" to compare against, so the feed could only ever assert
+ * a decline had happened somewhere and then go looking for a tree to blame.
  */
-export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], areaId: string): TreeEvent[] {
+export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], areaId: string, scale = 1): TreeEvent[] {
   const rand = seededRandom(`events:${areaId}`);
   const today = new Date();
   const events: TreeEvent[] = [];
-  const allRecords = generateTreeRecords(overlay, areaId, snapshots);
+
+  // One inventory per month, built once and reused — the pure, seeded
+  // population means this reproduces exactly what AreasView and MapCanvas see.
+  const byMonth = snapshots.map((_, monthIndex) =>
+    generateTreeRecordsAt(overlay, areaId, snapshots, monthIndex, scale),
+  );
 
   snapshots.forEach((month, monthIndex) => {
     const prev = monthIndex > 0 ? snapshots[monthIndex - 1] : null;
-    const monthRecords = allRecords.filter((t) => t.monthIndex === monthIndex);
+    const monthRecords = byMonth[monthIndex];
     if (monthRecords.length === 0) return;
 
     const surveySpecies = pickWeighted(rand, month.speciesCounts);
@@ -107,35 +113,60 @@ export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], 
       date: randomDayInMonth(month.date, rand, today),
       kind: "survey",
       title: "Field survey completed",
-      description: `${month.newTreesLogged.toLocaleString()} ${speciesLabel[surveySpecies].toLowerCase()} logged during the monthly walk-through.`,
+      description: `${month.newTreesLogged.toLocaleString()} trees re-surveyed during the monthly walk-through.`,
       species: surveySpecies,
-      severity: "healthy",
-      tree: pickTreeForEvent(monthRecords, rand, surveySpecies, "healthy"),
+      severity: "vigorous",
+      tree: pickTreeForEvent(monthRecords, rand, surveySpecies, "vigorous"),
     });
 
-    const surveyed = month.speciesCounts.ghaf + month.speciesCounts.sidr + month.speciesCounts.palm;
-    const atRisk = month.healthCounts.stressed + month.healthCounts.declining + month.healthCounts.dead;
-    if (rand() < atRisk / surveyed) {
-      const declineSpecies = pickWeighted(rand, {
-        ghaf: month.scatterCounts.ghaf.declining + month.scatterCounts.ghaf.dead + 1,
-        sidr: month.scatterCounts.sidr.declining + month.scatterCounts.sidr.dead + 1,
-        palm: month.scatterCounts.palm.declining + month.scatterCounts.palm.dead + 1,
+    // Real transitions: trees that dropped at least one condition band since
+    // last month. Compared per tree id, which the persistent population makes
+    // possible.
+    if (monthIndex > 0) {
+      const prevById = new Map(byMonth[monthIndex - 1].map((r) => [r.id, r]));
+      const dropped = monthRecords.filter((r) => {
+        const before = prevById.get(r.id);
+        return before !== undefined && RANK[r.condition] < RANK[before.condition] && isFlaggedCondition(r.condition);
       });
-      const severity: HealthKey = rand() < 0.35 ? "dead" : "declining";
-      const tree = pickTreeForEvent(monthRecords, rand, declineSpecies, severity);
-      events.push({
-        id: `${areaId}-decline-${monthIndex}`,
-        monthIndex,
-        date: randomDayInMonth(month.date, rand, today),
-        kind: "decline",
-        title: severity === "dead" ? "Tree confirmed dead" : "Canopy decline flagged",
-        description: `${speciesLabel[declineSpecies]} tree ${tree.id} showing ${
-          severity === "dead" ? "no live canopy" : "significant crown thinning"
-        } on inspection.`,
-        species: declineSpecies,
-        severity,
-        tree,
-      });
+
+      if (dropped.length > 0) {
+        // One event per dieback block, not one plot-wide event picking a
+        // single tree at random — with five distinct DECLINE_ZONES on the
+        // ground, "important events" means each actively-failing block gets
+        // its own reported drop, not a coin flip over which block gets heard
+        // from this month. Drops outside every zone (background noise from
+        // per-tree vigour variance) still get one event of their own so
+        // nothing real goes unreported.
+        const byZone = new Map<number | null, TreeRecord[]>();
+        for (const t of dropped) {
+          const list = byZone.get(t.declineZoneId) ?? [];
+          list.push(t);
+          byZone.set(t.declineZoneId, list);
+        }
+
+        for (const [zoneId, zoneDropped] of byZone) {
+          const tree = zoneDropped[Math.floor(rand() * zoneDropped.length)];
+          const before = prevById.get(tree.id)!;
+          const worst = tree.condition === "defoliated";
+          events.push({
+            id: `${areaId}-decline-${monthIndex}-${zoneId ?? "general"}`,
+            monthIndex,
+            date: randomDayInMonth(month.date, rand, today),
+            kind: "decline",
+            title: worst ? "Tree fully defoliated" : "Canopy decline flagged",
+            description:
+              `${tree.species} ${tree.id} dropped from ${CONDITION_LABEL[before.condition]} to ` +
+              `${CONDITION_LABEL[tree.condition]}` +
+              `${zoneId !== null ? ` — inside dieback block ${zoneId + 1}` : ""}. ` +
+              `${zoneDropped.length} tree${zoneDropped.length === 1 ? "" : "s"} declined in ${
+                zoneId !== null ? "this block" : "the wider plot"
+              } this month.`,
+            species: SPECIES_KEY_BY_LABEL[tree.species] ?? surveySpecies,
+            severity: tree.condition,
+            tree,
+          });
+        }
+      }
     }
 
     // A milestone fires each time plot-wide canopy cover crosses a 5-point band.
@@ -149,10 +180,10 @@ export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], 
         title: "Canopy cover milestone",
         description: `Plot-wide canopy cover crossed ${
           Math.floor(month.canopyCoverPct / 5) * 5
-        }% — ${speciesLabel[recoverSpecies].toLowerCase()} leading the recovery this month.`,
+        }% — ${speciesLabel[recoverSpecies]} leading the recovery this month.`,
         species: recoverSpecies,
-        severity: "healthy",
-        tree: pickTreeForEvent(monthRecords, rand, recoverSpecies, "healthy"),
+        severity: "vigorous",
+        tree: pickTreeForEvent(monthRecords, rand, recoverSpecies, "vigorous"),
       });
     }
   });

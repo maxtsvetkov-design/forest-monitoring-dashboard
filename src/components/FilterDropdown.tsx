@@ -52,8 +52,8 @@ export default function FilterDropdown({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="true"
-        className={`u-press inline-flex items-center gap-[5px] px-[9px] py-[4px] rounded-full text-[11px] font-['Inter',sans-serif] border cursor-pointer ${
-          selected.size > 0 ? "border-[#09615166] bg-[#0961511a] text-[#096151]" : "border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5]"
+        className={`u-press inline-flex items-center gap-[5px] px-[9px] py-[4px] rounded-full text-[11px] font-['Outfit',sans-serif] border cursor-pointer ${
+          selected.size > 0 ? "border-[#09615166] bg-[#0961511a] text-[#096151]" : "border-[#dedee3] text-[#5b5b66] hover:bg-[#f6f6f8]"
         }`}
       >
         {label}
@@ -74,7 +74,7 @@ export default function FilterDropdown({
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-[6px] min-w-[180px] max-h-[260px] overflow-y-auto bg-white border border-[#d9d9d9] rounded-[10px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)] p-1 z-20 animate-fade-in">
+        <div className="absolute top-full left-0 mt-[6px] min-w-[180px] max-h-[260px] overflow-y-auto bg-white rounded-[16px] shadow-[var(--elev-3)] p-1 z-20 animate-fade-in">
           {options.map((opt) => {
             const isSelected = selected.has(opt.value);
             return (
@@ -84,13 +84,13 @@ export default function FilterDropdown({
                 role="menuitemcheckbox"
                 aria-checked={isSelected}
                 onClick={() => onToggle(opt.value)}
-                className={`w-full flex items-center gap-[8px] text-left px-[8px] py-[6px] rounded-[7px] text-[12px] font-['Inter',sans-serif] transition-colors duration-100 cursor-pointer ${
-                  isSelected ? "bg-[#0961511a] text-[#096151]" : "text-[#363636] hover:bg-[#f5f5f5]"
+                className={`w-full flex items-center gap-[8px] text-left px-[8px] py-[6px] rounded-[7px] text-[12px] font-['Outfit',sans-serif] transition-colors duration-100 cursor-pointer ${
+                  isSelected ? "bg-[#0961511a] text-[#096151]" : "text-[#464650] hover:bg-[#f6f6f8]"
                 }`}
               >
                 <span
                   className={`shrink-0 w-[14px] h-[14px] rounded-[4px] border flex items-center justify-center ${
-                    isSelected ? "bg-[#096151] border-[#096151]" : "border-[#d9d9d9]"
+                    isSelected ? "bg-[#096151] border-[#096151]" : "border-[#dedee3]"
                   }`}
                 >
                   {isSelected && (
