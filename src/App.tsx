@@ -225,7 +225,12 @@ export default function App() {
   useLayoutEffect(() => {
     const el = tabRefs.current[activeTab];
     if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
-  }, [activeTab]);
+    // `showLanding` flipping off is what first mounts this tab bar (it's
+    // behind an early `if (showLanding) return <LandingScreen />` above) —
+    // without it in the deps, this effect only ever reran on an actual tab
+    // switch, and the pill (and its first-landing welcome glow) never
+    // measured on the very first view of the dashboard.
+  }, [activeTab, showLanding]);
 
   // Fonts finishing loading or the window resizing changes the tabs' widths; a
   // pill measured once would then sit slightly off its label.
@@ -238,7 +243,7 @@ export default function App() {
     });
     observer.observe(bar);
     return () => observer.disconnect();
-  }, [activeTab]);
+  }, [activeTab, showLanding]);
 
   // Transitions stay off until the first real measurement lands, otherwise the
   // pill visibly flies in from x=0 on page load.
@@ -256,6 +261,18 @@ export default function App() {
   // alongside the slide instead of snapping back mid-flight.
   const [pillMorphing, setPillMorphing] = useState(false);
   const pillMounted = useRef(false);
+
+  // Plays once, right after the pill's first real measurement lands (so it
+  // doesn't fire against pill.width === 0), and only while still on the
+  // landing tab — a tab switch before it fires cancels it rather than
+  // queuing a glow on a tab the user has already left.
+  const [pillWelcoming, setPillWelcoming] = useState(false);
+  useEffect(() => {
+    if (!pillReady || activeTab !== "Insights") return;
+    setPillWelcoming(true);
+    const t = setTimeout(() => setPillWelcoming(false), 1400);
+    return () => clearTimeout(t);
+  }, [pillReady]);
   useEffect(() => {
     if (!pillMounted.current) {
       pillMounted.current = true;
@@ -406,13 +423,13 @@ export default function App() {
             className="fixed top-2 left-[64px] right-4 z-20 surface-card flex items-center px-2 py-1 min-h-[56px] animate-fade-in-down"
             style={{ animationDelay: "90ms" }}
           >
-            <AreaSwitcher areas={areas} activeAreaId={activeAreaId} onSelect={setActiveAreaId} />
+            <AreaSwitcher areas={areas} activeAreaId={activeAreaId} onNavigateHome={() => setShowLanding(true)} />
 
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
               <div ref={tabBarRef} className="seg-track relative">
                 <div
                   aria-hidden="true"
-                  className={`tab-pill ${pillReady ? "" : "tab-pill--instant"} ${pillMorphing ? "tab-pill--morphing" : ""}`}
+                  className={`tab-pill ${pillReady ? "" : "tab-pill--instant"} ${pillMorphing ? "tab-pill--morphing" : ""} ${pillWelcoming ? "tab-pill--welcome" : ""}`}
                   style={{ left: `${pill.left}px`, width: `${pill.width}px` }}
                 />
                 {tabs.map((tab) => (
@@ -519,7 +536,6 @@ export default function App() {
                   <MetaStatsCard
                     items={[
                       { label: "Total area", value: TOTAL_AREA },
-                      { label: "Most recent survey", value: formatMonthYear(aggregated.mostRecentSurvey) },
                       { label: "Last activity", value: formatMonthYear(aggregated.lastActivity) },
                     ]}
                     delay={CHROME_SEQUENCE_MS + 120}

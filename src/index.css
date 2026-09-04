@@ -557,6 +557,37 @@ body.is-dragging-resize {
   background: var(--g-400);
 }
 
+/* Today — anchored to the real track's own right edge (100%), which is
+   exactly the boundary with the locked upcoming strip, so it needs no date
+   arithmetic against `months`. Full-band height and its own accent colour so
+   it doesn't get lost among the plain grey ticks either side of it. */
+.tl-today {
+  position: absolute;
+  left: 100%;
+  /* Reaches 22px above the track — past the month-label row that sits
+     directly above it (13px tall, 5px gap) — so the "Today" text has clear
+     air instead of sitting on top of "Sep '26". */
+  top: -22px;
+  bottom: -2px;
+  width: 2px;
+  background: #096151;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.tl-today__label {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -100%);
+  font-family: "Outfit", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #096151;
+  white-space: nowrap;
+}
+
 /* One dot per month, anchored to the same axis baseline as the ticks. The
    button is a generous 18px hit target; only the 5px .tl-dot__mark inside it
    paints, so months stay easy to click even when a long timeline packs them
@@ -640,6 +671,25 @@ body.is-dragging-resize {
   to {
     opacity: 1;
     transform: translateX(var(--tl-preview-x, -50%)) translateY(0) scale(1);
+  }
+}
+
+/* Exit twin of the entrance pop above — played for the ~140ms the card stays
+   mounted after the mouse actually leaves (see TimelineRangeSlider's
+   `previewLeaving`), so dismissal reads as a quick tuck-away rather than an
+   instant cut. */
+.tl-preview--leaving {
+  animation: tlPreviewOut 140ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes tlPreviewOut {
+  from {
+    opacity: 1;
+    transform: translateX(var(--tl-preview-x, -50%)) translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(var(--tl-preview-x, -50%)) translateY(-4px) scale(0.92);
   }
 }
 
@@ -1200,6 +1250,119 @@ body.is-dragging-resize {
   58% { transform: scaleX(0.92) scaleY(1.08); border-radius: 7px; }
   80% { transform: scaleX(1.05) scaleY(0.97); border-radius: 10px; }
   100% { transform: scaleX(1) scaleY(1); border-radius: 9px; }
+}
+
+/* One-shot "hello" on first landing on the dashboard — the pill blooms a
+   green glow ring and settles, so the very first thing a fresh session sees
+   confirms the plot reads healthy before any number is even read. Plays once
+   (App.tsx removes the class after it finishes) and never replays on normal
+   tab switches, which already have their own morph animation above. */
+.tab-pill--welcome {
+  animation: tabPillWelcome 1400ms var(--ease-out) both;
+}
+
+@keyframes tabPillWelcome {
+  0% { box-shadow: 0 1px 2px rgba(16, 16, 24, 0.14), 0 2px 6px -1px rgba(9, 97, 81, 0.28), 0 0 0 0 rgba(9, 193, 117, 0.55); transform: scale(1); }
+  35% { box-shadow: 0 1px 2px rgba(16, 16, 24, 0.14), 0 2px 6px -1px rgba(9, 97, 81, 0.28), 0 0 0 10px rgba(9, 193, 117, 0); transform: scale(1.06); }
+  60% { transform: scale(0.98); }
+  100% { box-shadow: 0 1px 2px rgba(16, 16, 24, 0.14), 0 2px 6px -1px rgba(9, 97, 81, 0.28), 0 0 0 0 rgba(9, 193, 117, 0); transform: scale(1); }
+}
+
+/* --- "What's next?" promo trigger ----------------------------------------- */
+/* A slow-drifting conic gradient rather than a flat black fill — the same
+   "AI-product" cue as a Copilot/Linear-style generate button: motion signals
+   "there's more here" without competing with the timeline's own data. Slow
+   (10s) and desaturated dark tones only, so it reads as premium chrome, not
+   a loading spinner. */
+.whats-next-btn {
+  background: conic-gradient(from var(--wn-angle, 0deg), #18181c, #2e2e35, #096151, #18181c, #18181c);
+  animation: whatsNextSpin 10s linear infinite;
+}
+@property --wn-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes whatsNextSpin {
+  to { --wn-angle: 360deg; }
+}
+
+/* --- Landing screen: boundary-tethered time-travel buttons ---------------- */
+/* The dashed lines + dot fade in with the buttons rather than snapping on —
+   a plain opacity transition rather than a true stroke-draw animation (SVG
+   line elements have no natural path length to animate against without a
+   fixed-length `pathLength` hack per line). */
+.tether-line {
+  opacity: 0;
+  animation: tetherFadeIn 260ms var(--ease-out) both;
+}
+
+@keyframes tetherFadeIn {
+  from { opacity: 0; }
+  to { opacity: 0.7; }
+}
+
+.tether-dot {
+  animation: tetherFadeIn 200ms var(--ease-out) both;
+}
+
+/* An expanding, fading ring around the boundary dot — the classic "you are
+   here" pulse, looping only while the cursor stays near the boundary (the
+   dot itself unmounts the moment it doesn't). */
+.tether-dot-ring {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: tetherPulse 1400ms var(--ease-out) infinite;
+}
+
+@keyframes tetherPulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Buttons start slightly scaled-down and translated toward the boundary
+   they're tethered to, then spring in — an entrance with real motion behind
+   it rather than a flat fade, without touching the parallax transform the
+   wrapping element already owns. */
+.time-travel-btn {
+  transform: scale(0.85) translateY(6px);
+  transition: transform 500ms var(--ease-spring);
+}
+
+.time-travel-btn--in {
+  transform: scale(1) translateY(0);
+}
+
+/* --- Slot-machine digit reel ------------------------------------------------ */
+/* The landing screen's hero score spins in like a casino reel rather than
+   counting up — a 0-9 strip translated to its final digit, so every digit
+   visibly rolls through the intermediate values on the way there. Sizing is
+   entirely in `em`/`%`: `.slot-digit` fixes its window to one line of the
+   caller's own font-size, and the track's `translateY` percentage is
+   relative to *its own* height (10 stacked cells), so this works at any
+   font size a caller applies without pixel math per use site. */
+.slot-digit {
+  display: inline-block;
+  overflow: hidden;
+  height: 1em;
+  line-height: 1em;
+  vertical-align: top;
+}
+
+.slot-digit__track {
+  display: flex;
+  flex-direction: column;
+  /* Long and eased-out, like an actual reel losing momentum — not a linear
+     scroll that just stops. */
+  transition: transform 1500ms cubic-bezier(0.13, 0.71, 0.19, 1);
+}
+
+.slot-digit__cell {
+  height: 1em;
+  line-height: 1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* --- Scrolling ------------------------------------------------------------ */

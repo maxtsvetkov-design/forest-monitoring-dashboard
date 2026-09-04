@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   imgBell04,
   imgIcBook,
@@ -19,9 +19,20 @@ import {
 import { areas } from "../data/areas";
 import { aggregateRange } from "../data/aggregate";
 import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./LayerPanel";
-import { areaDyingTreeOverlays, areaGenerativeOverlays, areaHectares, areaOverlays } from "../data/overlays";
+import {
+  areaDyingTreeOverlays,
+  areaGenerativeOverlays,
+  areaHectares,
+  areaOverlays,
+  getTimelapseImages,
+  PROMO_PLANNED_CAPTURES,
+} from "../data/overlays";
 import IconBtn from "./IconBtn";
 import MapCanvas from "./MapCanvas";
+import DenseCoverageModal from "./DenseCoverageModal";
+import TierComparisonModal from "./TierComparisonModal";
+import SlotScore from "./SlotScore";
+import { CURRENT_TIER_INDEX, TIERS } from "../data/tiers";
 
 /**
  * The app's front door — the "Project - Map 3D (Layers Panel)" screen from
@@ -108,15 +119,133 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
   // MapCanvas keeps layer state with its caller. Nothing on this screen edits
   // it, but the real defaults mean the plot reads the same here as it will
   // one click later on the dashboard.
-  // Pins off: this is an area-level overview, and per-tree markers would bury
-  // the AOI label under a cluster of teardrops before the user has picked a
-  // plot to look at. They come back the moment the dashboard opens.
-  const [layerVisibility, setLayerVisibility] = useState<Record<ContentLayerId, boolean>>({
-    ...DEFAULT_LAYER_VISIBILITY,
-    pins: false,
-  });
+  // Pins on: clicking any flagged tree here opens the same info popover the
+  // dashboard's map gives it (MapCanvas wires that up regardless of which
+  // screen is hosting it), so this overview is a real look at the plot
+  // rather than a picture of one.
+  const [layerVisibility, setLayerVisibility] = useState<Record<ContentLayerId, boolean>>(DEFAULT_LAYER_VISIBILITY);
   const [layerOpacity, setLayerOpacity] = useState<Record<ContentLayerId, number>>(DEFAULT_LAYER_OPACITY);
   const [basemapIndex, setBasemapIndex] = useState(SATELLITE_BASEMAP_INDEX);
+
+  // The future view reuses the same "Denser time coverage" modal the
+  // dashboard's timeline opens.
+  const [futureOpen, setFutureOpen] = useState(false);
+  const [tierModalOpen, setTierModalOpen] = useState(false);
+  const heroPreviewImages = useMemo(() => getTimelapseImages(heroArea.id), [heroArea]);
+
+  // The two time-travel buttons appear only when the cursor is actually near
+  // the plot's own boundary (the aerial overlay's real ground footprint,
+  // reprojected to screen pixels by MapCanvas — see onOverlayQuadChange),
+  // not just anywhere over the map — the buttons read as belonging to the
+  // plot outline itself, not as a generic hover reveal.
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
+  const pastBtnRef = useRef<HTMLButtonElement>(null);
+  const futureBtnRef = useRef<HTMLButtonElement>(null);
+  const [overlayQuad, setOverlayQuad] = useState<{ x: number; y: number }[] | null>(null);
+  const [boundaryPoint, setBoundaryPoint] = useState<{ x: number; y: number } | null>(null);
+  const [parallax, setParallax] = useState({ x: 0, y: 0 });
+  const [lineEndpoints, setLineEndpoints] = useState<{
+    past: { x: number; y: number };
+    future: { x: number; y: number };
+  } | null>(null);
+
+  // Two different radii, not one — a small trigger zone felt twitchy, the
+  // buttons flickering out the moment the cursor wobbled a few pixels off
+  // the line. ENTER is what first summons them; once shown, EXIT (much more
+  // generous) is what's needed to dismiss them, so they stay "stuck" through
+  // small cursor jitter instead of chasing the exact boundary pixel.
+  const BOUNDARY_ENTER_PX = 24;
+  const BOUNDARY_EXIT_PX = 90;
+  const PARALLAX_STRENGTH = 26;
+
+  const handleMapPointerMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = mapWrapperRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const mx = e.clientX;
+      const my = e.clientY;
+
+      // Parallax reads off distance from the viewport's own centre, not the
+      // plot's — the buttons stay pinned to the centre of the page and only
+      // drift a few pixels with the cursor, rather than tracking the plot
+      // (which can sit anywhere on screen depending on pan/zoom).
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      setParallax({
+        x: ((mx - cx) / (rect.width / 2)) * PARALLAX_STRENGTH,
+        y: ((my - cy) / (rect.height / 2)) * PARALLAX_STRENGTH,
+      });
+
+      // Hovering the buttons themselves (or the padded area right around
+      // them) always counts as "still active", regardless of how far that
+      // is from the boundary line — without this, moving the cursor onto
+      // the button you're trying to click could cross back over the exit
+      // radius and dismiss it out from under the pointer. Measured off the
+      // two buttons' own rects (unioned), not a wrapper div — that wrapper
+      // is a full-bleed `absolute inset-0` and would make "over the
+      // buttons" true everywhere on the map.
+      const pastRect = pastBtnRef.current?.getBoundingClientRect();
+      const futureRect = futureBtnRef.current?.getBoundingClientRect();
+      const pad = 40;
+      const overButtons = [pastRect, futureRect].some(
+        (r) => r && mx >= r.left - pad && mx <= r.right + pad && my >= r.top - pad && my <= r.bottom + pad,
+      );
+
+      if (!overlayQuad || overlayQuad.length < 2) {
+        if (!overButtons) setBoundaryPoint(null);
+        return;
+      }
+      // Nearest point on the quad's own perimeter to the cursor — checking
+      // every edge rather than every corner, so hovering anywhere along a
+      // side (not just near a corner) counts as "near the boundary".
+      let bestDist = Infinity;
+      let bestPoint: { x: number; y: number } | null = null;
+      for (let i = 0; i < overlayQuad.length; i++) {
+        const a = overlayQuad[i];
+        const b = overlayQuad[(i + 1) % overlayQuad.length];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const lenSq = dx * dx + dy * dy || 1;
+        let t = ((mx - a.x) * dx + (my - a.y) * dy) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+        const px = a.x + t * dx;
+        const py = a.y + t * dy;
+        const dist = Math.hypot(mx - px, my - py);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPoint = { x: px, y: py };
+        }
+      }
+      setBoundaryPoint((prev) => {
+        if (overButtons) return prev ?? bestPoint;
+        if (prev) return bestDist <= BOUNDARY_EXIT_PX ? bestPoint : null;
+        return bestDist <= BOUNDARY_ENTER_PX ? bestPoint : null;
+      });
+    },
+    [overlayQuad],
+  );
+
+  const handleMapPointerLeave = useCallback(() => {
+    setBoundaryPoint(null);
+    setParallax({ x: 0, y: 0 });
+  }, []);
+
+  // Button centres for the connecting lines — read after the buttons' own
+  // parallax transform has committed, so the lines never lag a frame behind
+  // where the buttons actually are.
+  useEffect(() => {
+    if (!boundaryPoint) {
+      setLineEndpoints(null);
+      return;
+    }
+    const past = pastBtnRef.current?.getBoundingClientRect();
+    const future = futureBtnRef.current?.getBoundingClientRect();
+    if (!past || !future) return;
+    setLineEndpoints({
+      past: { x: past.left + past.width / 2, y: past.top + past.height / 2 },
+      future: { x: future.left + future.width / 2, y: future.top + future.height / 2 },
+    });
+  }, [boundaryPoint, parallax]);
 
   // Real numbers rather than the design's repeated "4,214 ha / +2%"
   // placeholder: the size is measured off the plot footprint actually drawn
@@ -168,8 +297,16 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
 
   return (
     <div className="fixed inset-0 z-[200] bg-[#ebece7] overflow-hidden">
-      {/* Satellite map, full bleed behind every panel on this screen. */}
-      <div className="absolute inset-0">
+      {/* Satellite map, full bleed behind every panel on this screen. The
+          two time-travel shortcuts only surface when the cursor is near the
+          plot's own real boundary (not just anywhere over the map) — see
+          onOverlayQuadChange / handleMapPointerMove above. */}
+      <div
+        ref={mapWrapperRef}
+        className="absolute inset-0"
+        onMouseMove={handleMapPointerMove}
+        onMouseLeave={handleMapPointerLeave}
+      >
         <MapCanvas
           center={heroArea.center}
           zoom={13.4}
@@ -185,10 +322,89 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
           onLayerOpacityChange={setLayerOpacity}
           basemapIndex={basemapIndex}
           onBasemapIndexChange={setBasemapIndex}
+          onOverlayQuadChange={setOverlayQuad}
           chrome={false}
           className="w-full h-full"
         />
+
+        {/* The boundary hit itself: a small ring where the cursor is
+            currently near the plot's edge, with a line running from it to
+            each button — makes the buttons read as tethered to the plot's
+            own outline rather than floating independently over the map. */}
+        {boundaryPoint && lineEndpoints && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-[9]" aria-hidden="true">
+            <line
+              x1={boundaryPoint.x}
+              y1={boundaryPoint.y}
+              x2={lineEndpoints.past.x}
+              y2={lineEndpoints.past.y}
+              stroke="#096151"
+              strokeWidth="1.5"
+              strokeDasharray="4 4"
+              className="tether-line"
+            />
+            <line
+              x1={boundaryPoint.x}
+              y1={boundaryPoint.y}
+              x2={lineEndpoints.future.x}
+              y2={lineEndpoints.future.y}
+              stroke="#096151"
+              strokeWidth="1.5"
+              strokeDasharray="4 4"
+              className="tether-line"
+            />
+            <circle cx={boundaryPoint.x} cy={boundaryPoint.y} r="5" fill="#096151" className="tether-dot" />
+            <circle
+              cx={boundaryPoint.x}
+              cy={boundaryPoint.y}
+              r="5"
+              fill="none"
+              stroke="#096151"
+              strokeWidth="1.5"
+              className="tether-dot-ring"
+            />
+          </svg>
+        )}
+
+        <div
+          className={`absolute inset-0 z-10 flex items-center justify-center gap-[12px] pointer-events-none transition-opacity duration-300 ${
+            boundaryPoint ? "opacity-100" : "opacity-0"
+          }`}
+          style={{ transform: `translate(${parallax.x}px, ${parallax.y}px)` }}
+        >
+          <button
+            ref={pastBtnRef}
+            type="button"
+            onClick={() => onEnter()}
+            className={`u-press time-travel-btn pointer-events-auto px-[18px] py-[10px] rounded-[10px] bg-[#18181c]/80 backdrop-blur-md border border-white/20 text-white text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] shadow-[0px_10px_28px_-6px_rgba(0,0,0,0.45),0px_2px_6px_-1px_rgba(0,0,0,0.3)] cursor-pointer ${
+              boundaryPoint ? "time-travel-btn--in" : ""
+            }`}
+          >
+            See the past
+          </button>
+          <button
+            ref={futureBtnRef}
+            type="button"
+            onClick={() => setFutureOpen(true)}
+            className={`u-press time-travel-btn pointer-events-auto px-[18px] py-[10px] rounded-[10px] bg-[#18181c]/80 backdrop-blur-md border border-white/20 text-white text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] shadow-[0px_10px_28px_-6px_rgba(0,0,0,0.45),0px_2px_6px_-1px_rgba(0,0,0,0.3)] cursor-pointer ${
+              boundaryPoint ? "time-travel-btn--in" : ""
+            }`}
+            style={{ transitionDelay: "60ms" }}
+          >
+            See the future
+          </button>
+        </div>
       </div>
+
+      {futureOpen && heroPreviewImages && (
+        <DenseCoverageModal
+          previewImages={heroPreviewImages}
+          plannedCaptures={PROMO_PLANNED_CAPTURES}
+          onClose={() => setFutureOpen(false)}
+        />
+      )}
+
+      {tierModalOpen && <TierComparisonModal onClose={() => setTierModalOpen(false)} />}
 
       {/* Left icon rail — the same one the dashboard carries, so the two
           screens read as one product rather than a splash page and an app. */}
@@ -268,8 +484,16 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
           >
             <img src={imgIcChevronLeft} alt="" className="w-4 h-4" />
           </button>
-          <span className="flex-1 min-w-0 text-[14px] font-medium text-[#18181c] font-['Outfit',sans-serif] leading-[22px] truncate">
-            {heroArea.projectName}
+          <span className="flex-1 min-w-0 flex items-center gap-[6px] text-[14px] font-medium text-[#18181c] font-['Outfit',sans-serif] leading-[22px]">
+            <span className="truncate">{heroArea.projectName}</span>
+            <button
+              type="button"
+              onClick={() => setTierModalOpen(true)}
+              className="u-press shrink-0 px-[7px] py-[2px] rounded-full border border-[#dedee3] bg-white text-[#5b5b66] text-[10px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer hover:border-[#096151] hover:text-[#096151]"
+              title="Unlock more with a higher tier"
+            >
+              {TIERS[CURRENT_TIER_INDEX].label.toLowerCase()}
+            </button>
           </span>
           <button
             type="button"
@@ -301,8 +525,8 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
             Forest Monitoring{!heroHealthy && " — needs attention"}
           </span>
 
-          <span className="font-['Outfit',sans-serif] font-extrabold text-[52px] leading-[52px] tracking-[-0.03em] text-[#18181c] tabular-nums mt-[8px]">
-            {Math.round(heroScore)}%
+          <span className="flex items-baseline font-['Outfit',sans-serif] font-extrabold text-[52px] leading-[52px] tracking-[-0.03em] text-[#18181c] tabular-nums mt-[8px]">
+            <SlotScore value={Math.round(heroScore)} />%
           </span>
 
           <span className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[16px] mt-[4px]">

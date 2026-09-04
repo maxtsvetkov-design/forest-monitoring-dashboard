@@ -489,6 +489,7 @@ export default function MapCanvas({
   onFocusMove,
   onPinClick,
   onPinHover,
+  onOverlayQuadChange,
   chrome = true,
 }: {
   center: [number, number];
@@ -553,6 +554,12 @@ export default function MapCanvas({
    * to highlight the matching table row without selecting it or moving the
    * camera. */
   onPinHover?: (treeId: string | null) => void;
+  /** Fires with `overlay`'s four corners reprojected to on-screen pixels
+   * (viewport-relative, like `onFocusArrived`/`onFocusMove`) on load and on
+   * every subsequent pan/zoom/rotate, or `null` once `overlay` is absent —
+   * lets a caller (LandingScreen) draw its own outline over the plot's real
+   * footprint and detect hovering near it, without owning a map instance. */
+  onOverlayQuadChange?: (quad: { x: number; y: number }[] | null) => void;
   /** Set false to render the map bare — no layer panel, toolbar or overlay-
    * height slider. The project-overview first screen (LandingScreen) brings
    * its own sidebar and tool strip from the Figma design and would otherwise
@@ -1793,6 +1800,35 @@ export default function MapCanvas({
       map.off("move", handleMove);
     };
   }, [focusTree, loaded]);
+
+  // Reprojects `overlay`'s four ground corners to on-screen pixels for
+  // `onOverlayQuadChange` — the same project()-plus-container-rect math every
+  // other screen-position callback in this file uses, just against the
+  // overlay's own coordinates instead of a pin or focused tree.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !overlay || !onOverlayQuadChange) return;
+
+    function project() {
+      const m = mapRef.current;
+      if (!m || !overlay) return;
+      const rect = m.getContainer().getBoundingClientRect();
+      const quad = overlay.coordinates.map(([lng, lat]) => {
+        const p = m.project([lng, lat]);
+        return { x: rect.left + p.x, y: rect.top + p.y };
+      });
+      onOverlayQuadChange?.(quad);
+    }
+
+    project();
+    map.on("move", project);
+    window.addEventListener("resize", project);
+    return () => {
+      map.off("move", project);
+      window.removeEventListener("resize", project);
+      onOverlayQuadChange?.(null);
+    };
+  }, [overlay, loaded, onOverlayQuadChange]);
 
   // Keeps the open tooltip glued to its pin's screen position through pan,
   // zoom, rotate and tilt, and closes it once the pin scrolls outside the

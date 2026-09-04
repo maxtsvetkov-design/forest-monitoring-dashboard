@@ -149,7 +149,7 @@ function LayerChip({
 }) {
   const meta = LAYER_META[id];
   return (
-    <div className="border-b border-[rgba(0,0,0,0.06)] px-[8px] py-[8px] w-full last:border-b-0">
+    <div className="bg-white rounded-[10px] px-[8px] py-[8px] w-full transition-colors duration-150 hover:bg-[#fbfbfa]">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-[8px] min-w-0">
           <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#096151]">
@@ -220,7 +220,7 @@ function LockedLayerRow({ row, onClick }: { row: TierRow; onClick: () => void })
     <button
       type="button"
       onClick={onClick}
-      className="u-press w-full flex items-center gap-[8px] px-[8px] py-[8px] border-b border-[rgba(0,0,0,0.06)] last:border-b-0 text-left hover:bg-[#f7f7f6] cursor-pointer"
+      className="u-press w-full flex items-center gap-[8px] px-[8px] py-[8px] rounded-[10px] bg-white text-left transition-colors duration-150 hover:bg-[#fbfbfa] cursor-pointer"
     >
       <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#71717a]">
         <svg width="14" height="14" viewBox="0 0 14 14" {...stroke}>
@@ -372,7 +372,7 @@ export default function LayerPanel({
 
       {/* Layer list */}
       <div className="scroll-slim flex-1 min-h-0 overflow-y-auto p-[8px]">
-        <div className="surface-card  overflow-hidden flex flex-col">
+        <div className="flex flex-col gap-[6px]">
           {visibility.aerial && (
             <LayerChip
               id="aerial"
@@ -434,7 +434,7 @@ export default function LayerPanel({
           {/* Basemap — always present, matching the Figma "Basemap | Google Maps"
               chip, cycled with the same chevron affordance rather than a
               separate control elsewhere. */}
-          <div className="px-[8px] py-[8px] w-full">
+          <div className="bg-white rounded-[10px] px-[8px] py-[8px] w-full">
             <div className="flex items-center gap-[8px]">
               <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#096151]">
                 <svg width="16" height="16" viewBox="0 0 16 16" {...stroke}>
@@ -490,7 +490,7 @@ export default function LayerPanel({
                 Upgrade
               </button>
             </div>
-            <div className="surface-card  overflow-hidden flex flex-col">
+            <div className="flex flex-col gap-[6px]">
               {LOCKED_AT_CURRENT_TIER.map((row) => (
                 <LockedLayerRow key={row.id} row={row} onClick={() => setTierModalRowId(row.id)} />
               ))}

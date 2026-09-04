@@ -83,6 +83,27 @@ export default function TimelineRangeSlider({
     };
   }, []);
   const [hovered, setHovered] = useState<number | null>(null);
+
+  // The preview card unmounts instantly when `hovered` clears, which reads
+  // as a snap rather than a dismissal. Keeping the last index rendered for
+  // one more frame with a `tl-preview--leaving` class lets it play a quick
+  // shrink-and-fade before actually leaving the DOM — a dribbble-style
+  // pop-in/pop-out rather than pop-in/cut.
+  const [displayedHover, setDisplayedHover] = useState<number | null>(null);
+  const [previewLeaving, setPreviewLeaving] = useState(false);
+  const previewLeaveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (hovered !== null) {
+      clearTimeout(previewLeaveTimeout.current);
+      setDisplayedHover(hovered);
+      setPreviewLeaving(false);
+    } else if (displayedHover !== null) {
+      setPreviewLeaving(true);
+      previewLeaveTimeout.current = setTimeout(() => setDisplayedHover(null), 140);
+    }
+    return () => clearTimeout(previewLeaveTimeout.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hovered]);
   const [bannerOpen, setBannerOpen] = useState(false);
   const lastCount = months.length - 1;
   const rangeRef = useRef(range);
@@ -261,7 +282,14 @@ export default function TimelineRangeSlider({
 
   return (
     <div className="relative">
-      <div className="w-full surface-card pl-[10px] pr-[14px] py-[8px] flex flex-col gap-[5px]">
+      {/* Its own opaque-ish white, not `.surface-card`'s 12%-opacity wash —
+          the timeline drives the whole dashboard's date range, so it reads
+          as the most load-bearing control in the header rather than another
+          translucent panel among many. */}
+      <div
+        className="w-full rounded-[var(--r-xl)] shadow-[var(--elev-1)] border border-[rgba(16,16,24,0.08)] pl-[16px] pr-[20px] py-[14px] flex flex-col gap-[5px]"
+        style={{ background: "rgba(255, 255, 255, 0.62)" }}
+      >
         <div className="flex items-center gap-[8px]">
           <button
             type="button"
@@ -419,6 +447,14 @@ export default function TimelineRangeSlider({
                 <div key={`tick-${month}`} className="tl-tick" style={{ left: `${(index / lastCount) * 100}%` }} />
               ))}
 
+              {/* "Today" — the real track's own right edge is exactly the
+                  boundary between the last surveyed month and the locked
+                  upcoming strip, so this needs no date math of its own: it
+                  just marks where the real data already ends. */}
+              <div className="tl-today" aria-hidden="true">
+                <span className="tl-today__label">Today</span>
+              </div>
+
               {months.map((month, index) => (
                 <button
                   key={month}
@@ -480,20 +516,21 @@ export default function TimelineRangeSlider({
                   <img> per dot would pull the whole set on mount, and a
                   thumbnail-sized pill above the rail would collide with the
                   fixed top bar. */}
-              {hovered !== null && !dragging && (
+              {displayedHover !== null && !dragging && (
                 <div
-                  className="tl-preview"
+                  className={`tl-preview ${previewLeaving ? "tl-preview--leaving" : ""}`}
                   style={{
-                    left: `${(hovered / lastCount) * 100}%`,
+                    left: `${(displayedHover / lastCount) * 100}%`,
                     // The 148px-wide card would overflow the timeline's own
                     // edge for the first/last couple of months if centred —
                     // anchor those to their own side instead.
-                    ["--tl-preview-x" as string]: hovered <= 1 ? "0%" : hovered >= lastCount - 1 ? "-100%" : "-50%",
+                    ["--tl-preview-x" as string]:
+                      displayedHover <= 1 ? "0%" : displayedHover >= lastCount - 1 ? "-100%" : "-50%",
                   }}
                 >
-                  {previewFor(hovered) ? (
+                  {previewFor(displayedHover) ? (
                     <div className="tl-preview__frame">
-                      <img src={previewFor(hovered)} alt="" className="tl-preview__img" loading="lazy" />
+                      <img src={previewFor(displayedHover)} alt="" className="tl-preview__img" loading="lazy" />
                       {/* A pin glyph, not a caption — this is meant to read as
                           "here's what the map looked like then", the same
                           teardrop marker the map itself uses for a flagged
@@ -508,14 +545,14 @@ export default function TimelineRangeSlider({
                       </svg>
                     </div>
                   ) : null}
-                  <span className="tl-preview__date">{months[hovered]}</span>
-                  {healthCountsSeries?.[hovered] && (
+                  <span className="tl-preview__date">{months[displayedHover]}</span>
+                  {healthCountsSeries?.[displayedHover] && (
                     <div className="flex items-center gap-[6px]">
                       {AT_RISK_HEALTH.map(({ key, label, color }) => (
                         <span key={key} className="flex items-center gap-[3px]" title={label}>
                           <span className="w-[6px] h-[6px] rounded-full shrink-0" style={{ background: color }} />
                           <span className="text-[9px] font-medium text-white/90 font-['Outfit',sans-serif] tabular-nums whitespace-nowrap">
-                            {healthCountsSeries[hovered][key]}
+                            {healthCountsSeries[displayedHover][key]}
                           </span>
                         </span>
                       ))}
@@ -627,16 +664,16 @@ export default function TimelineRangeSlider({
               type="button"
               onClick={() => setBannerOpen((b) => !b)}
               aria-expanded={bannerOpen}
-              className="u-press absolute bottom-[5px] -translate-x-1/2 flex items-center gap-[5px] pl-[7px] pr-[10px] py-[5px] rounded-full bg-[#18181c] hover:bg-[#2e2e35] text-white cursor-pointer whitespace-nowrap shadow-[0_2px_6px_-1px_rgba(0,0,0,0.35)] transition-colors duration-150"
+              className="u-press whats-next-btn absolute bottom-[3px] -translate-x-1/2 flex items-center gap-[7px] pl-[10px] pr-[14px] py-[8px] rounded-full text-white cursor-pointer whitespace-nowrap shadow-[0_4px_14px_-2px_rgba(0,0,0,0.45)] transition-transform duration-150 hover:scale-[1.03]"
               style={{ left: `${((lastCount + UPCOMING_MONTHS.length / 2) / (lastCount + UPCOMING_MONTHS.length)) * 100}%` }}
             >
-              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="shrink-0">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
                 <path
                   d="M8 1l1.6 4.4L14 7l-4.4 1.6L8 13l-1.6-4.4L2 7l4.4-1.6L8 1z"
                   fill="white"
                 />
               </svg>
-              <span className="text-[10px] font-medium font-['Outfit',sans-serif] leading-[14px] whitespace-nowrap">
+              <span className="text-[12px] font-medium font-['Outfit',sans-serif] leading-[16px] whitespace-nowrap">
                 What&apos;s next?
               </span>
             </button>

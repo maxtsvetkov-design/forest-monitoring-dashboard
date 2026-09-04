@@ -17,7 +17,7 @@ const SEVERITY_COLOR = CONDITION_COLOR;
 function TreePreview({ color, eventId }: { color: string; eventId: string }) {
   return (
     <div
-      className="w-10 h-10 rounded-[10px] overflow-hidden shrink-0 bg-[#dedee3]"
+      className="w-11 h-11 rounded-full overflow-hidden shrink-0 bg-[#dedee3]"
       style={{ boxShadow: `inset 0 0 0 2px ${color}`, ...treePhotoTileFor(eventId), backgroundSize: "auto" }}
     />
   );
@@ -102,8 +102,12 @@ export default function RecentEventsList({
       // No `surface-card--interactive` here: the lift is tuned for small
       // cards you sweep across, and on a full-height sidebar it reads as the
       // whole page shifting under the pointer.
-      className="max-h-[calc(100vh-160px)] min-h-0 min-w-0 surface-card p-[14px] flex flex-col gap-[10px] animate-fade-in-up group"
-      style={{ animationDelay: `${delay}ms` }}
+      className="max-h-[calc(100vh-160px)] min-h-0 min-w-0 surface-card flex flex-col gap-[10px] animate-fade-in-up group"
+      // Inline, not a `p-[8px]` utility class: `.surface-card`'s own
+      // `padding: 1px` rule (its hairline background reveal) sits later in
+      // the stylesheet than Tailwind's utilities and wins any class-vs-class
+      // tie, so a padding utility here would be silently ignored.
+      style={{ animationDelay: `${delay}ms`, padding: "8px" }}
     >
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-[6px]">
@@ -122,7 +126,7 @@ export default function RecentEventsList({
           {importantOnly ? "No critical events in the selected range." : "No field events in the selected range."}
         </p>
       ) : (
-        <div className="scroll-slim flex flex-col divide-y divide-[#dedee3] flex-1 min-h-0 overflow-y-auto">
+        <div className="scroll-slim flex flex-col gap-[8px] flex-1 min-h-0 overflow-y-auto p-[2px] -m-[2px]">
           {visibleEvents.map((event, i) => {
             // Ground-truthed against the actual tree record, not the event's
             // own narrative `severity` field: `event.severity` is picked to
@@ -146,10 +150,10 @@ export default function RecentEventsList({
                 e.preventDefault();
                 onSelectEvent(event);
               }}
-              className={`u-press flex items-start gap-[10px] py-[14px] first:pt-0 last:pb-0 animate-fade-in cursor-pointer rounded-[6px] px-1 -mx-1 border-l-[3px] ${
+              className={`u-press flex items-start gap-[12px] p-[12px] animate-fade-in cursor-pointer rounded-[16px] border transition-colors duration-150 ${
                 critical
-                  ? "bg-[#fdf1f0] border-[#E5484D] hover:bg-[#fbe6e4]"
-                  : "border-transparent hover:bg-[#f6f6f8]"
+                  ? "bg-[#fdf1f0] border-[#f6d3d1] hover:bg-[#fbe6e4]"
+                  : "bg-white border-[rgba(0,0,0,0.06)] hover:bg-[#fbfbfa]"
               }`}
               style={{ animationDelay: `${delay + Math.min(i, 10) * 40}ms` }}
             >
@@ -158,7 +162,7 @@ export default function RecentEventsList({
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-[6px] min-w-0">
                     <span
-                      className={`text-[12px] font-bold font-['Outfit',sans-serif] truncate ${
+                      className={`text-[14px] font-bold font-['Outfit',sans-serif] truncate ${
                         critical ? "text-[#B4231F]" : "text-[#18181c]"
                       }`}
                     >
@@ -170,11 +174,11 @@ export default function RecentEventsList({
                     {formatRelative(event.date)}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[16px] mt-[2px]">
+                <p className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[17px] mt-[2px]">
                   {event.description}
                 </p>
                 {critical && (
-                  <div className="flex items-center gap-[4px] mt-[4px]">
+                  <div className="flex items-center gap-[4px] mt-[6px]">
                     <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                       <path
                         d="M5 9.2S8.5 6 8.5 3.7A3.5 3.5 0 0 0 1.5 3.7C1.5 6 5 9.2 5 9.2Z"

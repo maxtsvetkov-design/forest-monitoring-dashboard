@@ -52,7 +52,7 @@ export default function KpiCard({
             {label}
           </p>
           <div className="flex items-center gap-[4px]">
-            <p className="text-[16px] font-medium text-[#18181c] leading-[24px] font-['Outfit',sans-serif] whitespace-nowrap">
+            <p className="text-[20px] font-bold text-[#18181c] leading-[26px] font-['Outfit',sans-serif] tabular-nums whitespace-nowrap">
               {value}
             </p>
             {hasInfo && (

@@ -281,13 +281,33 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
           {/* Diameter and height have no dropdown of their own elsewhere, but
               the KPI donuts can hand a filter over on either — without these
               the user would land on a filtered table with no visible reason
-              for it and nothing to toggle off. */}
-          <FilterDropdown
-            label="Diameter"
-            options={DIAMETER_ORDER.map((value) => ({ value, label: value }))}
-            selected={filters.diameterFilter}
-            onToggle={filters.toggleDiameter}
-          />
+              for it and nothing to toggle off.
+
+              Diameter only ever has 3 buckets, so a dropdown was one extra
+              click to see options that would already fit on one row — a
+              small horizontal segmented selector reads the whole facet (and
+              the active selection) at a glance instead. */}
+          <div className="flex items-center gap-[4px] px-[6px] py-[3px] rounded-[8px] border border-[#dedee3]">
+            <span className="text-[11px] text-[#71717a] font-['Outfit',sans-serif] pr-[2px] whitespace-nowrap">
+              Diameter
+            </span>
+            {DIAMETER_ORDER.map((value) => {
+              const active = filters.diameterFilter.has(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => filters.toggleDiameter(value)}
+                  aria-pressed={active}
+                  className={`u-press px-[8px] py-[3px] rounded-[6px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
+                    active ? "bg-[#096151] text-white" : "text-[#464650] hover:bg-[#ebece7]"
+                  }`}
+                >
+                  {value}
+                </button>
+              );
+            })}
+          </div>
           <FilterDropdown
             label="Height"
             options={HEIGHT_ORDER.map(({ key, label }) => ({ value: key, label }))}

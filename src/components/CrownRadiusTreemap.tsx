@@ -45,8 +45,6 @@ export default function CrownRadiusTreemap({
    * period to compare against (same convention as the KPI cards). */
   trend?: { change: string; trend: "up" | "down" } | null;
 }) {
-  const topRow = data.slice(0, 2);
-  const bottomRow = data.slice(2);
   const [hovered, setHovered] = useState<string | null>(null);
   const dotDivisor = useMemo(() => {
     const maxCount = Math.max(1, ...data.map((d) => d.count));
@@ -75,77 +73,47 @@ export default function CrownRadiusTreemap({
         )}
       </div>
 
-      <div className="flex-1 flex flex-col gap-[4px] min-h-[170px]">
-        <div className="flex gap-[4px] flex-1">
-          {topRow.map((d, i) => (
-            <div
-              key={d.label}
-              role={onSelectBucket ? "button" : undefined}
-              tabIndex={onSelectBucket ? 0 : undefined}
-              aria-label={onSelectBucket ? `Show trees with crown radius ${d.label} m` : undefined}
-              onClick={onSelectBucket ? () => onSelectBucket(i) : undefined}
-              onKeyDown={
-                onSelectBucket
-                  ? (e) => {
-                      if (e.key !== "Enter" && e.key !== " ") return;
-                      e.preventDefault();
-                      onSelectBucket(i);
-                    }
-                  : undefined
-              }
-              className="relative flex items-end p-3 rounded-[10px] cursor-pointer transition-all duration-200 overflow-hidden"
-              style={{
-                flex: d.pct,
-                background: d.color,
-                opacity: hovered && hovered !== d.label ? 0.75 : 1,
-                transform: hovered === d.label ? "scale(1.01)" : "scale(1)",
-              }}
-              onMouseEnter={() => setHovered(d.label)}
-              onMouseLeave={() => setHovered(null)}
-            >
-              <CrownDotField count={d.count} divisor={dotDivisor} />
-              <div className="absolute top-3 left-3">
-                <span className="text-white text-[13px] font-medium font-['Outfit',sans-serif]">{d.label}</span>
-              </div>
-              <span className="text-white text-[20px] font-bold font-['Outfit',sans-serif]">{d.pct}%</span>
+      {/* A single wrapping flow rather than a fixed 2-then-rest split: each
+          box's basis is its own share of trees (min 15% so a sliver bucket
+          still reads instead of collapsing to a hairline), so the browser
+          packs as many boxes as actually fit a row — small buckets share a
+          row three or four wide, a dominant bucket claims a row on its own. */}
+      <div className="flex-1 flex flex-wrap content-start gap-[4px] min-h-[170px]">
+        {data.map((d, i) => (
+          <div
+            key={d.label}
+            role={onSelectBucket ? "button" : undefined}
+            tabIndex={onSelectBucket ? 0 : undefined}
+            aria-label={onSelectBucket ? `Show trees with crown radius ${d.label} m — ${d.pct}% of trees` : undefined}
+            onClick={onSelectBucket ? () => onSelectBucket(i) : undefined}
+            onKeyDown={
+              onSelectBucket
+                ? (e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    onSelectBucket(i);
+                  }
+                : undefined
+            }
+            className="relative flex items-end p-3 rounded-[10px] cursor-pointer transition-all duration-200 overflow-hidden basis-[15%]"
+            style={{
+              flexGrow: d.pct,
+              flexBasis: `${Math.max(d.pct, 15)}%`,
+              minHeight: "78px",
+              background: d.color,
+              opacity: hovered && hovered !== d.label ? 0.75 : 1,
+              transform: hovered === d.label ? "scale(1.01)" : "scale(1)",
+            }}
+            onMouseEnter={() => setHovered(d.label)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <CrownDotField count={d.count} divisor={dotDivisor} />
+            <div className="absolute top-3 left-3">
+              <span className="text-white text-[12px] font-medium font-['Outfit',sans-serif]">{d.label}</span>
             </div>
-          ))}
-        </div>
-        <div className="flex gap-[4px] flex-1">
-          {bottomRow.map((d, i) => (
-            <div
-              key={d.label}
-              role={onSelectBucket ? "button" : undefined}
-              tabIndex={onSelectBucket ? 0 : undefined}
-              aria-label={onSelectBucket ? `Show trees with crown radius ${d.label} m` : undefined}
-              onClick={onSelectBucket ? () => onSelectBucket(topRow.length + i) : undefined}
-              onKeyDown={
-                onSelectBucket
-                  ? (e) => {
-                      if (e.key !== "Enter" && e.key !== " ") return;
-                      e.preventDefault();
-                      onSelectBucket(topRow.length + i);
-                    }
-                  : undefined
-              }
-              className="relative flex items-end p-3 rounded-[10px] cursor-pointer transition-all duration-200 overflow-hidden"
-              style={{
-                flex: d.pct,
-                background: d.color,
-                opacity: hovered && hovered !== d.label ? 0.75 : 1,
-                transform: hovered === d.label ? "scale(1.01)" : "scale(1)",
-              }}
-              onMouseEnter={() => setHovered(d.label)}
-              onMouseLeave={() => setHovered(null)}
-            >
-              <CrownDotField count={d.count} divisor={dotDivisor} />
-              <div className="absolute top-3 left-3">
-                <span className="text-white text-[12px] font-medium font-['Outfit',sans-serif]">{d.label}</span>
-              </div>
-              <span className="text-white text-[18px] font-bold font-['Outfit',sans-serif]">{d.pct}%</span>
-            </div>
-          ))}
-        </div>
+            <span className="text-white text-[18px] font-bold font-['Outfit',sans-serif]">{d.pct}%</span>
+          </div>
+        ))}
       </div>
     </div>
   );

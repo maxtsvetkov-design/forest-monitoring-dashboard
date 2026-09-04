@@ -1,5 +1,5 @@
 import { imgIcInfoCircle } from "../assets";
-import { useCountUp } from "../hooks/useCountUp";
+import SlotScore from "./SlotScore";
 
 /**
  * The dashboard's single headline number — same source as EcosystemConditionCard
@@ -27,7 +27,6 @@ export default function OverallHealthCard({
   change: number | null;
   delay: number;
 }) {
-  const animatedScore = useCountUp(score, 900, delay + 150);
   const trend: "up" | "down" | null = change === null ? null : change < 0 ? "down" : "up";
   const changeText = change === null ? null : `${change > 0 ? "+" : ""}${change.toFixed(0)}`;
 
@@ -44,8 +43,8 @@ export default function OverallHealthCard({
         {/* The one heavy element on the card. Near-black in both states —
             the accent block below is what carries the colour. */}
         <div className="flex items-start gap-[3px] mt-[6px]">
-          <span className="font-['Outfit',sans-serif] font-extrabold text-[44px] leading-[44px] tracking-[-0.03em] text-[#18181c] tabular-nums">
-            {Math.round(animatedScore)}%
+          <span className="flex items-baseline font-['Outfit',sans-serif] font-extrabold text-[44px] leading-[44px] tracking-[-0.03em] text-[#18181c] tabular-nums">
+            <SlotScore value={Math.round(score)} />%
           </span>
           <img src={imgIcInfoCircle} alt="info" className="u-icon w-4 h-4 opacity-40 hover:opacity-70 mt-[3px]" />
         </div>
