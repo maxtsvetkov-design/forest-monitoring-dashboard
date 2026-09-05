@@ -90,6 +90,11 @@ The planned tail is the two months from `buildUpcomingMonthLabels(2)`, marked
 `planned` for every layer. `PROMO_PLANNED_CAPTURES` stays where it is and keeps
 feeding the existing "N of M captures" line only.
 
+`kinds.length` is therefore `area.snapshots.length + 2`. Selection is bounded to
+the real months: strips pass `count = area.snapshots.length` to `useRangeScrub`,
+so the planned tail renders but cannot be dragged into — the same lock the
+full-size timeline already applies to its upcoming months.
+
 Pure module, no React. This is the piece where a wrong answer is invisible in a
 screenshot, so it is the piece that gets tests.
 
@@ -137,7 +142,9 @@ month — filled `#096151` for `captured`, hollow `#dedee3` for `gap`, dashed gr
 for `planned` — under a draggable selection band with start/end handles, and a
 caption reading `8 captures · 2 gaps`.
 
-Dragging a strip detaches that layer. A detached chip gains an accent left
+Dragging a strip detaches that layer. A click without a drag is a no-op; only
+an actual handle or band movement detaches, so opening a chip cannot silently
+desync it. A detached chip gains an accent left
 border and a `Feb–Apr ↺` badge whose control resyncs it. The panel header shows
 a **Re-sync all** action whenever `detachedIds.length > 0`.
 
