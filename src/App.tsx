@@ -37,6 +37,7 @@ import { areaOverlays, getTimelapseImages, PROMO_PLANNED_CAPTURES } from "./data
 import { healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
 import { useDateRange } from "./hooks/useDateRange";
+import CalendarRangePicker from "./components/CalendarRangePicker";
 import { useLayerTime } from "./hooks/useLayerTime";
 import type { PendingAreaFilter } from "./hooks/useTreeFilters";
 
@@ -179,7 +180,14 @@ export default function App() {
   }, [resizingSidebar]);
   const [activeAreaId, setActiveAreaId] = useState(areas[0].id);
   const activeArea = areas.find((a) => a.id === activeAreaId) ?? areas[0];
-  const { months, range, setRange, aggregated } = useDateRange(activeArea.snapshots);
+  // Two independent time scopes. The dashboard's analytical window and the
+  // map's playback position answer different questions, so they deliberately
+  // don't sync: moving between tabs never drags one scope's selection into the
+  // other. `calendar` feeds the KPIs, charts and events; `range` is the map
+  // master that the per-layer strips detach from.
+  const calendar = useDateRange(activeArea.snapshots);
+  const { months, range, setRange } = useDateRange(activeArea.snapshots);
+  const aggregated = calendar.aggregated;
   const layerTime = useLayerTime(activeArea.id, range);
   // Fixed ceiling for the health-per-species bubble sizes, derived from the
   // FULL dataset (not the current range) -- see maxScatterCount's comment.
@@ -205,7 +213,10 @@ export default function App() {
     () => generateEvents(areaOverlays[activeArea.id], activeArea.snapshots, activeArea.id),
     [activeArea],
   );
-  const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
+  const visibleEvents = useMemo(
+    () => eventsInRange(areaEvents, calendar.range),
+    [areaEvents, calendar.range],
+  );
 
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 50);
@@ -466,18 +477,34 @@ export default function App() {
               button group on the left — moved into the top header's own
               right edge instead, so this row is just the timeline. */}
           <div className="flex items-center px-2 py-2 gap-3 animate-fade-in-up" style={{ animationDelay: "190ms" }}>
-            <div className="flex-1 min-w-0">
-              <TimelineRangeSlider
-                months={months}
-                range={range}
-                onChange={setRange}
-                previewImages={getTimelapseImages(activeArea.id)}
-                plannedCaptures={PROMO_PLANNED_CAPTURES}
-                onPlayingChange={setIsTimelinePlaying}
-                treeCountSeries={treeCountSeries}
-                healthCountsSeries={healthCountsSeries}
-              />
-            </div>
+            {activeTab === "Maps" || activeTab === "Areas" ? (
+              <>
+                <div className="flex-1 min-w-0">
+                  <TimelineRangeSlider
+                    months={months}
+                    range={range}
+                    onChange={setRange}
+                    previewImages={getTimelapseImages(activeArea.id)}
+                    plannedCaptures={PROMO_PLANNED_CAPTURES}
+                    onPlayingChange={setIsTimelinePlaying}
+                    treeCountSeries={treeCountSeries}
+                    healthCountsSeries={healthCountsSeries}
+                  />
+                </div>
+                {layerTime.detachedIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={layerTime.resyncAll}
+                    title="Put every layer back on the master timeline"
+                    className="u-press shrink-0 self-end mb-[6px] px-[10px] h-[28px] rounded-[10px] border border-[#096151] text-[12px] text-[#096151] font-['Outfit',sans-serif] hover:bg-[#ebece7] cursor-pointer whitespace-nowrap"
+                  >
+                    {layerTime.detachedIds.length} detached ↺
+                  </button>
+                )}
+              </>
+            ) : (
+              <CalendarRangePicker months={calendar.months} range={calendar.range} onChange={calendar.setRange} />
+            )}
           </div>
         </div>
 
@@ -523,7 +550,7 @@ export default function App() {
             />
           </div>
         ) : activeTab === "Assets" ? (
-          <AssetsView area={activeArea} range={range} />
+          <AssetsView area={activeArea} range={calendar.range} />
         ) : (
           <div className="view-enter flex gap-[16px] items-stretch px-5 pb-6">
             {/* Main column */}
