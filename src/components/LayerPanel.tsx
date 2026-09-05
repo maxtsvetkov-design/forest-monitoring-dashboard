@@ -81,7 +81,7 @@ const LAYER_META: Record<ContentLayerId, { title: string; description: string; i
   },
 };
 
-const LAYER_ORDER: ContentLayerId[] = ["aerial", "canopy", "pins", "generative", "dyingTrees"];
+export const LAYER_ORDER: ContentLayerId[] = ["aerial", "canopy", "pins", "generative", "dyingTrees"];
 
 // Shared across every map view — see App.tsx, which owns this as top-level
 // state (rather than MapCanvas owning it locally) precisely so a layer
