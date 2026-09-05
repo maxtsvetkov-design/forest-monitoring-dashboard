@@ -87,6 +87,13 @@ export default function AreasView({
   basemapIndex: number;
   onBasemapIndexChange: Dispatch<SetStateAction<number>>;
 }) {
+  // Each overlay resolves from its OWN layer's range, not the master one, so a
+  // layer detached in the panel actually renders a different month than its
+  // neighbours. The generative art shares the aerial footprint but keeps its
+  // own range: the two are separate chips and can be scrubbed apart.
+  const aerialRange = layerTime.rangeFor.aerial;
+  const dyingRange = layerTime.rangeFor.dyingTrees;
+
   const baseOverlay = areaOverlays[area.id];
   const timelapseImages = getTimelapseImages(area.id);
   // A plain number, not memoized — cheap arithmetic, and its whole purpose is
@@ -95,7 +102,7 @@ export default function AreasView({
   // source/layer teardown) on every pixel of a slider drag instead of only
   // when the visible image actually needs to change.
   const timelapseBucket = timelapseImages
-    ? timelapseBucketIndex(range, area.snapshots.length, timelapseImages.length)
+    ? timelapseBucketIndex(aerialRange, area.snapshots.length, timelapseImages.length)
     : -1;
   const overlay = useMemo(
     () => (timelapseImages && timelapseBucket >= 0 ? { ...baseOverlay, url: timelapseImages[timelapseBucket] } : baseOverlay),
@@ -106,8 +113,8 @@ export default function AreasView({
   // dragging into the final three months escalates this from the mild frame
   // to the severe one.
   const dyingTreeOverlay = useMemo(
-    () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, range, area.snapshots.length),
-    [area.id, area.snapshots.length, range.endIndex],
+    () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, dyingRange, area.snapshots.length),
+    [area.id, area.snapshots.length, dyingRange.endIndex],
   );
 
   // The plot's standing inventory as of the LAST month in the selected range:
@@ -208,6 +215,8 @@ export default function AreasView({
           leaving MapLibre with a 0px-tall canvas. */}
       <MapCanvas
         layerTime={layerTime}
+        pinsRange={layerTime.rangeFor.pins}
+        generativeRange={layerTime.rangeFor.generative}
         center={area.center}
         zoom={11.5}
         overlay={overlay}

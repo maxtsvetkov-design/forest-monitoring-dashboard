@@ -475,6 +475,8 @@ export default function MapCanvas({
   dyingTreeOverlay,
   areaId,
   layerTime,
+  pinsRange,
+  generativeRange,
   areaName,
   layerVisibility,
   onLayerVisibilityChange: setLayerVisibility,
@@ -509,6 +511,13 @@ export default function MapCanvas({
   /** Per-layer date ranges, so each chip can drive its own coverage strip.
    * Optional: a MapCanvas rendered without chrome has no layer panel. */
   layerTime?: LayerTime;
+  /** The range the flagged pins read, which may differ from `range` once the
+   * pins layer has been detached in the layer panel. Falls back to `range` so
+   * callers that don't split layers behave exactly as before. */
+  pinsRange?: DateRange;
+  /** The range the generative canopy art reads for its reveal. Same fallback
+   * rule as `pinsRange`. */
+  generativeRange?: DateRange;
   /** Shown in the layer panel's header — see LayerPanel. */
   areaName?: string;
   /** Lifted to App.tsx so a layer hidden or a basemap picked on one tab's
@@ -645,6 +654,12 @@ export default function MapCanvas({
   // fire from map event handlers, not renders).
   const rangeRef = useRef(range);
   rangeRef.current = range;
+  // The generative reveal reads its own layer's range when that layer has been
+  // detached — kept in a ref for the same reason rangeRef is: the paint
+  // callbacks below run outside React's render and would otherwise close over
+  // a stale value.
+  const generativeRangeRef = useRef(generativeRange ?? range);
+  generativeRangeRef.current = generativeRange ?? range;
   // Separation between the generative overlay and the aerial photo, in metres.
   // Mirrored into a ref because the custom layer's render loop reads it every
   // frame outside React's render cycle.
@@ -763,7 +778,7 @@ export default function MapCanvas({
           type: "raster",
           source: GENERATIVE_SOURCE_ID,
           paint: {
-            "raster-opacity": generativeRevealOpacity(rangeRef.current) * layerOpacityRef.current.generative,
+            "raster-opacity": generativeRevealOpacity(generativeRangeRef.current) * layerOpacityRef.current.generative,
             "raster-opacity-transition": { duration: 250 },
             "raster-fade-duration": 0,
           },
@@ -1156,7 +1171,7 @@ export default function MapCanvas({
         type: "raster",
         source: GENERATIVE_SOURCE_ID,
         paint: {
-          "raster-opacity": generativeRevealOpacity(rangeRef.current) * layerOpacityRef.current.generative,
+          "raster-opacity": generativeRevealOpacity(generativeRangeRef.current) * layerOpacityRef.current.generative,
           "raster-opacity-transition": { duration: 250 },
           "raster-fade-duration": 0,
         },
@@ -1341,7 +1356,7 @@ export default function MapCanvas({
       "raster-opacity",
       generativeRevealOpacity(range) * layerOpacityRef.current.generative,
     );
-  }, [generativeOverlay, loaded, range?.endIndex]);
+  }, [generativeOverlay, loaded, generativeRange?.endIndex ?? range?.endIndex]);
 
   // Rasterise the mask once per mount and wait for it -- the layer-creation
   // effect below depends on this being ready.
@@ -1446,7 +1461,7 @@ export default function MapCanvas({
     map.setPaintProperty(
       GENERATIVE_LAYER_ID,
       "raster-opacity",
-      generativeRevealOpacity(rangeRef.current) * layerOpacity.generative,
+      generativeRevealOpacity(generativeRangeRef.current) * layerOpacity.generative,
     );
   }, [layerOpacity.generative, loaded]);
 
@@ -1703,7 +1718,7 @@ export default function MapCanvas({
       return;
     }
 
-    const effectiveRange = range ?? { startIndex: 0, endIndex: snapshots.length - 1 };
+    const effectiveRange = pinsRange ?? range ?? { startIndex: 0, endIndex: snapshots.length - 1 };
     // The END month, not the whole range. The population persists now, so every
     // tree exists in every month; "the plot as of this date" is the reading
     // that makes dragging the timeline into the final three months light up the
@@ -1742,7 +1757,7 @@ export default function MapCanvas({
 
     // A pin that just faded out of range shouldn't leave its tooltip dangling.
     setActivePin((prev) => (prev && !visibleIds.has(prev.pin.id) ? null : prev));
-  }, [overlay, overlayReady, loaded, areaId, snapshots, range, visibleTreeIds]);
+  }, [overlay, overlayReady, loaded, areaId, snapshots, range, pinsRange, visibleTreeIds]);
 
   // Flies to the tree selected in the Areas table and rings it. Runs after the
   // visibility effect above so that, for a flagged tree, the marker it wants to
@@ -1933,7 +1948,16 @@ export default function MapCanvas({
   }
 
   const collapsed = diagnostics.height < 1 || diagnostics.width < 1;
-  const activeMonthLabel = snapshots[Math.min(range?.endIndex ?? snapshots.length - 1, snapshots.length - 1)]?.label;
+  // Per layer, not one shared label: a detached layer showing March must not
+  // sit under a subtitle reading "As of September" because the master timeline
+  // happens to be there. Falls back to the master range for layers with no
+  // override, which is what rangeFor already hands back.
+  function monthLabelFor(r: DateRange | undefined): string | undefined {
+    const index = Math.min(r?.endIndex ?? snapshots.length - 1, snapshots.length - 1);
+    return snapshots[index]?.label;
+  }
+  const aerialMonthLabel = monthLabelFor(layerTime?.rangeFor.aerial ?? range);
+  const canopyMonthLabel = monthLabelFor(layerTime?.rangeFor.canopy ?? range);
 
   return (
     <div
@@ -1984,8 +2008,8 @@ export default function MapCanvas({
           showDyingTrees={!!dyingTreeOverlay}
           opacity={layerOpacity}
           onOpacityChange={(id, value) => setLayerOpacity((o) => ({ ...o, [id]: value }))}
-          aerialSubtitle={activeMonthLabel ? `As of ${activeMonthLabel}` : "Drone capture"}
-          canopySubtitle={activeMonthLabel ? `As of ${activeMonthLabel}` : "Health-weighted gradient"}
+          aerialSubtitle={aerialMonthLabel ? `As of ${aerialMonthLabel}` : "Drone capture"}
+          canopySubtitle={canopyMonthLabel ? `As of ${canopyMonthLabel}` : "Health-weighted gradient"}
           pinCounts={pinCounts}
           basemapLabel={BASEMAPS[basemapIndex].label}
           onBasemapPrev={() => setBasemapIndex((i) => (i - 1 + BASEMAPS.length) % BASEMAPS.length)}
