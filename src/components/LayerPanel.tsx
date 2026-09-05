@@ -1,7 +1,10 @@
-import { useState, type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { firstFullTierIndex, LOCKED_AT_CURRENT_TIER, TIERS, type TierRow } from "../data/tiers";
 import type { PinSeverity } from "../data/treePins";
 import TierComparisonModal from "./TierComparisonModal";
+import LayerCoverageStrip from "./LayerCoverageStrip";
+import { layerCoverage } from "../data/layerTime";
+import type { LayerTime } from "../hooks/useLayerTime";
 import { CONDITIONS, CONDITION_COLOR, CONDITION_LABEL } from "../data/taxonomy";
 
 /**
@@ -16,6 +19,15 @@ import { CONDITIONS, CONDITION_COLOR, CONDITION_LABEL } from "../data/taxonomy";
  */
 
 export type ContentLayerId = "aerial" | "canopy" | "pins" | "generative" | "dyingTrees";
+
+/** Everything a chip needs to draw and drive its own coverage strip. Bundled
+ * rather than passed as three separate props because all five chips need the
+ * identical set and derive the rest from the `id` they already have. */
+export interface LayerTimeContext {
+  areaId: string;
+  months: string[];
+  layerTime: LayerTime;
+}
 
 const stroke = {
   fill: "none",
@@ -139,6 +151,7 @@ function LayerChip({
   opacity,
   onOpacityChange,
   onHide,
+  time,
 }: {
   id: ContentLayerId;
   subtitle: string;
@@ -146,10 +159,20 @@ function LayerChip({
   opacity: number;
   onOpacityChange: (value: number) => void;
   onHide: () => void;
+  time: LayerTimeContext;
 }) {
   const meta = LAYER_META[id];
+  const coverage = useMemo(
+    () => layerCoverage(id, time.areaId, time.months.length),
+    [id, time.areaId, time.months.length],
+  );
+  const detached = time.layerTime.detachedIds.includes(id);
   return (
-    <div className="bg-white rounded-[10px] px-[8px] py-[8px] w-full transition-colors duration-150 hover:bg-[#fbfbfa]">
+    <div
+      className={`bg-white rounded-[10px] py-[8px] w-full transition-colors duration-150 hover:bg-[#fbfbfa] ${
+        detached ? "border-l-[3px] border-l-[#096151] pl-[5px] pr-[8px]" : "px-[8px]"
+      }`}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-[8px] min-w-0">
           <div className="w-[24px] h-[24px] rounded-[6px] bg-[#dedee3] flex items-center justify-center shrink-0 text-[#096151]">
@@ -197,6 +220,15 @@ function LayerChip({
           {Math.round(opacity * 100)}%
         </span>
       </div>
+      <LayerCoverageStrip
+        coverage={coverage}
+        months={time.months}
+        range={time.layerTime.rangeFor[id]}
+        onChange={(next) => time.layerTime.setLayerRange(id, next)}
+        detached={detached}
+        onResync={() => time.layerTime.resyncLayer(id)}
+        label={meta.title}
+      />
       {stats && stats.length > 0 && (
         <div className="flex flex-wrap gap-x-[12px] gap-y-[4px] mt-[8px] pl-[32px]">
           {stats.map((s) => (
@@ -259,6 +291,9 @@ export default function LayerPanel({
   basemapLabel,
   onBasemapPrev,
   onBasemapNext,
+  areaId,
+  months,
+  layerTime,
 }: {
   projectName?: string;
   areaName: string;
@@ -272,6 +307,10 @@ export default function LayerPanel({
   showDyingTrees: boolean;
   opacity: Record<ContentLayerId, number>;
   onOpacityChange: (id: ContentLayerId, value: number) => void;
+  /** The area whose per-layer coverage the chips describe. */
+  areaId: string;
+  months: string[];
+  layerTime: LayerTime;
   aerialSubtitle: string;
   canopySubtitle: string;
   pinCounts: Record<PinSeverity, number> | null;
@@ -287,6 +326,9 @@ export default function LayerPanel({
     (id) => (id !== "generative" || showGenerative) && (id !== "dyingTrees" || showDyingTrees),
   );
   const hiddenLayers = availableLayers.filter((id) => !visibility[id]);
+
+  // One object for all five chips — see LayerTimeContext.
+  const chipTime: LayerTimeContext = { areaId, months, layerTime };
 
   if (collapsed) {
     return (
@@ -370,12 +412,25 @@ export default function LayerPanel({
         </button>
       </div>
 
+      {/* Only present while some layer is showing a different window from the
+          master timeline — a standing offer to put them back in step. */}
+      {layerTime.detachedIds.length > 0 && (
+        <button
+          type="button"
+          onClick={layerTime.resyncAll}
+          className="u-press mx-[8px] mb-[4px] flex items-center justify-center gap-[6px] border border-[#096151] rounded-[10px] px-[12px] py-[6px] text-[12px] font-medium text-[#096151] font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer hover:bg-[#ebece7]"
+        >
+          Re-sync all ({layerTime.detachedIds.length})
+        </button>
+      )}
+
       {/* Layer list */}
       <div className="scroll-slim flex-1 min-h-0 overflow-y-auto p-[8px]">
         <div className="flex flex-col gap-[6px]">
           {visibility.aerial && (
             <LayerChip
               id="aerial"
+              time={chipTime}
               subtitle={aerialSubtitle}
               opacity={opacity.aerial}
               onOpacityChange={(v) => onOpacityChange("aerial", v)}
@@ -385,6 +440,7 @@ export default function LayerPanel({
           {visibility.canopy && (
             <LayerChip
               id="canopy"
+              time={chipTime}
               subtitle={canopySubtitle}
               opacity={opacity.canopy}
               onOpacityChange={(v) => onOpacityChange("canopy", v)}
@@ -394,6 +450,7 @@ export default function LayerPanel({
           {visibility.pins && (
             <LayerChip
               id="pins"
+              time={chipTime}
               subtitle={
                 pinCounts
                   ? `${SEVERITY_ORDER.reduce((sum, s) => sum + pinCounts[s], 0)} flagged`
@@ -415,6 +472,7 @@ export default function LayerPanel({
           {showGenerative && visibility.generative && (
             <LayerChip
               id="generative"
+              time={chipTime}
               subtitle="Visible while tilted into 3D."
               opacity={opacity.generative}
               onOpacityChange={(v) => onOpacityChange("generative", v)}
@@ -424,6 +482,7 @@ export default function LayerPanel({
           {showDyingTrees && visibility.dyingTrees && (
             <LayerChip
               id="dyingTrees"
+              time={chipTime}
               subtitle="Trees flagged for canopy dieback."
               opacity={opacity.dyingTrees}
               onOpacityChange={(v) => onOpacityChange("dyingTrees", v)}

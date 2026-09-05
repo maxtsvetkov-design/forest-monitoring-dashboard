@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LAYER_ORDER, type ContentLayerId } from "../components/LayerPanel";
 import type { DateRange } from "../data/aggregate";
-import type { Area } from "../data/areas";
 
 type Overrides = Record<ContentLayerId, DateRange | null>;
 
@@ -25,12 +24,12 @@ export interface LayerTime {
  * useDateRange resets there: a swapped dataset invalidates a stored selection,
  * and a stale index would point at a month that no longer exists.
  */
-export function useLayerTime(area: Area, masterRange: DateRange): LayerTime {
+export function useLayerTime(areaId: string, masterRange: DateRange): LayerTime {
   const [overrides, setOverrides] = useState<Overrides>(NO_OVERRIDES);
 
   useEffect(() => {
     setOverrides(NO_OVERRIDES);
-  }, [area]);
+  }, [areaId]);
 
   const rangeFor = useMemo(
     () =>

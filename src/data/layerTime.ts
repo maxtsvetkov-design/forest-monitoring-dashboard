@@ -1,5 +1,4 @@
 import type { ContentLayerId } from "../components/LayerPanel";
-import type { Area } from "./areas";
 import { areaDyingTreeSequence, areaTimelapseImages } from "./overlays";
 
 /**
@@ -26,14 +25,18 @@ export interface LayerCoverage {
 /**
  * Which month indices a layer genuinely observes.
  *
+ * Takes `areaId` and `monthCount` rather than an Area: those are the only two
+ * facts it needs, and asking for less lets MapCanvas — which holds an id and a
+ * snapshot list, not an Area — call it directly.
+ *
  * Every branch reads the same array the map itself renders from, so a strip can
  * never claim coverage the overlay doesn't have. The `dyingTrees` branch is the
  * reason this module exists: `dyingTreeOverlayForRange` already clamps months
  * before its sequence window to the mildest frame, and until now nothing said
  * so — those months are gaps, not observations.
  */
-export function layerCoverage(id: ContentLayerId, area: Area): LayerCoverage {
-  const months = area.snapshots.length;
+export function layerCoverage(id: ContentLayerId, areaId: string, monthCount: number): LayerCoverage {
+  const months = monthCount;
   const kinds: CoverageKind[] = new Array(months).fill("gap");
 
   switch (id) {
@@ -52,7 +55,7 @@ export function layerCoverage(id: ContentLayerId, area: Area): LayerCoverage {
       // or a strip will claim a capture in a month that renders a neighbour's
       // photo. An area with no imagery has imageCount 0, so the loop never runs
       // and every month stays a gap.
-      const images = areaTimelapseImages[area.id];
+      const images = areaTimelapseImages[areaId];
       const imageCount = images?.length ?? 0;
       for (let i = 0; i < imageCount; i++) {
         const index = Math.floor((i * months) / imageCount);
@@ -65,7 +68,7 @@ export function layerCoverage(id: ContentLayerId, area: Area): LayerCoverage {
       // window — see areaDyingTreeSequence's comment. Every month before that
       // window is a genuine gap: dyingTreeOverlayForRange clamps them to its
       // mildest frame, which is a fallback, not an observation.
-      const sequence = areaDyingTreeSequence[area.id];
+      const sequence = areaDyingTreeSequence[areaId];
       const frameCount = sequence?.length ?? 0;
       for (let i = Math.max(0, months - frameCount); i < months; i++) {
         kinds[i] = "captured";

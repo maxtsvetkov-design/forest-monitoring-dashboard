@@ -1,6 +1,6 @@
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import type { DateRange } from "../data/aggregate";
 import type { MapOverlay } from "../data/overlays";
@@ -8,6 +8,7 @@ import { generateTreePins, pinSeverityAt, SEVERITY_COLOR, type PinSeverity, type
 import { generateTreeRecords, type TreeRecord } from "../data/trees";
 import type { MonthSnapshot } from "../data/types";
 import { publicUrl } from "../lib/publicUrl";
+import type { LayerTime } from "../hooks/useLayerTime";
 import LayerPanel, { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./LayerPanel";
 import { buildMapFilter, DEFAULT_MAP_CONTRAST, type MapColorMode } from "./mapColorModes";
 import MapToolbar from "./MapToolbar";
@@ -473,6 +474,7 @@ export default function MapCanvas({
   generativeOverlay,
   dyingTreeOverlay,
   areaId,
+  layerTime,
   areaName,
   layerVisibility,
   onLayerVisibilityChange: setLayerVisibility,
@@ -504,6 +506,9 @@ export default function MapCanvas({
   /** Flat, always-on trace of trees flagged as dying, same footprint — see areaDyingTreeOverlays. */
   dyingTreeOverlay?: MapOverlay;
   areaId?: string;
+  /** Per-layer date ranges, so each chip can drive its own coverage strip.
+   * Optional: a MapCanvas rendered without chrome has no layer panel. */
+  layerTime?: LayerTime;
   /** Shown in the layer panel's header — see LayerPanel. */
   areaName?: string;
   /** Lifted to App.tsx so a layer hidden or a basemap picked on one tab's
@@ -610,6 +615,10 @@ export default function MapCanvas({
   // marker click handlers are bound once when the pool is built and would
   // otherwise close over a stale month for the rest of the session.
   const displayMonthRef = useRef(0);
+  // The panel's strips need month labels, and MapCanvas holds snapshots rather
+  // than labels — memoized so the chips' own coverage memo isn't invalidated by
+  // a fresh array on every render.
+  const monthLabelsForPanel = useMemo(() => snapshots.map((s) => s.label), [snapshots]);
   // Whether the open pin popover is showing its full history form instead of
   // the compact tooltip — toggled by the expand/collapse affordances on each,
   // not a state of its own separate from `activePin`.
@@ -1957,9 +1966,12 @@ export default function MapCanvas({
         />
       )}
 
-      {chrome && loaded && !error && (
+      {chrome && loaded && !error && layerTime && (
         <LayerPanel
           areaName={areaName ?? areaId ?? "Area"}
+          areaId={areaId ?? "area"}
+          months={monthLabelsForPanel}
+          layerTime={layerTime}
           visibility={layerVisibility}
           onHideLayer={(id) => setLayerVisibility((v) => ({ ...v, [id]: false }))}
           onShowLayer={(id) => setLayerVisibility((v) => ({ ...v, [id]: true }))}

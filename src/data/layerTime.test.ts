@@ -7,26 +7,26 @@ const MONTHS = alMaha.snapshots.length; // 12
 
 describe("layerCoverage", () => {
   it("marks every month captured for a dense layer", () => {
-    const canopy = layerCoverage("canopy", alMaha);
+    const canopy = layerCoverage("canopy", alMaha.id, MONTHS);
     expect(canopy.capturedCount).toBe(MONTHS);
     expect(canopy.gapCount).toBe(0);
   });
 
   it("spreads aerial captures into buckets, leaving gaps between them", () => {
     // 5 timelapse images over 12 months: one capture at the start of each bucket.
-    const aerial = layerCoverage("aerial", alMaha);
+    const aerial = layerCoverage("aerial", alMaha.id, MONTHS);
     expect(aerial.capturedCount).toBe(5);
     expect(aerial.gapCount).toBe(MONTHS - 5);
     expect(aerial.kinds[0]).toBe("captured");
   });
 
   it("gives the generative layer the same coverage as aerial", () => {
-    expect(layerCoverage("generative", alMaha).kinds).toEqual(layerCoverage("aerial", alMaha).kinds);
+    expect(layerCoverage("generative", alMaha.id, MONTHS).kinds).toEqual(layerCoverage("aerial", alMaha.id, MONTHS).kinds);
   });
 
   it("covers only the trailing window for dying trees", () => {
     // areaDyingTreeSequence has 3 frames -> the final 3 months only.
-    const dying = layerCoverage("dyingTrees", alMaha);
+    const dying = layerCoverage("dyingTrees", alMaha.id, MONTHS);
     expect(dying.capturedCount).toBe(3);
     expect(dying.kinds[MONTHS - 1]).toBe("captured");
     expect(dying.kinds[MONTHS - 3]).toBe("captured");
@@ -36,7 +36,7 @@ describe("layerCoverage", () => {
 
   it("appends a planned tail of the same length to every layer", () => {
     for (const id of ["aerial", "canopy", "pins", "generative", "dyingTrees"] as const) {
-      const coverage = layerCoverage(id, alMaha);
+      const coverage = layerCoverage(id, alMaha.id, MONTHS);
       expect(coverage.plannedCount).toBe(PLANNED_TAIL_MONTHS);
       expect(coverage.kinds).toHaveLength(MONTHS + PLANNED_TAIL_MONTHS);
       expect(coverage.kinds.at(-1)).toBe("planned");
@@ -44,7 +44,7 @@ describe("layerCoverage", () => {
   });
 
   it("resolves a gap back to the preceding capture", () => {
-    const dying = layerCoverage("dyingTrees", alMaha);
+    const dying = layerCoverage("dyingTrees", alMaha.id, MONTHS);
     // Month 0 is a gap and nothing precedes it.
     expect(dying.resolve(0)).toBe(-1);
     // The last month is itself a capture.
@@ -55,8 +55,7 @@ describe("layerCoverage", () => {
   });
 
   it("reports no captures for an area with no imagery", () => {
-    const empty = { ...alMaha, id: "does-not-exist" };
-    const aerial = layerCoverage("aerial", empty);
+    const aerial = layerCoverage("aerial", "does-not-exist", MONTHS);
     expect(aerial.capturedCount).toBe(0);
     expect(aerial.gapCount).toBe(MONTHS);
   });

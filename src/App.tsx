@@ -37,6 +37,7 @@ import { areaOverlays, getTimelapseImages, PROMO_PLANNED_CAPTURES } from "./data
 import { healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
 import { useDateRange } from "./hooks/useDateRange";
+import { useLayerTime } from "./hooks/useLayerTime";
 import type { PendingAreaFilter } from "./hooks/useTreeFilters";
 
 const TOTAL_AREA = "12 ha";
@@ -179,6 +180,7 @@ export default function App() {
   const [activeAreaId, setActiveAreaId] = useState(areas[0].id);
   const activeArea = areas.find((a) => a.id === activeAreaId) ?? areas[0];
   const { months, range, setRange, aggregated } = useDateRange(activeArea.snapshots);
+  const layerTime = useLayerTime(activeArea.id, range);
   // Fixed ceiling for the health-per-species bubble sizes, derived from the
   // FULL dataset (not the current range) -- see maxScatterCount's comment.
   const scatterZMax = useMemo(() => maxScatterCount(activeArea.snapshots), [activeArea]);
@@ -486,6 +488,7 @@ export default function App() {
           <div className="view-enter-soft">
             <MapsView
               area={activeArea}
+              layerTime={layerTime}
               range={range}
               isTimelinePlaying={isTimelinePlaying}
               focusTree={focusTree}
@@ -506,6 +509,7 @@ export default function App() {
           <div className="view-enter-soft">
             <AreasView
               area={activeArea}
+              layerTime={layerTime}
               range={range}
               isTimelinePlaying={isTimelinePlaying}
               pendingFilter={pendingFilter}

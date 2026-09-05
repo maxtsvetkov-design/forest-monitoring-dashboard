@@ -14,6 +14,7 @@ import { generateTreeRecordsAt } from "../data/trees";
 import { clamp, useDragResize } from "../hooks/useDragResize";
 import { applyPendingFilter, useTreeFilters, type PendingAreaFilter } from "../hooks/useTreeFilters";
 import type { ContentLayerId } from "./LayerPanel";
+import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
 import TreeTable from "./TreeTable";
@@ -56,6 +57,7 @@ const KEYBOARD_SPLIT_STEP = 5;
 export default function AreasView({
   area,
   range,
+  layerTime,
   isTimelinePlaying,
   pendingFilter,
   onPendingFilterApplied,
@@ -68,6 +70,8 @@ export default function AreasView({
 }: {
   area: Area;
   range: DateRange;
+  /** Per-layer ranges, forwarded to the layer panel's coverage strips. */
+  layerTime: LayerTime;
   /** Whether the timeline's play button is currently stepping through
    * months — see MapCanvas's canopy gradient pulse. */
   isTimelinePlaying?: boolean;
@@ -203,6 +207,7 @@ export default function AreasView({
           `flex-1` child has no definite height to resolve against and can collapse,
           leaving MapLibre with a 0px-tall canvas. */}
       <MapCanvas
+        layerTime={layerTime}
         center={area.center}
         zoom={11.5}
         overlay={overlay}

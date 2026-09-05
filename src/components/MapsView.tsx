@@ -10,6 +10,7 @@ import {
   timelapseBucketIndex,
 } from "../data/overlays";
 import type { ContentLayerId } from "./LayerPanel";
+import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
 
 // Explicit viewport-relative height: the ancestor chain uses `min-h-screen`
@@ -20,6 +21,7 @@ const MAP_HEIGHT = "h-[calc(100vh_-_150px)] min-h-[400px]";
 export default function MapsView({
   area,
   range,
+  layerTime,
   isTimelinePlaying,
   focusTree,
   onFocusArrived,
@@ -33,6 +35,8 @@ export default function MapsView({
 }: {
   area: Area;
   range: DateRange;
+  /** Per-layer ranges, forwarded to the layer panel's coverage strips. */
+  layerTime: LayerTime;
   /** Whether the timeline's play button is currently stepping through
    * months — see MapCanvas's canopy gradient pulse. */
   isTimelinePlaying?: boolean;
@@ -72,6 +76,7 @@ export default function MapsView({
   return (
     <div className="flex flex-col px-4 pb-6">
       <MapCanvas
+        layerTime={layerTime}
         center={area.center}
         zoom={12.5}
         show3DToggle
