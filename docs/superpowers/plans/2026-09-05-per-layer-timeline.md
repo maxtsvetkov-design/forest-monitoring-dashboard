@@ -792,11 +792,11 @@ In `src/components/LayerPanel.tsx`:
 
 ```ts
 import type { DateRange } from "../data/aggregate";
-import { coverageCaption, layerCoverage, type LayerCoverage } from "../data/layerTime";
+import { layerCoverage, type LayerCoverage } from "../data/layerTime";
 import LayerCoverageStrip from "./LayerCoverageStrip";
 ```
 
-(`coverageCaption` is used only inside the strip — if `tsc` flags it unused here, drop it from this import.)
+(`coverageCaption` is deliberately not imported here — only the strip renders it.)
 
 2. Add these props to `LayerChip`'s prop object and its type:
 
@@ -862,21 +862,46 @@ In the panel header's action row, next to the existing Add Layers / Reset contro
         )}
 ```
 
-- [ ] **Step 4: Typecheck**
+- [ ] **Step 4: Supply the new `LayerPanel` props so this task stands alone**
 
-Run: `pnpm exec tsc --noEmit`
-Expected: errors at `MapsView` and `AreasView`, which render `<LayerPanel>` without the three new props. That is expected — Task 5 supplies them. Do not commit yet; continue to Step 5.
+`MapsView` and `AreasView` both render `<LayerPanel>` and must now pass three more props. In **each** of `src/components/MapsView.tsx` and `src/components/AreasView.tsx`:
 
-- [ ] **Step 5: Satisfy the new props temporarily is NOT needed — proceed to Task 5**
+1. Add to the props type and destructuring: `months: string[];` and `layerTime: LayerTime;` (`area` is already a prop on both).
+2. Import the type: `import type { LayerTime } from "../hooks/useLayerTime";`
+3. At the `<LayerPanel ... />` call site, add: `area={area} months={months} layerTime={layerTime}`
 
-This task's deliverable compiles only once Task 5 threads the props. Commit both together at the end of Task 5.
+In `src/App.tsx`, add the import and hook call after the existing `useDateRange` line (currently line 181):
+
+```ts
+import { useLayerTime } from "./hooks/useLayerTime";
+```
+
+```ts
+  const layerTime = useLayerTime(activeArea, range);
+```
+
+Then pass `months={months} layerTime={layerTime}` to both `<MapsView>` and `<AreasView>`.
+
+At the end of this task the strips render and detach correctly, but detaching does **not** yet change what the map draws — every overlay still resolves from the master range. Task 5 connects them.
+
+- [ ] **Step 5: Typecheck, build, verify, commit**
+
+Run: `pnpm exec tsc --noEmit && pnpm build`
+Expected: PASS.
+
+Then `pnpm dev` and confirm on the Maps tab:
+- Every layer chip shows a coverage strip below its opacity slider.
+- Canopy and pins are solid ticks across all 12 months; aerial shows 5 tall ticks with short ones between; dying trees shows short ticks until the final 3 months, then 3 tall ones.
+- Captions read `12 captures`, `5 captures · 7 gaps`, `3 captures · 9 gaps` respectively.
+- The two faint planned ticks sit past the end of every strip and cannot be dragged into.
+- Dragging a strip gives that chip an accent left border and a `Feb–Apr ↺` badge, and the panel header shows `Re-sync all (1)`.
+- The badge and Re-sync all both clear the detached state.
 
 ```bash
 pnpm format
-git add src/components/LayerCoverageStrip.tsx src/components/LayerPanel.tsx
+git add src/components/LayerCoverageStrip.tsx src/components/LayerPanel.tsx src/components/MapsView.tsx src/components/AreasView.tsx src/App.tsx
+git commit -m "feat: show per-layer coverage strips in the layer panel"
 ```
-
-Stage but do not commit. Task 5 Step 5 makes the commit.
 
 ---
 
@@ -943,7 +968,7 @@ For the generative overlay, key its `useMemo` on `generativeRange.endIndex`. For
   );
 ```
 
-Pass `pinsRange={layerTime.rangeFor.pins}` to `<MapCanvas>`, and pass `area`, `months`, and `layerTime` to `<LayerPanel>`.
+Pass `pinsRange={layerTime.rangeFor.pins}` to `<MapCanvas>`. The `<LayerPanel>` props were already threaded in Task 4.
 
 - [ ] **Step 3: Make the identical change in `AreasView`**
 
@@ -959,38 +984,25 @@ Pass `pinsRange={layerTime.rangeFor.pins}` to `<MapCanvas>`, and pass `area`, `m
   const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
 ```
 
-Pass `area`, `months`, and `layerTime` to `<LayerPanel>` here too.
+`<LayerPanel>`'s props were already threaded in Task 4 — leave them.
 
-- [ ] **Step 4: Create `layerTime` in `App.tsx`**
-
-Add the import and the hook call after the existing `useDateRange` line (currently line 181):
-
-```ts
-import { useLayerTime } from "./hooks/useLayerTime";
-```
-
-```ts
-  const layerTime = useLayerTime(activeArea, range);
-```
-
-Pass `layerTime={layerTime}` to both `<MapsView>` and `<AreasView>`.
-
-- [ ] **Step 5: Typecheck, build, verify, commit**
+- [ ] **Step 4: Typecheck, build, verify, commit**
 
 Run: `pnpm exec tsc --noEmit && pnpm build`
 Expected: PASS.
 
-Then `pnpm dev` and verify in the browser, on the Maps tab:
-- Each layer chip shows a coverage strip. Canopy and pins are solid ticks across; aerial shows 5 tall ticks with short ones between; dying trees shows short ticks until the final 3 months.
-- Dragging the aerial strip alone swaps the aerial photo while the canopy mask stays put — the layers visibly disagree about time.
-- The dragged chip gains its accent border and its `Feb–Apr ↺` badge; the panel header shows `Re-sync all (1)`.
-- Clicking the badge, and clicking Re-sync all, both return the layer to following the master timeline.
+Then `pnpm dev` and verify in the browser, on the Maps tab — this is the step where detaching finally changes the picture:
+- Dragging the aerial strip alone swaps the aerial photo while the canopy mask stays put. The layers visibly disagree about time.
+- Dragging the dying-trees strip into its final months lights up the dieback frames without moving the aerial photo.
+- Dragging the pins strip alone changes which flagged pins show, leaving every raster where it was.
+- Re-sync all snaps every layer back to the master timeline in one move.
 - Switching areas clears every detached state.
+- Repeat the same checks on the Areas tab.
 
 ```bash
 pnpm format
-git add src/components/LayerCoverageStrip.tsx src/components/LayerPanel.tsx src/components/MapsView.tsx src/components/AreasView.tsx src/components/MapCanvas.tsx src/App.tsx
-git commit -m "feat: give every map layer its own coverage strip and date range"
+git add src/components/MapsView.tsx src/components/AreasView.tsx src/components/MapCanvas.tsx
+git commit -m "feat: resolve each map overlay from its own layer range"
 ```
 
 ---
