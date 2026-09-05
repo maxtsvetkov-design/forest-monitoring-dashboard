@@ -124,7 +124,7 @@ export function areaHectares(areaId: string): number {
  * "different look per stretch of the timeline" set rather than a dated
  * before/after sequence — see `overlayForRange`.
  */
-const areaTimelapseImages: Record<string, string[]> = {
+export const areaTimelapseImages: Record<string, string[]> = {
   "al-maha": [
     "/overlays/al-maha-aerial1.jpg",
     "/overlays/al-maha-aerial2.jpg",
@@ -238,7 +238,7 @@ export const areaDyingTreeOverlays: Record<string, MapOverlay> = {
  * meant to land one frame per one of those months, not spread evenly across
  * the whole timeline the way `areaTimelapseImages` is.
  */
-const areaDyingTreeSequence: Record<string, string[]> = {
+export const areaDyingTreeSequence: Record<string, string[]> = {
   "al-maha": [
     "/overlays/al-maha-generative_red1.png",
     "/overlays/al-maha-generative_red2.png",
