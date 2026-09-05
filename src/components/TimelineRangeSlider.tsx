@@ -4,6 +4,7 @@ import { buildUpcomingMonthLabels } from "../data/monthlySnapshots";
 import type { HealthKey } from "../data/types";
 import { CONDITIONS } from "../data/taxonomy";
 import DenseCoverageModal from "./DenseCoverageModal";
+import { useRangeScrub } from "../hooks/useRangeScrub";
 
 // Two more calendar months, shown past the real data as a locked preview of
 // what's coming rather than letting the axis just stop at "now" — computed
@@ -42,12 +43,8 @@ interface TimelineRangeSliderProps {
   onPlayingChange?: (playing: boolean) => void;
 }
 
-type Handle = "start" | "end" | "move";
-
 /** Where a month sits relative to the selection — drives the dot's appearance. */
 type DotState = "out" | "in" | "edge";
-
-const PLAY_STEP_MS = 1400;
 
 export default function TimelineRangeSlider({
   months,
@@ -60,8 +57,6 @@ export default function TimelineRangeSlider({
   healthCountsSeries,
 }: TimelineRangeSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<Handle | null>(null);
-  const [playing, setPlaying] = useState(false);
   // On mount, the end handle (and the selection band it carries along —
   // wash, fill, chart clip) starts pinned to the start handle's position and
   // grows out to the real range a beat later, so opening the dashboard reads
@@ -106,138 +101,16 @@ export default function TimelineRangeSlider({
   }, [hovered]);
   const [bannerOpen, setBannerOpen] = useState(false);
   const lastCount = months.length - 1;
-  const rangeRef = useRef(range);
-  rangeRef.current = range;
-  // Captured once when a drag on the filled range bar begins — the delta is
-  // measured from this fixed reference rather than accumulated frame to
-  // frame, so a jittery pointer can't drift the window from rounding error.
-  const moveStartRef = useRef<{ clientX: number; startIndex: number; endIndex: number } | null>(null);
+  const { dragging, beginDrag, playing, setPlaying, stepForward, stepBack, jumpTo, pctFor, atStart, atEnd } =
+    useRangeScrub({ trackRef, count: months.length, range, onChange, onPlayingChange });
 
-  const indexFromClientX = useCallback(
-    (clientX: number) => {
-      const track = trackRef.current;
-      if (!track) return 0;
-      const rect = track.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-      return Math.round(ratio * lastCount);
-    },
-    [lastCount],
-  );
-
-  /** Slides the whole selection forward one month, keeping its width. */
-  const stepForward = useCallback(() => {
-    const current = rangeRef.current;
-    if (current.endIndex >= lastCount) return;
-    const width = current.endIndex - current.startIndex;
-    const nextStart = current.startIndex + 1;
-    onChange({ startIndex: nextStart, endIndex: Math.min(nextStart + width, lastCount) });
-  }, [lastCount, onChange]);
-
-  /** Slides the whole selection back one month, keeping its width. */
-  const stepBack = useCallback(() => {
-    const current = rangeRef.current;
-    if (current.startIndex <= 0) return;
-    const width = current.endIndex - current.startIndex;
-    const nextStart = current.startIndex - 1;
-    onChange({ startIndex: nextStart, endIndex: nextStart + width });
-  }, [onChange]);
-
-  // Advances a fixed-width window across the whole timeline, one month per
-  // tick, until it reaches the end — the standard "temporal controller"
-  // playback pattern (ArcGIS/QGIS), not a range that grows from a fixed start.
-  // Reads/writes through rangeRef rather than closing over `range` so the
-  // interval doesn't need to be torn down and recreated on every tick's own
-  // onChange-triggered re-render.
-  useEffect(() => {
-    if (!playing) return;
-    const id = window.setInterval(() => {
-      if (rangeRef.current.endIndex >= lastCount) {
-        setPlaying(false);
-        return;
-      }
-      stepForward();
-    }, PLAY_STEP_MS);
-    return () => window.clearInterval(id);
-  }, [playing, lastCount, stepForward]);
-
-  useEffect(() => {
-    onPlayingChange?.(playing);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing]);
-
-  // Reports "stopped" once, only on actual unmount — not on every `playing`
-  // toggle above, which would otherwise fire a spurious false-then-true on
-  // every play press and flash the consumer back to its idle state.
-  useEffect(() => {
-    return () => onPlayingChange?.(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!dragging) return;
-    setPlaying(false);
-
-    function handleMove(e: PointerEvent) {
-      if (dragging === "move") {
-        const track = trackRef.current;
-        const start = moveStartRef.current;
-        if (!track || !start) return;
-        const rect = track.getBoundingClientRect();
-        // Rounded once at the end rather than per-pixel, so the window snaps
-        // to whole months exactly like the start/end handles do, instead of
-        // sub-month positions the rest of the UI (dots, ticks) can't express.
-        const deltaIndex = Math.round(((e.clientX - start.clientX) / rect.width) * lastCount);
-        const width = start.endIndex - start.startIndex;
-        const nextStart = Math.max(0, Math.min(lastCount - width, start.startIndex + deltaIndex));
-        onChange({ startIndex: nextStart, endIndex: nextStart + width });
-        return;
-      }
-      const index = indexFromClientX(e.clientX);
-      if (dragging === "start") {
-        onChange({ startIndex: Math.min(index, range.endIndex), endIndex: range.endIndex });
-      } else {
-        onChange({ startIndex: range.startIndex, endIndex: Math.max(index, range.startIndex) });
-      }
-    }
-    function handleUp() {
-      setDragging(null);
-      moveStartRef.current = null;
-    }
-
-    document.addEventListener("pointermove", handleMove);
-    document.addEventListener("pointerup", handleUp);
-    return () => {
-      document.removeEventListener("pointermove", handleMove);
-      document.removeEventListener("pointerup", handleUp);
-    };
-  }, [dragging, indexFromClientX, onChange, range.startIndex, range.endIndex, lastCount]);
-
-  // Clicking a month moves whichever handle is already nearer to it, so a single
-  // click does the obvious thing from either end without the user having to
-  // decide which handle they're aiming at. Ties go to the start handle.
-  const jumpTo = useCallback(
-    (index: number) => {
-      setPlaying(false);
-      const toStart = Math.abs(index - range.startIndex);
-      const toEnd = Math.abs(index - range.endIndex);
-      if (toStart <= toEnd) {
-        onChange({ startIndex: Math.min(index, range.endIndex), endIndex: range.endIndex });
-      } else {
-        onChange({ startIndex: range.startIndex, endIndex: Math.max(index, range.startIndex) });
-      }
-    },
-    [onChange, range.startIndex, range.endIndex],
-  );
-
-  const startPct = (range.startIndex / lastCount) * 100;
-  const endPct = (range.endIndex / lastCount) * 100;
+  const startPct = pctFor(range.startIndex);
+  const endPct = pctFor(range.endIndex);
   // Collapsed onto the start handle until the initial reveal has fired (see
   // the `revealed` effect above) — every element that positions itself off
   // `endPct` reads this instead, so the band grows out as one motion rather
   // than the end handle alone detaching from the wash/fill/chart around it.
   const displayEndPct = revealed ? endPct : startPct;
-  const atEnd = range.endIndex >= lastCount;
-  const atStart = range.startIndex <= 0;
 
   function dotState(index: number): DotState {
     if (index === range.startIndex || index === range.endIndex) return "edge";
@@ -435,8 +308,7 @@ export default function TimelineRangeSlider({
                 style={{ left: `${startPct}%`, width: `${displayEndPct - startPct}%` }}
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
-                  moveStartRef.current = { clientX: e.clientX, startIndex: range.startIndex, endIndex: range.endIndex };
-                  setDragging("move");
+                  beginDrag("move", e.clientX);
                 }}
               />
 
@@ -478,7 +350,7 @@ export default function TimelineRangeSlider({
                 aria-label="Range start"
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
-                  setDragging("start");
+                  beginDrag("start", e.clientX);
                 }}
                 // The handle sits exactly on top of its own boundary dot, so
                 // without this the dot underneath can never receive a hover —
@@ -499,7 +371,7 @@ export default function TimelineRangeSlider({
                 aria-label="Range end"
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
-                  setDragging("end");
+                  beginDrag("end", e.clientX);
                 }}
                 onMouseEnter={() => setHovered(range.endIndex)}
                 onMouseLeave={() => setHovered((h) => (h === range.endIndex ? null : h))}
