@@ -7,16 +7,20 @@ import AreaTable, { AREA_ROWS, type SiteRowData } from "./AreaTable";
  * The landing screen's "Table" tab — every monitored site in one full-width
  * table, rather than the same rows squeezed into the overview sidebar.
  *
- * The table itself is the sidebar's own AreaTable, mounted at full width. What
- * this view adds is what the 566px sidebar had no room for: a heading, a
- * search box, and the toolbar row above the table (Filters/Reset on the
- * left, Export/Customize on the right) — laid out per the Figma "Monitored
- * areas" table (node 2993:47329). Its two date-range fields aren't ported:
- * that mockup's dataset has a per-site "dates active" column to filter by,
- * this one doesn't, and two date pickers that filter nothing would be worse
- * chrome than none. Filters/Customize/Export are the same decorative
- * ToolbarBtn already used in App.tsx's own top bar rather than a new
- * button style invented for this one screen.
+ * The table itself is the sidebar's own AreaTable, mounted at full width with
+ * `variant="full"` — which is what actually adds the extra columns (Estimated
+ * trees, Insights, Avg NDVI, Dates active) modelled on the Figma "Monitored
+ * areas" table (node 2993:47329); see AreaTable's own file header for which
+ * of that mockup's columns this dataset can't honestly back (Saplings, Hive
+ * capacity, per-site Control/Seeding type) and why they're left out rather
+ * than filled with placeholder numbers. This view adds what the 566px sidebar
+ * had no room for even in "compact": a heading, a search box, and the toolbar
+ * row above the table (Filters/Reset on the left, Export/Customize on the
+ * right). The reference's two date-range fields aren't ported either — they
+ * filter that mockup's own "dates active" column, and two date pickers that
+ * filter nothing would be worse chrome than none. Filters/Customize/Export
+ * are the same decorative ToolbarBtn already used in App.tsx's own top bar
+ * rather than a new button style invented for this one screen.
  */
 
 /**
@@ -87,7 +91,7 @@ export default function AreaTableView({ onSelectSite }: { onSelectSite: (areaId:
         </div>
       </div>
 
-      <AreaTable rows={visible} onSelectSite={onSelectSite} />
+      <AreaTable rows={visible} onSelectSite={onSelectSite} variant="full" />
     </div>
   );
 }

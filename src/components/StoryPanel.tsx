@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { StoryBlock, StoryContent, StoryHeader, StoryHeadStat } from "../data/story";
 import { STORY_SECTIONS } from "../data/story";
+import type { StoryFrame, StoryMapView } from "../data/storyMap";
+import { downloadStoryReport } from "../data/storyReport";
 import { useStoryScroll } from "../hooks/useStoryScroll";
 import AnimatedDonutChart from "./AnimatedDonutChart";
 import TierComparisonModal from "./TierComparisonModal";
@@ -106,6 +108,43 @@ function CopyChip({ text }: { text: string }) {
   );
 }
 
+/** Same chip shell as CopyChip, one row over — downloads the whole story
+ * (header stats plus every block, each with its own map note) as a plain-text
+ * report. Its own state (rather than reusing "copied") because a download
+ * that already started isn't undone by clicking again a second later, the
+ * way a clipboard write is. */
+function DownloadReportChip({ header, blocks }: { header: StoryHeader; blocks: StoryBlock[] }) {
+  const [downloaded, setDownloaded] = useState(false);
+  useEffect(() => {
+    if (!downloaded) return;
+    const id = window.setTimeout(() => setDownloaded(false), 1400);
+    return () => window.clearTimeout(id);
+  }, [downloaded]);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        downloadStoryReport(header, blocks);
+        setDownloaded(true);
+      }}
+      title="Download this story as a report"
+      className="u-press story-chip inline-flex items-center gap-[4px] shrink-0 px-[8px] py-[2px] rounded-[10px] border border-[#dedee3] bg-white text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif] leading-[18px] whitespace-nowrap cursor-pointer hover:bg-[#ebece7]"
+    >
+      <span className="story-chip__label">{downloaded ? "Downloaded" : "Download report"}</span>
+      <svg width="11" height="11" viewBox="0 0 12 12" className="shrink-0 text-[#8a8a94]" {...stroke} strokeWidth={1.3}>
+        {downloaded ? (
+          <path d="M2.5 6.2 4.8 8.5 9.5 3.6" />
+        ) : (
+          <>
+            <path d="M6 1.2v6.2M3.4 5 6 7.6 8.6 5" />
+            <path d="M1.5 8.6v.9c0 .5.4.9.9.9h7.2c.5 0 .9-.4.9-.9v-.9" />
+          </>
+        )}
+      </svg>
+    </button>
+  );
+}
+
 /** One "12 ha / Total area" stat — a jump target for the block that explains it. */
 function HeadStat({ stat, onJump }: { stat: StoryHeadStat; onJump: () => void }) {
   return (
@@ -150,7 +189,106 @@ function HeadStat({ stat, onJump }: { stat: StoryHeadStat; onJump: () => void })
   );
 }
 
-function BlockBody({ content, isActive }: { content: StoryContent; isActive: boolean }) {
+/**
+ * Names for the five camera archetypes, in the reader's terms rather than the
+ * code's — "3D terrain", not "the terrain frame". Each carries a glyph, because
+ * the chip is scanned far more often than it is read: after two or three blocks
+ * the shape alone says whether the map is about to tilt.
+ */
+const FRAME_META: Record<StoryFrame, { label: string; icon: React.ReactNode }> = {
+  context: {
+    label: "Wide",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 4.5v7M4.5 8h7" />
+      </svg>
+    ),
+  },
+  plot: {
+    label: "Plot",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+      </svg>
+    ),
+  },
+  terrain: {
+    label: "3D terrain",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <path d="M1.5 12.5 6 5l3 4.4L11 7l3.5 5.5Z" />
+      </svg>
+    ),
+  },
+  canopy: {
+    label: "3D trees",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <path d="M8 14v-2.6" />
+        <path d="M8 2.2 4.6 6.6h6.8Z" />
+        <path d="M8 6 3.8 11.4h8.4Z" />
+      </svg>
+    ),
+  },
+  twin: {
+    label: "Eye level",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <path d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8Z" />
+        <circle cx="8" cy="8" r="1.8" />
+      </svg>
+    ),
+  },
+};
+
+/**
+ * "Here is what the map is doing, and why that view suits this block's
+ * numbers." The line that stops the panel and the plot beside it from being two
+ * unrelated things sharing a screen.
+ *
+ * Present on every block rather than only the active one, so the story stays
+ * scannable — you can see three blocks ahead that the camera is about to leave
+ * the ground. It recedes when the block is inactive: at full strength on
+ * twenty-three blocks at once it would compete with the content it annotates.
+ */
+function MapNote({ view, isActive }: { view: StoryMapView; isActive: boolean }) {
+  const meta = FRAME_META[view.frame];
+  return (
+    <div
+      className="story-mapnote flex items-start gap-[7px] mt-[8px] mb-[12px] pl-[9px] border-l-2 transition-[opacity,border-color] duration-300"
+      style={{
+        borderColor: isActive ? "#56b0a4" : "#e3e3e6",
+        opacity: isActive ? 1 : 0.62,
+      }}
+    >
+      <span
+        className="shrink-0 inline-flex items-center gap-[4px] mt-[1px] px-[6px] h-[19px] rounded-full text-[10px] font-semibold font-['Outfit',sans-serif] tracking-[0.01em] whitespace-nowrap transition-colors duration-300"
+        style={{
+          background: isActive ? "#e7f4f2" : "#f2f2f2",
+          color: isActive ? "#096151" : "#8a8a94",
+        }}
+      >
+        {meta.icon}
+        {meta.label}
+      </span>
+      <p className="min-w-0 text-[11.5px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[17px]">{view.note}</p>
+    </div>
+  );
+}
+
+function BlockBody({
+  content,
+  isActive,
+  onRequestUpgrade,
+}: {
+  content: StoryContent;
+  isActive: boolean;
+  /** Opens the tier comparison modal — only read by the "tierTable" case
+   * below. Optional so every other content kind's caller isn't forced to
+   * supply a handler it has no use for. */
+  onRequestUpgrade?: () => void;
+}) {
   switch (content.kind) {
     case "sectionIntro":
       return (
@@ -415,6 +553,88 @@ function BlockBody({ content, isActive }: { content: StoryContent; isActive: boo
         </>
       );
     }
+
+    case "tierTable": {
+      // Inline `gridTemplateColumns`, not a Tailwind `grid-cols-[…]` class, for
+      // the same reason `timeline` above uses one: the column count comes
+      // from data, and a class name built from a template literal is never
+      // scanned into the generated stylesheet.
+      const gridTemplateColumns = `minmax(0,1.3fr) repeat(${content.tiers.length}, minmax(0,1fr))`;
+      return (
+        <>
+        <div className="rounded-[10px] border border-[#ebece7] overflow-hidden">
+          <div
+            className="grid gap-[6px] px-[10px] py-[8px] bg-[#f2f2f2]"
+            style={{ gridTemplateColumns }}
+          >
+            <span className="text-[10px] font-medium text-[#464650] font-['Outfit',sans-serif] self-end">
+              Capability
+            </span>
+            {content.tiers.map((tier, i) => {
+              const active = i === content.activeTier;
+              return (
+                <div key={tier.label} className="flex flex-col items-center gap-[1px] text-center">
+                  <span
+                    className={`text-[11px] font-bold font-['Outfit',sans-serif] leading-[15px] ${
+                      active ? "text-[#096151]" : "text-[#464650]"
+                    }`}
+                  >
+                    {tier.label}
+                  </span>
+                  <span className="text-[9px] text-[#8a8a94] font-['Outfit',sans-serif] leading-[12px]">
+                    {tier.sublabel}
+                  </span>
+                  {active && (
+                    <span className="mt-[2px] px-[6px] py-[1px] rounded-full bg-[#096151] text-white text-[8px] font-bold font-['Outfit',sans-serif] tracking-wide whitespace-nowrap">
+                      THIS TOUR
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="divide-y divide-[#f2f2f2]">
+            {content.rows.map((row, i) => (
+              <div
+                key={row.label}
+                className="story-inner grid gap-[6px] px-[10px] py-[10px] bg-white items-center"
+                style={{ gridTemplateColumns, ["--i" as string]: i }}
+              >
+                <span className="text-[12px] font-medium text-[#18181c] font-['Outfit',sans-serif] leading-[17px]">
+                  {row.label}
+                </span>
+                {row.values.map((v, j) => {
+                  const active = j === content.activeTier;
+                  return (
+                    <span
+                      key={j}
+                      className={`text-[12px] text-center font-['Outfit',sans-serif] leading-[16px] tabular-nums rounded-[6px] py-[3px] px-[2px] ${
+                        active ? "bg-[#e7f4f2] text-[#096151] font-bold" : "text-[#5b5b66]"
+                      }`}
+                    >
+                      {v}
+                    </span>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+        {onRequestUpgrade && (
+          <button
+            type="button"
+            onClick={onRequestUpgrade}
+            className="u-press mt-[10px] inline-flex items-center gap-[6px] px-[13px] h-[32px] rounded-full bg-[#096151] text-white text-[12px] font-medium font-['Outfit',sans-serif] hover:bg-[#0a7761] cursor-pointer"
+          >
+            Request a tier upgrade
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+        </>
+      );
+    }
   }
 }
 
@@ -476,7 +696,22 @@ function TierUnlockBanner({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-export default function StoryPanel({ header, blocks }: { header: StoryHeader; blocks: StoryBlock[] }) {
+export default function StoryPanel({
+  header,
+  blocks,
+  onActiveBlockChange,
+  onClose,
+}: {
+  header: StoryHeader;
+  blocks: StoryBlock[];
+  /** Fires with whichever block is currently being read, so the map beside the
+   * panel can follow it. Reports the block rather than its map view so the
+   * caller decides what to do with it — this panel has no idea a map exists. */
+  onActiveBlockChange?: (block: StoryBlock | undefined) => void;
+  /** Leaves the story and returns to the plain Maps tab. This panel has no
+   * idea tabs exist — the caller decides what "closing" the story means. */
+  onClose?: () => void;
+}) {
   const { scrollRef, setBlockRef, active, k, goTo, step, playing, setPlaying, stopPlay, playStepMs } =
     useStoryScroll(blocks.length);
   const [outlineOpen, setOutlineOpen] = useState(false);
@@ -484,6 +719,15 @@ export default function StoryPanel({ header, blocks }: { header: StoryHeader; bl
   const [tierModalOpen, setTierModalOpen] = useState(false);
 
   const activeSection = blocks[active]?.section;
+
+  // Reported from an effect rather than from each of the six call sites that
+  // can change `active` (a block click, both transport arrows, a section chip,
+  // an outline entry, autoplay's tick). One place to keep in step instead of
+  // six to keep from drifting.
+  const activeBlock = blocks[active];
+  useEffect(() => {
+    onActiveBlockChange?.(activeBlock);
+  }, [activeBlock, onActiveBlockChange]);
 
   const jumpToBlock = useCallback(
     (id: string) => {
@@ -621,26 +865,42 @@ export default function StoryPanel({ header, blocks }: { header: StoryHeader; bl
           {header.chips.map((chip) => (
             <CopyChip key={chip} text={chip} />
           ))}
+          <DownloadReportChip header={header} blocks={blocks} />
         </div>
 
         <div
           className="flex flex-col"
           style={{ gap: `${12 * (1 - k)}px`, paddingTop: `${16 - 10 * k}px`, paddingBottom: `${12 - 4 * k}px` }}
         >
-          <button
-            type="button"
-            onClick={() => {
-              stopPlay();
-              goTo(0);
-            }}
-            title={k > 0.05 ? "Back to the top of the story" : undefined}
-            className={`story-title text-left font-['Outfit',sans-serif] font-bold text-[#18181c] tracking-[-0.02em] truncate ${
-              k > 0.05 ? "cursor-pointer is-live" : "cursor-default"
-            }`}
-            style={{ fontSize: `${32 - 13 * k}px`, lineHeight: `${40 - 15 * k}px` }}
-          >
-            {header.title}
-          </button>
+          <div className="flex items-start justify-between gap-[8px]">
+            <button
+              type="button"
+              onClick={() => {
+                stopPlay();
+                goTo(0);
+              }}
+              title={k > 0.05 ? "Back to the top of the story" : undefined}
+              className={`story-title min-w-0 flex-1 text-left font-['Outfit',sans-serif] font-bold text-[#18181c] tracking-[-0.02em] truncate ${
+                k > 0.05 ? "cursor-pointer is-live" : "cursor-default"
+              }`}
+              style={{ fontSize: `${32 - 13 * k}px`, lineHeight: `${40 - 15 * k}px` }}
+            >
+              {header.title}
+            </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close story and return to Maps"
+                title="Back to Maps"
+                className="u-press shrink-0 w-[28px] h-[28px] mt-[4px] flex items-center justify-center rounded-full border border-[#dedee3] bg-white text-[#464650] hover:border-[#18181c] hover:bg-[#f2f2f2] cursor-pointer transition-colors"
+              >
+                <svg width="12" height="12" viewBox="0 0 10 10" fill="none">
+                  <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
+          </div>
 
           <div
             className="flex gap-[6px] overflow-hidden"
@@ -734,7 +994,7 @@ export default function StoryPanel({ header, blocks }: { header: StoryHeader; bl
 
             <div
               ref={chipsRef}
-              className="scroll-slim relative flex-1 min-w-0 flex items-center gap-[4px] overflow-x-auto"
+              className="scroll-hidden relative flex-1 min-w-0 flex items-center gap-[4px] overflow-x-auto"
             >
               <span ref={pillRef} aria-hidden className="story-pill" />
               {STORY_SECTIONS.map((section) => {
@@ -836,13 +1096,21 @@ export default function StoryPanel({ header, blocks }: { header: StoryHeader; bl
                     {block.name}
                   </h3>
                   {block.description && (
-                    <p className="mt-[2px] mb-[12px] text-[12.5px] text-[#8a8a94] font-['Outfit',sans-serif] leading-[19px] max-w-[62ch]">
+                    <p className="mt-[2px] mb-[2px] text-[12.5px] text-[#8a8a94] font-['Outfit',sans-serif] leading-[19px] max-w-[62ch]">
                       {block.description}
                     </p>
                   )}
                 </>
               )}
-              <BlockBody content={block.content} isActive={isActive} />
+              {/* Under the heading and above the data, in both block shapes:
+                  the map note explains the view the numbers are about to be
+                  read in, so it belongs before them, not as a footnote. */}
+              {block.map && <MapNote view={block.map} isActive={isActive} />}
+              <BlockBody
+                content={block.content}
+                isActive={isActive}
+                onRequestUpgrade={() => setTierModalOpen(true)}
+              />
             </article>
           );
         })}

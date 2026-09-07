@@ -1,5 +1,7 @@
 import type { Area } from "./areas";
 import { getTimelapseImages } from "./overlays";
+import { STORY_MAP_VIEWS, type StoryMapView } from "./storyMap";
+import { CURRENT_TIER_INDEX, PRICE_ROW, SPEC_ROWS, TIERS, TIER_SECTIONS, type TierCoverage } from "./tiers";
 
 /**
  * The Story tab's content, carried across from the supplied "Insights panel"
@@ -58,7 +60,8 @@ export type StoryContent =
   | { kind: "metrics"; charts: { title: string; data: StorySlice[] }[] }
   | { kind: "resolutions"; imageUrl: string | undefined; tiles: StoryResolution[] }
   | { kind: "dataTypes"; rows: StoryDataTypeRow[] }
-  | { kind: "timeline"; body: string; years: StoryYear[]; quarters: string[]; rows: StoryTimelineRow[] };
+  | { kind: "timeline"; body: string; years: StoryYear[]; quarters: string[]; rows: StoryTimelineRow[] }
+  | { kind: "tierTable"; tiers: StoryTierColumn[]; activeTier: number; rows: StoryTierRow[] };
 
 export interface StoryInsight {
   label: string;
@@ -107,6 +110,22 @@ export interface StoryTimelineRow {
   cells: boolean[];
 }
 
+export interface StoryTierColumn {
+  /** "Tier 1", "Tier 2", … */
+  label: string;
+  /** What that tier configures on top of the platform — "Free satellite",
+   * "+ Drone". */
+  sublabel: string;
+}
+
+export interface StoryTierRow {
+  label: string;
+  /** One cell per tier, same order as `tiers` — "●", "◐", "—", or a plain
+   * value (a resolution, a cadence, a price). Free text rather than a
+   * boolean because the same row mixes coverage dots with numbers. */
+  values: string[];
+}
+
 export interface StoryBlock {
   id: string;
   section: string;
@@ -116,6 +135,10 @@ export interface StoryBlock {
   description?: string;
   /** Section headings render as bare headings, not cards. */
   isSectionHead?: boolean;
+  /** What the map beside the panel should show while this block is the one
+   * being read — attached from STORY_MAP_VIEWS, not written inline, so the
+   * choreography can be read as one sequence. See storyMap.ts. */
+  map?: StoryMapView;
   content: StoryContent;
 }
 
@@ -129,6 +152,7 @@ export interface StorySection {
 }
 
 export const STORY_SECTIONS: StorySection[] = [
+  { id: "monitoring", label: "Forest Monitoring" },
   { id: "overview", label: "Overview" },
   { id: "imagery", label: "Imagery" },
   { id: "forest", label: "Forest Change", disabled: true },
@@ -186,11 +210,295 @@ const AI_PLACEHOLDER =
 const NDVI_NOTE =
   "Al Maha Forest spans 12 hectares with mean NDVI of 0.155, indicating sparse or stressed vegetation typical of arid restoration sites.";
 
+/**
+ * The product brief's own four-item pitch — "Four things a client can do that
+ * they can't today." Exported (not inlined in the block below) so
+ * AIAssistant's proactive tip can quote the identical copy rather than a
+ * second hand-typed version of the same four lines drifting out of sync.
+ */
+export const WHAT_IT_CHANGES: StoryInsight[] = [
+  {
+    label: "Stop watering trees that are gone",
+    value: "m³ / surviving tree ↓",
+    body: "Dead and missing trees keep drawing water until somebody walks past them. Condition data retires them from the schedule.",
+  },
+  {
+    label: "Catch decline while it's still reversible",
+    value: "Time to flag ↓ · survival ↑",
+    body: "Stress shows up in the data weeks before it shows up in the canopy — early enough to save the block.",
+  },
+  {
+    label: "Send crews where they change the outcome",
+    value: "Crew-hours / ha ↓",
+    body: "Ranked, located work instead of a rotation — the same headcount covers more ground that matters.",
+  },
+  {
+    label: "Answer the end client without a site visit",
+    value: "Flag → verified fix ↓ · estate on record → 100%",
+    body: "Nothing today measures whether a flagged problem actually got fixed — that number is what turns monitoring into a service worth renewing.",
+    accent: true,
+  },
+];
+
+const COVERAGE_GLYPH: Record<TierCoverage, string> = { full: "●", half: "◐", none: "—" };
+
+/** Looks a row up by id rather than by position in TIER_SECTIONS's nested
+ * arrays — a magic `[2].rows[1]` breaks silently the next time that table
+ * gains or reorders a row; an id that no longer exists throws immediately. */
+function tierRow(id: string): StoryTierRow {
+  const row = TIER_SECTIONS.flatMap((s) => s.rows).find((r) => r.id === id);
+  if (!row) throw new Error(`storyMap: no tier row with id "${id}"`);
+  return { label: row.label, values: row.cells.map((c) => COVERAGE_GLYPH[c]) };
+}
+
+/**
+ * The Forest Monitoring section's tier table, derived from `data/tiers.ts`
+ * rather than a second hand-typed copy of the same four columns — the exact
+ * bug this replaced: an earlier version of this table hard-coded `activeTier:
+ * 2` (Tier 3), which quietly drifted from `CURRENT_TIER_INDEX` (Tier 2, what
+ * LayerPanel's own locked-layer section and every "Tier 2" badge elsewhere in
+ * the app already say this contract is on). Deriving both from the same
+ * source makes that kind of drift structurally impossible instead of merely
+ * unlikely.
+ */
+const MONITORING_TIER_TABLE: Extract<StoryContent, { kind: "tierTable" }> = {
+  kind: "tierTable",
+  tiers: TIERS.map((t) => ({ label: t.label, sublabel: t.name })),
+  activeTier: CURRENT_TIER_INDEX,
+  rows: [
+    { label: SPEC_ROWS[0].label, values: [...SPEC_ROWS[0].cells] },
+    { label: SPEC_ROWS[1].label, values: [...SPEC_ROWS[1].cells] },
+    tierRow("stressed-block"),
+    tierRow("per-tree-health"),
+    tierRow("scada-irrigation"),
+    { label: PRICE_ROW.label, values: [...PRICE_ROW.cells] },
+  ],
+};
+
 export function buildStory(area: Area): StoryBlock[] {
   const captures = getTimelapseImages(area.id);
   const thumb = (i: number) => captures?.[i % (captures.length || 1)];
 
-  return [
+  const blocks: StoryBlock[] = [
+    // The "Forest Monitoring" section — Nabat's own product brief (Strategic
+    // Initiative № 2) rendered as a story section, opening the tour: the case
+    // for treating everything that follows not as a one-off report but as a
+    // recurring NabatOS module, licensed at this contract's actual tier
+    // before a single site number is shown. Figures below are the brief's
+    // own — the anchor client's documents and an indicative, unsigned price
+    // sheet — not this dataset's, so treat them as the business case they are
+    // rather than as this area's measured record. The tier table itself is
+    // NOT hand-typed here — see MONITORING_TIER_TABLE, derived from
+    // data/tiers.ts so it can never disagree with LayerPanel's own "Tier 2"
+    // badges elsewhere in the app.
+    {
+      id: "monitoring",
+      section: "monitoring",
+      name: "Forest Monitoring",
+      isSectionHead: true,
+      content: {
+        kind: "sectionIntro",
+        body: "NabatOS Strategic Initiative № 2, owned by Product. Planted forests in arid climates die quietly — a stressed block looks fine until it isn't, and crews keep watering trees that are already dead. This module watches the forest from above, flags trouble early, sends a crew to the exact coordinates, and records that the fix worked. Anchor client: Al Ain Forestry & Landscaping → the Department of Municipalities & Transport, Abu Dhabi. This walkthrough is licensed at Tier 2 · Commercial satellite — 0.3–0.5 m resolution, refreshed monthly or on demand.",
+      },
+    },
+    {
+      id: "monitoring-problem",
+      section: "monitoring",
+      name: "The problem",
+      description:
+        "Every large planted-forest operator faces the same three gaps: no visibility between visits, water and crews on a rota instead of on need, and no way to prove survival without walking the estate.",
+      content: {
+        kind: "insights",
+        cards: [
+          {
+            label: "Estate maintained manually",
+            value: "103,000 ha",
+            body: "Across 66 sites, judged tree by tree by field staff — roughly 2,300 people, ~1.6M AED in training alone.",
+            accent: true,
+          },
+          {
+            label: "Estimated water spend",
+            value: "55–150M AED/yr",
+            body: "At 15–40 L per tree per day — including trees that are already dead.",
+          },
+          {
+            label: "Deadline vs. manual plan",
+            value: "6 mo vs 12–18 mo",
+            body: "The mandatory baseline survey's own plan, against the contractual deadline it has to beat.",
+          },
+        ],
+      },
+    },
+    {
+      id: "monitoring-comparison",
+      section: "monitoring",
+      name: "Manual vs. tech-enabled",
+      description:
+        "The same five questions an operator has always had to answer, judged the same estate two ways.",
+      content: {
+        kind: "insights",
+        cards: [
+          {
+            label: "Accuracy",
+            value: "±5cm position · ±5–10% height",
+            body: "Manual: varies by person and fatigue.",
+            accent: true,
+          },
+          { label: "Coverage", value: "Every tree, every cycle", body: "Manual: partial — trees get missed." },
+          { label: "Health rating", value: "Repeatable AI score", body: "Manual: subjective estimate." },
+          {
+            label: "Evidence",
+            value: "Geo-tagged, auditable record",
+            body: "Manual: inconsistent notes.",
+            accent: true,
+          },
+          { label: "Field safety", value: "Mostly control-room work", body: "Manual: heat, terrain, wildlife exposure." },
+        ],
+      },
+    },
+    {
+      id: "monitoring-loop",
+      section: "monitoring",
+      name: "Close the loop",
+      description:
+        "Refresh, flag, dispatch, verify — what the client is actually buying is the record this loop leaves behind. Below: this cycle's work orders, the loop caught mid-turn.",
+      content: {
+        kind: "observability",
+        kpis: [
+          { label: "i. Refresh", value: "New imagery each cycle" },
+          { label: "ii. Flag", value: "Stressed blocks, early" },
+          { label: "iii. Dispatch", value: "Crew to exact coordinates" },
+          { label: "iv. Verify", value: "Recovery confirmed & recorded" },
+        ],
+        events: [
+          {
+            title: "Bu Towq · block 14",
+            subtitle: "Flagged · 312 trees · condition index −18% over 3 cycles · likely cause: lateral fault",
+            tone: "critical",
+            trend: "down",
+            thumbnail: thumb(0),
+          },
+          {
+            title: "Al Maha 2 · block 7",
+            subtitle: "Dispatched · crew 3 · 2 days ago",
+            tone: "warning",
+            trend: "up",
+            thumbnail: thumb(1),
+          },
+          {
+            title: "Dhebian · block 3",
+            subtitle: "Verified recovered · re-checked next cycle",
+            tone: "good",
+            trend: "up",
+            thumbnail: thumb(2),
+          },
+        ],
+      },
+    },
+    {
+      id: "monitoring-roles",
+      section: "monitoring",
+      name: "Who does what",
+      description: "The loop only closes if each of these five jobs can be finished inside the platform.",
+      content: {
+        kind: "insights",
+        cards: [
+          {
+            label: "Irrigation supervisor",
+            value: "Which blocks need water this week",
+            body: "— not which blocks are next on the rota.",
+          },
+          {
+            label: "Maintenance crew lead",
+            value: "A location, a reason, a way to mark it done",
+            body: "So nothing is visited twice and nothing is lost.",
+            accent: true,
+          },
+          {
+            label: "Operations manager",
+            value: "The whole estate, ranked",
+            body: "So limited crews go where they change the outcome.",
+          },
+          {
+            label: "Contract manager",
+            value: "A survival record for any site, any date",
+            body: "To answer the end client without a site visit.",
+            accent: true,
+          },
+          {
+            label: "Ecologist",
+            value: "The model's calls, checked against field reality",
+            body: "So the scoring earns trust over time.",
+          },
+        ],
+      },
+    },
+    {
+      id: "monitoring-estate",
+      section: "monitoring",
+      name: "Estate view",
+      description: "66 sites, ranked by blocks flagged this cycle — where an operations manager looks first.",
+      content: {
+        kind: "metrics",
+        charts: [
+          {
+            title: "Blocks flagged · by site",
+            data: [
+              { name: "Bu Towq", value: 14, color: C.orange },
+              { name: "Al Maha 2", value: 9, color: C.yellow },
+              { name: "Dhebian", value: 6, color: C.blue },
+              { name: "Ghanadha", value: 0, color: C.green },
+              { name: "Al Bida", value: 0, color: C.green },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      id: "monitoring-tiers",
+      section: "monitoring",
+      name: "Service tiers",
+      description:
+        "This deployment runs at Tier 2 — commercial-satellite resolution. Every tier feeds the same NabatOS platform; only the resolution of what lands in it changes.",
+      content: MONITORING_TIER_TABLE,
+    },
+    {
+      id: "monitoring-outcomes",
+      section: "monitoring",
+      name: "What it changes",
+      description: "Four things a client can do that they can't today.",
+      content: {
+        kind: "insights",
+        cards: WHAT_IT_CHANGES,
+      },
+    },
+    {
+      id: "monitoring-commercial",
+      section: "monitoring",
+      name: "Commercial",
+      description: "Two shapes of deal, plus one subscription that sits underneath both.",
+      content: {
+        kind: "insights",
+        cards: [
+          {
+            label: "Satellite tiers (1–2) · this contract",
+            value: "Pure subscription",
+            body: "No baseline survey, no mobilisation — paid per hectare per year for a recurring condition feed.",
+            accent: true,
+          },
+          {
+            label: "Drone tiers (3–4)",
+            value: "290 AED/ha baseline",
+            body: "Then 290–490 AED/ha in recurring monthly updates — the tier above this contract's own.",
+          },
+          {
+            label: "Platform subscription",
+            value: "35 AED/ha/yr",
+            body: "Sits across all four tiers — the piece that turns any of them into recurring revenue.",
+          },
+        ],
+      },
+    },
     {
       id: "overview",
       section: "overview",
@@ -647,4 +955,13 @@ export function buildStory(area: Area): StoryBlock[] {
       },
     },
   ];
+
+  // Attached in one pass rather than written into each block above: the map
+  // views are a sequence that has to be read as a sequence (see storyMap.ts),
+  // and a block that gains no view simply leaves the map alone — which is the
+  // right default for anything added here later without one.
+  return blocks.map((block) => {
+    const map = STORY_MAP_VIEWS[block.id];
+    return map ? { ...block, map } : block;
+  });
 }

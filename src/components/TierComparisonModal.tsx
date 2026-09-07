@@ -122,6 +122,13 @@ export default function TierComparisonModal({
   }, [onClose]);
 
   const [showConfirmation, setShowConfirmation] = useState(false);
+  // Upgrading answers the only question the comparison table was open to
+  // settle, so the click closes the panel itself rather than leaving it
+  // sitting open behind the confirmation. Kept separate from `onClose` (which
+  // tells the parent to unmount this whole component): closing that way
+  // immediately would tear down the toast below it before it ever got to
+  // render, since both are children of the same portal.
+  const [panelOpen, setPanelOpen] = useState(true);
 
   // Every table row gets a tiny stagger so the surface reads as *arriving*
   // rather than just appearing — see .tier-row in index.css. A running index
@@ -131,6 +138,8 @@ export default function TierComparisonModal({
   let rowOrder = 0;
 
   return createPortal(
+    <>
+    {panelOpen && (
     <div
       className="fixed inset-0 z-[1200] flex items-center justify-center bg-[#16181a]/50 backdrop-blur-[4px] p-3 animate-fade-in"
       onClick={onClose}
@@ -297,7 +306,13 @@ export default function TierComparisonModal({
             </p>
           </div>
           <div className="flex items-center gap-[10px] shrink-0">
-            <UpsellButton label="Upgrade to Tier 3" onSent={() => setShowConfirmation(true)} />
+            <UpsellButton
+              label="Upgrade to Tier 3"
+              onSent={() => {
+                setShowConfirmation(true);
+                setPanelOpen(false);
+              }}
+            />
           </div>
         </div>
         </div>
@@ -381,14 +396,24 @@ export default function TierComparisonModal({
           </p>
         </aside>
       </div>
+    </div>
+    )}
 
+      {/* Rendered outside the panelOpen block above, not as its child: the
+          panel closes the instant "Upgrade" is clicked, but the toast that
+          confirms the click has its own longer, self-timed exit (see
+          ManagerContactToast) and would be torn down mid-animation if it were
+          nested inside the thing that just disappeared. */}
       {showConfirmation && (
         <ManagerContactToast
           detail="We've logged the upgrade to Tier 3 — expect an email within one business day to confirm billing and turn on per-tree records."
-          onDismiss={() => setShowConfirmation(false)}
+          onDismiss={() => {
+            setShowConfirmation(false);
+            onClose();
+          }}
         />
       )}
-    </div>,
+    </>,
     document.body,
   );
 }

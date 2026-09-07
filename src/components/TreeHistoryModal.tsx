@@ -467,28 +467,13 @@ export default function TreeHistoryModal({
           </div>
         </div>
 
-        {/* Footer actions — the two next steps a flagged tree actually needs:
-            loop in a person, or queue it for a second, more certain look. */}
+        {/* Footer action — the one next step a flagged tree actually needs:
+            queue it for a second, more certain look. */}
         <div className="flex items-center gap-[8px] px-4 py-2.5 border-t border-[#ebece7] shrink-0">
-          <CTAButton
-            label="Contact ecologist"
-            confirmedLabel="Request sent"
-            variant="primary"
-            icon={
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <path
-                  d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7Z"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                />
-                <path d="M2.5 4.5 8 8.5l5.5-4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            }
-          />
           <CTAButton
             label="Send for verification"
             confirmedLabel="Queued"
-            variant="secondary"
+            variant="primary"
             icon={
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0">
                 <path

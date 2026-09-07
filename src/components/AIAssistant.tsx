@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { WHAT_IT_CHANGES } from "../data/story";
+import { MAP_INTERACT_EVENT } from "./MapCanvas";
 
 const DEFAULT_WIDTH = 360;
 const DEFAULT_HEIGHT = 480;
@@ -106,11 +108,135 @@ const SUGGESTION_CHIPS = [
   "What's the outlook for next season?",
 ];
 
+/** How long each of the four WHAT_IT_CHANGES headlines sits before the
+ * banner cross-fades to the next one. */
+const PROACTIVE_TIP_ROTATE_MS = 5400;
+
+/** The four headlines as one message, posted into the chat once the banner
+ * is actually clicked — the same body copy the Story tab's own "What it
+ * changes" block renders as cards, reflowed as plain chat text. */
+function formatWhatItChanges(): string {
+  return WHAT_IT_CHANGES.map((c) => `• ${c.label}\n   ${c.body}\n   Measured by: ${c.value}`).join("\n\n");
+}
+
+/**
+ * A one-time nudge toward Alma, timed to the reader's first touch of any map
+ * in the app (see MapCanvas's MAP_INTERACT_EVENT) rather than a fixed delay —
+ * a banner that appears while nobody's looking at the map is just noise.
+ * Cycles through all four WHAT_IT_CHANGES headlines rather than picking one:
+ * the brief frames these as four things, and picking a single "best" one on
+ * the assistant's behalf would be a decision this component has no basis for.
+ *
+ * A full promo card, not this panel's own small chat bubbles — a mesh-gradient
+ * ground (violet into coral, the requested reference's own palette) under a
+ * bold oversized headline, because a one-time nudge this rare is exactly the
+ * moment it's allowed to be loud. It still reads as Alma's, not a random ad:
+ * same dark pill CTA and teal accent dot the rest of the assistant's own UI
+ * uses.
+ */
+function ProactiveTip({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setIndex((i) => (i + 1) % WHAT_IT_CHANGES.length), PROACTIVE_TIP_ROTATE_MS);
+    return () => window.clearInterval(id);
+  }, []);
+  const tip = WHAT_IT_CHANGES[index];
+
+  return (
+    <div className="fixed bottom-[84px] right-5 z-30 w-[380px] max-w-[calc(100vw-40px)] animate-pop-in">
+      <div
+        className="relative overflow-hidden rounded-[26px] border border-white/60 shadow-[0px_28px_64px_-12px_rgba(24,24,28,0.4),0px_8px_24px_-6px_rgba(24,24,28,0.18)]"
+        style={{
+          backgroundImage:
+            "radial-gradient(130% 140% at 8% 0%, rgba(106,89,214,0.55) 0%, rgba(106,89,214,0) 55%), " +
+            "radial-gradient(120% 130% at 100% 110%, rgba(255,122,66,0.65) 0%, rgba(255,122,66,0) 60%), " +
+            "radial-gradient(90% 110% at 70% 25%, rgba(233,110,150,0.45) 0%, rgba(233,110,150,0) 55%)",
+          backgroundColor: "#f5f4f1",
+        }}
+      >
+        {/* Thin decorative flourish, echoing the reference's own hairline
+            swirl — pure texture, no information. */}
+        <svg
+          width="70"
+          height="70"
+          viewBox="0 0 70 70"
+          fill="none"
+          className="absolute -top-2 -right-2 text-black/10 pointer-events-none"
+        >
+          <path d="M8 62c8-22 24-34 54-30" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="u-press absolute top-3 right-3 z-[1] w-7 h-7 flex items-center justify-center rounded-full bg-white/70 backdrop-blur text-[#464650] hover:bg-white hover:text-[#18181c] cursor-pointer"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        <div className="relative px-[22px] pt-[22px] pb-[20px]">
+          <span className="inline-flex items-center gap-[6px] px-[9px] h-[22px] rounded-full bg-white/70 backdrop-blur text-[10px] font-bold text-[#096151] font-['Outfit',sans-serif] tracking-wide uppercase">
+            <span className="relative flex w-[6px] h-[6px] shrink-0">
+              <span className="absolute inset-0 rounded-full bg-[#096151] opacity-70 animate-ping" />
+              <span className="relative w-[6px] h-[6px] rounded-full bg-[#096151]" />
+            </span>
+            Alma noticed something
+          </span>
+
+          <p
+            key={tip.label}
+            className="mt-[14px] text-[27px] font-bold text-[#18181c] font-['Outfit',sans-serif] leading-[32px] tracking-[-0.01em] animate-fade-in"
+          >
+            {tip.label}.
+          </p>
+          <p
+            key={`${tip.label}-body`}
+            className="mt-[8px] text-[13px] text-[#3d3d45] font-['Outfit',sans-serif] leading-[19px] animate-fade-in"
+          >
+            {tip.body}
+          </p>
+
+          <button
+            type="button"
+            onClick={onOpen}
+            className="u-press mt-[16px] inline-flex items-center gap-[8px] pl-[16px] pr-[12px] h-[38px] rounded-full bg-[#18181c] text-white text-[13px] font-medium font-['Outfit',sans-serif] hover:bg-black cursor-pointer"
+          >
+            Ask Alma about this
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AIAssistant() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+
+  // The proactive tip: shown once, the first time any map fires
+  // MAP_INTERACT_EVENT — see MapCanvas. `shownProactiveTipRef` (not just
+  // `!open && !dismissed`) is what actually keeps it one-time: state gets
+  // reset on unmount, but this component only unmounts with the whole app, so
+  // in practice either would do — the ref is the honest guarantee.
+  const [showProactiveTip, setShowProactiveTip] = useState(false);
+  const shownProactiveTipRef = useRef(false);
+  useEffect(() => {
+    function handleFirstMapInteraction() {
+      if (shownProactiveTipRef.current) return;
+      shownProactiveTipRef.current = true;
+      setShowProactiveTip(true);
+    }
+    window.addEventListener(MAP_INTERACT_EVENT, handleFirstMapInteraction);
+    return () => window.removeEventListener(MAP_INTERACT_EVENT, handleFirstMapInteraction);
+  }, []);
   // Index (into `messages`) of the first message in the most recent
   // round-trip — draws the "New Message" divider right above it, mirroring
   // the reference design, without needing a separate parallel array.
@@ -220,8 +346,25 @@ export default function AIAssistant() {
     );
   }
 
+  // Posted as Alma's own message rather than silently just opening the panel
+  // — the pill promised a specific thing, and the payoff has to be that
+  // thing, not a blank chat the reader has to re-ask for.
+  function openFromProactiveTip() {
+    setShowProactiveTip(false);
+    setNewMessageAt(messages.length);
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: formatWhatItChanges(), timestamp: formatTime(new Date()) },
+    ]);
+    setOpen(true);
+    scrollToEnd();
+  }
+
   return (
     <>
+      {showProactiveTip && !open && (
+        <ProactiveTip onOpen={openFromProactiveTip} onDismiss={() => setShowProactiveTip(false)} />
+      )}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
