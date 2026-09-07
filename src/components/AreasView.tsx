@@ -18,6 +18,12 @@ import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
 import TreeTable from "./TreeTable";
+import { CONTENT_HEIGHT_CLASS } from "../layout";
+
+// Shared with MapsView/StoryView — see layout.ts. All three panes below
+// (the map, the divider between them, and the table) must resolve to this
+// exact same height or the divider stops lining up with its neighbours.
+const AREAS_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
 
 type RightPanel = "table" | "events";
 
@@ -191,6 +197,16 @@ export default function AreasView({
   // Derived from the visible set rather than stored alongside it: a tree that
   // the timeline or a filter has just excluded should stop being focused, and
   // deriving means there is no stale selection to clean up.
+  // The tree whose digital twin is open. Held as an id and resolved against
+  // the visible set for the same reason `flyToId` is: a tree filtered or
+  // scrolled out of the window should close its own twin rather than leave a
+  // card describing something no longer on the map.
+  const [inspectId, setInspectId] = useState<string | null>(null);
+  const inspectTree = useMemo(
+    () => filters.visible.find((t) => t.id === inspectId) ?? null,
+    [filters.visible, inspectId],
+  );
+
   const focusTree = useMemo(() => {
     const found = filters.visible.find((t) => t.id === flyToId);
     return found ? { id: found.id, lng: found.lng, lat: found.lat } : null;
@@ -229,6 +245,8 @@ export default function AreasView({
         isTimelinePlaying={isTimelinePlaying}
         visibleTreeIds={visibleTreeIds}
         focusTree={focusTree}
+        inspectTree={inspectTree}
+        onExitInspect={() => setInspectId(null)}
         onPinClick={(id) => setSelectedId(id)}
         onPinHover={setHoveredId}
         layerVisibility={layerVisibility}
@@ -237,7 +255,7 @@ export default function AreasView({
         onLayerOpacityChange={onLayerOpacityChange}
         basemapIndex={basemapIndex}
         onBasemapIndexChange={onBasemapIndexChange}
-        className="h-[calc(100vh_-_150px)] min-h-[400px] mt-[10px] shrink-0"
+        className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
         style={{ width: `${splitPct}%` }}
       />
 
@@ -267,12 +285,10 @@ export default function AreasView({
             nudgeSplit(KEYBOARD_SPLIT_STEP);
           }
         }}
-        className={`split-divider mt-[10px] h-[calc(100vh_-_150px)] min-h-[400px] ${
-          split.dragging ? "split-divider--active" : ""
-        }`}
+        className={`split-divider mt-[10px] ${AREAS_HEIGHT} ${split.dragging ? "split-divider--active" : ""}`}
       />
 
-      <div className="flex-1 min-w-0 h-[calc(100vh_-_150px)] min-h-[400px] mt-[10px] flex flex-col gap-[8px]">
+      <div className={`flex-1 min-w-0 ${AREAS_HEIGHT} mt-[10px] flex flex-col gap-[8px]`}>
         <div className="flex justify-center shrink-0">
           <RightPanelSwitcher value={rightPanel} onChange={setRightPanel} />
         </div>
@@ -288,6 +304,18 @@ export default function AreasView({
               }}
               selectedId={selectedId}
               hoveredId={hoveredId}
+              // Only offered while the twin layer is on: the button lands the
+              // camera among modelled trees, and with the layer off it would
+              // land in an empty sky.
+              onInspect={
+                layerVisibility.trees3d
+                  ? (t) => {
+                      setSelectedId(t.id);
+                      setInspectId(t.id);
+                    }
+                  : undefined
+              }
+              inspectingId={inspectId}
             />
           ) : (
             <RecentEventsList events={visibleEvents} delay={0} onSelectEvent={handleSelectEvent} />

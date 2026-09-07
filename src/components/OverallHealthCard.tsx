@@ -34,7 +34,7 @@ export default function OverallHealthCard({
   const accent = healthy ? "#9ee6bd" : "#f79256";
 
   return (
-    <div className="flex-1 min-w-0 animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
+    <div className="flex-1 min-w-[160px] animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
       <div className="h-full rounded-[16px] border border-[#e2e4d9] bg-[#f2f4ec] p-[14px] flex flex-col">
         <span className="text-[12px] leading-[18px] font-medium text-[#5b5b66] font-['Outfit',sans-serif]">
           Total site health score
@@ -55,7 +55,7 @@ export default function OverallHealthCard({
 
         {trend && changeText && (
           <div
-            className="mt-auto flex items-center gap-[6px] self-start px-[9px] py-[5px] rounded-[6px]"
+            className="mt-auto flex items-center gap-[6px] self-start px-[8px] py-[4px] rounded-[6px]"
             style={{ background: accent }}
             title="Change in the blended condition score vs. the prior period"
           >

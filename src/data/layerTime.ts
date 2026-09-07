@@ -75,6 +75,11 @@ export function layerCoverage(id: ContentLayerId, areaId: string, monthCount: nu
       }
       break;
     }
+    case "trees3d":
+      // Extracted from the artwork at build time, not from temporal data.
+      // Always available across all months.
+      kinds.fill("captured");
+      break;
   }
 
   for (let i = 0; i < PLANNED_TAIL_MONTHS; i++) kinds.push("planned");

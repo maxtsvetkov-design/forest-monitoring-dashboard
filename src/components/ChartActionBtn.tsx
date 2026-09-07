@@ -7,7 +7,7 @@ export default function ChartActionBtn({ src, alt }: { src: string; alt: string 
     // to 18px and its 16px icon to *zero* width — the icon silently vanished
     // while its bordered box stayed, which is exactly what a wider page
     // gutter surfaced here.
-    <button className="u-press group shrink-0 flex items-center justify-center rounded-[10px] p-[8px] border border-[#dedee3] hover:bg-[#ebebeb] hover:border-[#cbcbd2]">
+    <button className="u-press group shrink-0 flex items-center justify-center rounded-[10px] p-[6px] border border-[#dedee3] hover:bg-[#ebebeb] hover:border-[#cbcbd2]">
       <img src={src} alt={alt} className="u-icon w-4 h-4 shrink-0" />
     </button>
   );

@@ -25,7 +25,7 @@ export default function TrendChip({
 }) {
   return (
     <span
-      className={`inline-flex items-center h-[24px] px-[7px] py-[1px] rounded-full text-[12px] font-medium leading-[18px] font-['Outfit',sans-serif] transition-colors duration-200 ${className}`}
+      className={`inline-flex items-center h-[24px] px-[7px] py-[2px] rounded-full text-[12px] font-medium leading-[18px] font-['Outfit',sans-serif] transition-colors duration-200 ${className}`}
       style={{
         background: `${TREND_COLOR[trend]}14`,
         border: `1px solid ${TREND_COLOR[trend]}33`,

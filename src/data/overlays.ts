@@ -105,6 +105,16 @@ export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
 );
 
 /**
+ * The ground width of an area's overlay footprint, in metres — the scale that
+ * turns anything measured in the *image's* normalised space into real metres.
+ * The 3D canopy layer needs it to size a tree from a traced crown radius; see
+ * `src/data/canopies.ts`.
+ */
+export function plotWidthMeters(areaId: string | undefined): number {
+  return PLOT_WIDTH_M[areaId ?? ""] ?? 1200;
+}
+
+/**
  * An area's size in hectares, measured off the very box its overlay is
  * draped over rather than stored as a second, independently-maintained
  * number — so what the project overview lists always matches the footprint

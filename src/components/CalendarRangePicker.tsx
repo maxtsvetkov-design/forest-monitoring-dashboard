@@ -66,8 +66,9 @@ export default function CalendarRangePicker({
     setOpen(false);
   }
 
-  const label = `${months[range.startIndex] ?? ""} – ${months[range.endIndex] ?? ""}`;
   const span = range.endIndex - range.startIndex + 1;
+  const label =
+    span === 1 ? months[range.startIndex] ?? "" : `${months[range.startIndex] ?? ""} – ${months[range.endIndex] ?? ""}`;
 
   return (
     <div ref={rootRef} className="relative">

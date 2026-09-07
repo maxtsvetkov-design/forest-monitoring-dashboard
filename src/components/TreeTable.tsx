@@ -4,6 +4,7 @@ import FilterDropdown from "./FilterDropdown";
 import { clamp, useDragResize } from "../hooks/useDragResize";
 import type { TreeFilters } from "../hooks/useTreeFilters";
 import { CONDITIONS } from "../data/taxonomy";
+import { SortArrow, type SortDir } from "./SortArrow";
 
 // Keyed by display label and derived from the taxonomy — see HEALTH_RANK below
 // for why a hand-written map here is a silent failure rather than a loud one.
@@ -33,8 +34,6 @@ const DIAMETER_RANK: Record<TreeRecord["diameter"], number> = {
   "S (<1 m)": 2,
 };
 
-type SortDir = "asc" | "desc";
-
 interface Column {
   key: string;
   label: string;
@@ -46,25 +45,32 @@ interface Column {
   defaultDir: SortDir;
 }
 
+// Default widths are sized so the *header label* fits beside its sort arrow
+// inside the cell's px-4 padding, not just the data — a column whose own name
+// renders as "Crown r. (m…" is unreadable however tidy the rows below it are.
+// The table scrolls horizontally (fixed layout, explicit totalWidth), so a
+// wider column costs its neighbours nothing.
 const COLUMNS: Column[] = [
-  { key: "id", label: "ID", defaultWidth: 90, minWidth: 64, sortValue: (t) => t.id, defaultDir: "asc" },
-  { key: "species", label: "Species", defaultWidth: 110, minWidth: 84, sortValue: (t) => t.species, defaultDir: "asc" },
-  { key: "genus", label: "Genus", defaultWidth: 105, minWidth: 80, sortValue: (t) => t.genus, defaultDir: "asc" },
+  { key: "id", label: "ID", defaultWidth: 98, minWidth: 72, sortValue: (t) => t.id, defaultDir: "asc" },
+  { key: "species", label: "Species", defaultWidth: 122, minWidth: 90, sortValue: (t) => t.species, defaultDir: "asc" },
+  { key: "genus", label: "Genus", defaultWidth: 118, minWidth: 86, sortValue: (t) => t.genus, defaultDir: "asc" },
   {
     key: "scientificName",
     label: "Scientific name",
-    defaultWidth: 165,
-    minWidth: 110,
+    // Binomials are long ("Leptadenia pyrotechnica"), and this column holds
+    // the one string in the row that cannot be guessed from its neighbours.
+    defaultWidth: 178,
+    minWidth: 120,
     sortValue: (t) => t.scientificName,
     defaultDir: "asc",
   },
   // Worst-first: "show me what's dying" is the reason anyone sorts this column.
   { key: "health", label: "Health", defaultWidth: 115, minWidth: 88, sortValue: (t) => HEALTH_RANK[t.health], defaultDir: "desc" },
   { key: "diameter", label: "Diameter", defaultWidth: 105, minWidth: 80, sortValue: (t) => DIAMETER_RANK[t.diameter], defaultDir: "asc" },
-  { key: "height", label: "Height (m)", defaultWidth: 85, minWidth: 70, sortValue: (t) => t.height, defaultDir: "desc" },
+  { key: "height", label: "Height (m)", defaultWidth: 98, minWidth: 78, sortValue: (t) => t.height, defaultDir: "desc" },
   // Sorts on monthIndex, not the label — "Sep '26" vs "Oct '25" as strings is
   // alphabetical nonsense.
-  { key: "crown", label: "Crown r. (m)", defaultWidth: 100, minWidth: 78, sortValue: (t) => t.crownRadius, defaultDir: "desc" },
+  { key: "crown", label: "Crown r. (m)", defaultWidth: 110, minWidth: 84, sortValue: (t) => t.crownRadius, defaultDir: "desc" },
   { key: "lastSurveyed", label: "Last surveyed", defaultWidth: 115, minWidth: 90, sortValue: (t) => t.monthIndex, defaultDir: "desc" },
 ];
 
@@ -85,6 +91,14 @@ const HEIGHT_ORDER = [
   { key: "h3", label: "Short (<2 m)" },
 ] as const;
 
+const TWIN_STROKE = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.6,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+};
+
 const KEYBOARD_RESIZE_STEP = 16;
 
 function HealthBadge({ health }: { health: TreeRecord["health"] }) {
@@ -96,21 +110,6 @@ function HealthBadge({ health }: { health: TreeRecord["health"] }) {
       <span className="w-[6px] h-[6px] rounded-full shrink-0" style={{ background: HEALTH_COLOR[health] }} />
       {health}
     </span>
-  );
-}
-
-function SortArrow({ dir, active }: { dir: SortDir; active: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 8 10"
-      aria-hidden="true"
-      className={`w-[8px] h-[10px] shrink-0 transition-opacity duration-150 ${
-        active ? "opacity-100" : "opacity-0 group-hover:opacity-40"
-      }`}
-      style={{ transform: dir === "desc" ? "rotate(180deg)" : undefined }}
-    >
-      <path d="M4 0L8 5H0z" fill="currentColor" />
-    </svg>
   );
 }
 
@@ -159,9 +158,25 @@ interface TreeTableProps {
    * mouse across a cluster of pins shouldn't yank the table's scroll
    * position around on every pixel of movement. */
   hoveredId?: string | null;
+  /** Opens this tree's digital twin — the modelled tree at eye level with its
+   * full record beside it. Only passed while the twin layer is switched on:
+   * there is nothing to fly into otherwise, and a button that lands you in an
+   * empty sky is worse than no button. */
+  onInspect?: (record: TreeRecord) => void;
+  /** The tree whose twin is currently open, so its row can say so. */
+  inspectingId?: string | null;
 }
 
-export default function TreeTable({ records, filters, areaName, onSelect, selectedId, hoveredId }: TreeTableProps) {
+export default function TreeTable({
+  records,
+  filters,
+  areaName,
+  onSelect,
+  selectedId,
+  hoveredId,
+  onInspect,
+  inspectingId,
+}: TreeTableProps) {
   const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "id", dir: "asc" });
   const [widths, setWidths] = useState<Record<string, number>>(() =>
     Object.fromEntries(COLUMNS.map((c) => [c.key, c.defaultWidth])),
@@ -225,7 +240,8 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
   const filtersActive = filters.active;
   const clearFilters = filters.clear;
 
-  const totalWidth = COLUMNS.reduce((sum, c) => sum + widths[c.key], 0);
+  const TWIN_COLUMN_WIDTH = 44;
+  const totalWidth = COLUMNS.reduce((sum, c) => sum + widths[c.key], 0) + (onInspect ? TWIN_COLUMN_WIDTH : 0);
 
   return (
     <div className="h-full flex flex-col surface-card overflow-hidden">
@@ -321,7 +337,7 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
             onClick={filters.toggleCanopyLoss}
             aria-pressed={filters.canopyLossOnly}
             title={`Trees losing more than the ${filters.canopyLossMean.toFixed(0)}% average canopy across this selection`}
-            className={`u-press flex items-center gap-[5px] px-[10px] py-[5px] rounded-[6px] border text-[12px] font-['Outfit',sans-serif] cursor-pointer transition-colors duration-150 ${
+            className={`u-press flex items-center gap-[5px] px-[10px] py-[6px] rounded-[6px] border text-[12px] font-['Outfit',sans-serif] cursor-pointer transition-colors duration-150 ${
               filters.canopyLossOnly
                 ? "bg-[#096151] border-[#096151] text-white"
                 : "border-[#dedee3] text-[#464650] hover:border-[#b9b9b9]"
@@ -344,7 +360,7 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
               <button
                 type="button"
                 onClick={clearFilters}
-                className="px-[12px] py-[5px] text-[12px] font-['Outfit',sans-serif] text-white bg-[#096151] rounded-[6px] hover:bg-[#0b7a64] transition-colors duration-150 cursor-pointer"
+                className="px-[12px] py-[6px] text-[12px] font-['Outfit',sans-serif] text-white bg-[#096151] rounded-[6px] hover:bg-[#0b7a64] transition-colors duration-150 cursor-pointer"
               >
                 Clear filters
               </button>
@@ -363,6 +379,7 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
               {COLUMNS.map((c) => (
                 <col key={c.key} style={{ width: `${widths[c.key]}px` }} />
               ))}
+              {onInspect && <col style={{ width: `${TWIN_COLUMN_WIDTH}px` }} />}
             </colgroup>
             <thead className="sticky top-0 bg-[#f6f6f8] z-10">
               <tr className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif]">
@@ -406,6 +423,11 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
                     </th>
                   );
                 })}
+                {onInspect && (
+                  <th scope="col" className="px-0 py-0 border-b border-[#dedee3]">
+                    <span className="sr-only">Digital twin</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -445,6 +467,36 @@ export default function TreeTable({ records, filters, areaName, onSelect, select
                   <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.height}</td>
                   <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.crownRadius}</td>
                   <td className="px-4 py-2 text-[13px] text-[#464650] font-['Outfit',sans-serif] truncate">{t.lastSurveyed}</td>
+                  {onInspect && (
+                    <td className="px-0 py-2 text-center overflow-hidden">
+                      <button
+                        type="button"
+                        // The row itself already means "highlight this tree";
+                        // this means "go stand next to it", which is a
+                        // different action, so it must not also fire the row.
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onInspect(t);
+                        }}
+                        title={`Open ${t.id}'s digital twin`}
+                        aria-label={`Open ${t.id}'s digital twin`}
+                        aria-pressed={inspectingId === t.id}
+                        className={`u-press w-[28px] h-[24px] inline-flex items-center justify-center rounded-[7px] border transition-colors duration-100 cursor-pointer ${
+                          inspectingId === t.id
+                            ? "bg-[#096151] border-[#096151] text-white"
+                            : "border-[#dedee3] text-[#5b5b66] hover:bg-[#ebece7] hover:text-[#18181c]"
+                        }`}
+                      >
+                        {/* The layer chip's own tree glyph, so the button and
+                            the layer it opens are visibly the same thing. */}
+                        <svg width="13" height="13" viewBox="0 0 16 16" {...TWIN_STROKE}>
+                          <path d="M8 13.5v-2.6" />
+                          <path d="M8 1.8 4.4 6.4h7.2Z" />
+                          <path d="M8 5.6 3.4 10.9h9.2Z" />
+                        </svg>
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

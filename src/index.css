@@ -51,9 +51,22 @@ html, body, #root {
 ::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 4px; }
 *:hover::-webkit-scrollbar { opacity: 1; }
 
+/* The house entrance. Rise + a whisper of scale + a short defocus: the blur
+   is what separates "an element appeared" from "an element arrived". Kept to
+   6px and one-shot — `filter` is composited, but animating it on a long list
+   of simultaneously-mounting nodes is the one place this gets expensive, so
+   entrances are staggered rather than fired all at once. */
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.985);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: none;
+  }
 }
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -61,10 +74,10 @@ html, body, #root {
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.5s ease-out both;
+  animation: fadeInUp var(--dur-5) var(--ease-lux) backwards;
 }
 .animate-fade-in {
-  animation: fadeIn 0.4s ease-out both;
+  animation: fadeIn var(--dur-4) var(--ease-out) backwards;
 }
 
 /* Donut chart's centre readout — pops in fresh each time the hovered slice
@@ -93,7 +106,7 @@ html, body, #root {
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in-down {
-  animation: fadeInDown 0.5s var(--ease-out, ease-out) both;
+  animation: fadeInDown 0.5s var(--ease-out, ease-out) backwards;
 }
 
 @keyframes fadeInLeft {
@@ -101,7 +114,7 @@ html, body, #root {
   to { opacity: 1; transform: translateX(0); }
 }
 .animate-fade-in-left {
-  animation: fadeInLeft 0.45s var(--ease-out, ease-out) both;
+  animation: fadeInLeft 0.45s var(--ease-out, ease-out) backwards;
 }
 
 /* Mirror of the above, for panels that sit against the right edge and should
@@ -111,7 +124,7 @@ html, body, #root {
   to { opacity: 1; transform: translateX(0); }
 }
 .animate-fade-in-right {
-  animation: fadeInRight 0.45s var(--ease-out, ease-out) both;
+  animation: fadeInRight 0.45s var(--ease-out, ease-out) backwards;
 }
 
 /* Reserved for the one element that should land last with a little physical
@@ -122,7 +135,7 @@ html, body, #root {
   100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 .animate-pop-in {
-  animation: popIn 0.55s var(--ease-spring, ease-out) both;
+  animation: popIn 0.55s var(--ease-spring, ease-out) backwards;
 }
 
 /* Hand-drawn connector lines in DenseCoverageModal: the stroke draws itself in
@@ -213,6 +226,23 @@ html, body, #root {
    switch layered on top of the range-driven fade above, not a replacement
    for it. */
 .map--pins-off .tree-pin {
+  display: none;
+}
+
+/* Isolate mode (LayerPanel's per-chip "isolate" button). MapCanvas hides every
+   style layer the app doesn't own, and MapLibre's canvas is transparent
+   wherever nothing paints — so this is the void the surviving layer floats in.
+   Near-black rather than the page's own ground: the 3D canopy is lit geometry,
+   and it reads as a model on a stage against dark, as washed-out cutouts
+   against light. */
+.map--isolated {
+  background: #0a0f0d;
+}
+
+/* The ring drawn around a tree picked in the Areas table is a DOM marker, so
+   hiding the pin layer never reached it — on an otherwise empty canvas it
+   would be the one stray thing left floating. */
+.map--isolated .tree-focus {
   display: none;
 }
 
@@ -417,6 +447,51 @@ body.is-dragging-resize {
   height: 100%;
 }
 
+/* Right-edge grip for a resizable floating panel — the landing screen's
+   project sidebar and the map's own layer panel both use this. Same language
+   as `.split-divider` below (a wide invisible hit target, a hairline that
+   only paints on hover/drag) but absolutely positioned against the panel's
+   own right edge rather than living in a flex layout, since both hosts are
+   themselves position:absolute over the map. */
+.edge-resize-grip {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  width: 13px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  border: none;
+  padding: 0;
+  z-index: 2;
+  touch-action: none;
+}
+
+.edge-resize-grip::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 3px;
+  height: calc(100% - 16px);
+  margin-left: -1.5px;
+  border-radius: 9999px;
+  background: rgba(9, 97, 81, 0.18);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out);
+}
+
+.edge-resize-grip:hover::after,
+.edge-resize-grip:focus-visible::after,
+.edge-resize-grip--active::after {
+  opacity: 1;
+  background: #096151;
+}
+
+.edge-resize-grip:focus-visible {
+  outline: none;
+}
+
 /* Split-pane divider between the map and the table. 10px of grabbable width,
    but only a 2px line ever paints, so it reads as a seam rather than a bar. */
 .split-divider {
@@ -484,7 +559,7 @@ body.is-dragging-resize {
   background: rgba(9, 97, 81, 0.07);
   pointer-events: none;
   z-index: 0;
-  transition: left var(--dur-3) var(--ease-out), width var(--dur-3) var(--ease-out);
+  transition: left var(--tl-glide) var(--tl-ease), width var(--tl-glide) var(--tl-ease);
 }
 
 /* The chart's own "in range" segment (the clipped <g> in
@@ -494,7 +569,33 @@ body.is-dragging-resize {
    this the highlighted segment used to visibly snap ahead of the handles it
    sits between during play/step, instead of moving with them. */
 .tl-range-clip-rect {
-  transition: x var(--dur-3) var(--ease-out), width var(--dur-3) var(--ease-out);
+  transition: x var(--tl-glide) var(--tl-ease), width var(--tl-glide) var(--tl-ease);
+}
+
+/* The four elements that mark the selection — wash, hit target, chart clip and
+   both handles — move as one timed motion off this pair of tokens rather than
+   four independently-tuned ones.
+
+   The duration is matched to INTENT, not fixed. A click or a step is a
+   discrete instruction and wants a considered, eased arrival. Playback is a
+   continuous sweep across months, so it takes a glide just under the play
+   step (see DEFAULT_PLAY_STEP_MS = 1400) and a linear curve — repeated
+   ease-out pulses read as a series of lurches, one constant sweep reads as
+   time passing. Using one duration for both is what made click-to-jump feel
+   like wading. */
+.tl-track {
+  --tl-glide: var(--dur-4);
+  --tl-ease: var(--ease-lux);
+}
+
+.tl-track--playing {
+  --tl-glide: 1260ms;
+  --tl-ease: linear;
+}
+
+/* A live pointer drag must never fight a transition trying to catch up to it. */
+.tl-track--dragging {
+  --tl-glide: 0ms;
 }
 
 .tl-track--dragging .tl-rail__wash {
@@ -515,7 +616,7 @@ body.is-dragging-resize {
   z-index: 1;
   cursor: grab;
   touch-action: none;
-  transition: left var(--dur-3) var(--ease-out), width var(--dur-3) var(--ease-out);
+  transition: left var(--tl-glide) var(--tl-ease), width var(--tl-glide) var(--tl-ease);
 }
 
 .tl-rail__fill--dragging {
@@ -765,7 +866,7 @@ body.is-dragging-resize {
    disabled) while dragging, same as its siblings — a live pointer drag must
    never fight a transition trying to catch up to it. */
 .tl-handle--animated {
-  transition: left var(--dur-3) var(--ease-out);
+  transition: left var(--tl-glide) var(--tl-ease);
 }
 
 .tl-handle::before {
@@ -1120,11 +1221,28 @@ body.is-dragging-resize {
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
   /* Slight overshoot: presses and pops, where a physical rebound reads well. */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Expo-out. Leaves instantly, arrives on a very long glide — the curve that
+     reads as "expensive". Reserved for things that TRAVEL (view entrances,
+     block glides, the pill), never for colour swaps, where its long tail
+     just looks like lag. */
+  --ease-lux: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Symmetrical in-out, for morphs that must feel deliberate at both ends. */
+  --ease-glide: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Gentle emphasis: quick departure, soft landing, no overshoot. */
+  --ease-soft: cubic-bezier(0.2, 0.9, 0.2, 1);
 
-  --dur-1: 120ms; /* colour / opacity swaps */
+  /* The whole scale in one place. The rule the app follows: RESPONSE is fast,
+     SETTLE is long. Making everything uniformly slow is what makes an
+     interface feel sluggish; an instant reaction followed by a long, eased
+     settle is what makes it feel luxurious. */
+  --dur-1: 120ms; /* colour / opacity swaps — must feel instant */
   --dur-2: 180ms; /* hover states */
-  --dur-3: 1260ms; /* position changes, view entrances */
-  --dur-4: 420ms; /* the longest thing that should ever move */
+  --dur-3: 260ms; /* position changes that track input (drag handles, bands) */
+  --dur-4: 420ms; /* considered movement: menus, morphs, reveals */
+  --dur-5: 620ms; /* long settles: view entrances, block glides */
+  --dur-6: 900ms; /* ceremonial one-shots only — never input-driven */
+
+  --stagger: 45ms; /* one beat between staggered siblings */
 }
 
 /* --- Hover tier 1: cards -------------------------------------------------- */
@@ -1171,17 +1289,19 @@ body.is-dragging-resize {
 /* --- View transitions ----------------------------------------------------- */
 /* Keyed on the active tab, so switching replays the entrance. */
 .view-enter {
-  animation: viewEnter var(--dur-3) var(--ease-out) both;
+  animation: viewEnter var(--dur-5) var(--ease-lux) backwards;
 }
 
 @keyframes viewEnter {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translate3d(0, 10px, 0) scale(0.994);
+    filter: blur(5px);
   }
   to {
     opacity: 1;
     transform: none;
+    filter: none;
   }
 }
 
@@ -1190,7 +1310,7 @@ body.is-dragging-resize {
    full recomposite mid-animation, which makes the map feel worse than no
    transition at all. Fading is free. */
 .view-enter-soft {
-  animation: viewEnterSoft var(--dur-3) var(--ease-out) both;
+  animation: viewEnterSoft var(--dur-5) var(--ease-lux) backwards;
 }
 
 @keyframes viewEnterSoft {
@@ -1202,10 +1322,27 @@ body.is-dragging-resize {
   }
 }
 
-/* Staggered children — set --i on each child. */
+/* Staggered children — set --i on each child, or let nth-child do it. */
 .stagger > * {
-  animation: viewEnter var(--dur-3) var(--ease-out) both;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  animation: fadeInUp var(--dur-5) var(--ease-lux) backwards;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+/* Auto-stagger: the same beat without having to thread an index through JSX.
+   Capped at eight so a long list's tail doesn't arrive a second late — past
+   that everything shares the last beat. */
+.u-stagger > *:nth-child(1) { --i: 0; }
+.u-stagger > *:nth-child(2) { --i: 1; }
+.u-stagger > *:nth-child(3) { --i: 2; }
+.u-stagger > *:nth-child(4) { --i: 3; }
+.u-stagger > *:nth-child(5) { --i: 4; }
+.u-stagger > *:nth-child(6) { --i: 5; }
+.u-stagger > *:nth-child(7) { --i: 6; }
+.u-stagger > *:nth-child(n + 8) { --i: 7; }
+
+.u-stagger > * {
+  animation: fadeInUp var(--dur-5) var(--ease-lux) backwards;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
 }
 
 /* --- Tab indicator -------------------------------------------------------- */
@@ -1401,6 +1538,589 @@ html {
   background-clip: content-box;
 }
 
+/* --- Modal panels --------------------------------------------------------- */
+/* The backdrop fades and the panel *arrives*: rising slightly, resolving from
+   a small scale and a short defocus. Both start together so the two read as
+   one event, but the panel runs longer so it lands last — the thing you are
+   meant to look at is the thing that finishes moving. */
+.modal-panel {
+  animation: modalPanelIn var(--dur-5) var(--ease-lux) backwards;
+}
+
+@keyframes modalPanelIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale(0.97);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* --- FLIP reorder ---------------------------------------------------------- */
+/* Applied by useFlipReorder right as it releases a row's inverted transform,
+   so the glide back to zero and this shadow bump run on the same clock: the
+   row reads as a single card being picked up, carried, and set back down,
+   not a position tween with an unrelated shadow layered on top.
+   `--ease-lux` (long glide, instant departure) rather than the spring used
+   for presses — a reordered card is TRAVELLING a real distance across the
+   list, the same "expensive" curve view entrances use, not rebounding off a
+   press. `will-change` is scoped to exactly the moving window (added by the
+   hook right before the transform is set, implicitly cleared once this class
+   is removed) rather than sitting on the row permanently. */
+.flip-settle {
+  transition: transform var(--dur-4) var(--ease-lux), box-shadow var(--dur-4) var(--ease-lux);
+  will-change: transform;
+  animation: flipLift var(--dur-4) var(--ease-lux) backwards;
+}
+
+@keyframes flipLift {
+  0% { box-shadow: 0 10px 24px -8px rgba(9, 97, 81, 0.32); }
+  100% { box-shadow: none; }
+}
+
+/* --- Sheen sweep ---------------------------------------------------------- */
+/* A single specular highlight travelling across a surface on hover. Slow
+   (900ms) and low-contrast on purpose: fast or bright, it reads as a loading
+   shimmer; slow and faint, it reads as light moving over a material. */
+.u-sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.u-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.42) 50%,
+    transparent 65%
+  );
+  transform: translateX(-130%);
+  opacity: 0;
+  transition: transform 900ms var(--ease-glide), opacity var(--dur-2) ease-out;
+}
+
+.u-sheen:hover::after {
+  transform: translateX(130%);
+  opacity: 1;
+}
+
+/* --- Icon buttons --------------------------------------------------------- */
+/* The glyph scales, not the button — scaling the button would nudge its
+   neighbours in a tight transport cluster. */
+.u-icon-host svg {
+  transition: transform var(--dur-2) var(--ease-spring);
+}
+
+.u-icon-host:hover:not(:disabled) svg {
+  transform: scale(1.12);
+}
+
+/* ==========================================================================
+   Story panel
+   ========================================================================== */
+
+.story-scroll {
+  overscroll-behavior: contain;
+}
+
+/* --- Blocks --------------------------------------------------------------- */
+/* Three layers on every block: a lift, a spotlight that tracks the pointer
+   (--mx/--my written from JS), and an accent rule that wipes in. Transform and
+   opacity only, so none of it costs layout. */
+.story-block {
+  --mx: 50%;
+  --my: 0%;
+  position: relative;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #f2f2f2;
+  background: #ffffff;
+  box-shadow: var(--elev-1);
+  outline: none;
+  animation: fadeInUp var(--dur-5) var(--ease-lux) backwards;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+  transition: transform var(--dur-4) var(--ease-lux), box-shadow var(--dur-4) var(--ease-soft),
+    border-color var(--dur-2) var(--ease-out), opacity var(--dur-4) var(--ease-out);
+  will-change: transform;
+}
+
+/* Content must sit above the spotlight layer. */
+.story-block > * {
+  position: relative;
+  z-index: 1;
+}
+
+.story-block::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    280px circle at var(--mx) var(--my),
+    rgba(86, 176, 164, 0.14),
+    rgba(86, 176, 164, 0) 60%
+  );
+  opacity: 0;
+  transition: opacity var(--dur-4) var(--ease-out);
+}
+
+.story-block::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 2px;
+  z-index: 2;
+  border-radius: 0 0 2px 2px;
+  pointer-events: none;
+  background: linear-gradient(90deg, #56b0a4, rgba(86, 176, 164, 0));
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform var(--dur-5) var(--ease-lux), opacity var(--dur-2) ease-out;
+}
+
+/* Everything but the block being read sits back a little. The depth is what
+   makes stepping through feel like a story rather than a scroll — and it
+   lifts back to full on hover, so nothing is ever hard to read. */
+.story-block[data-active="false"] {
+  opacity: 0.8;
+}
+
+.story-block[data-active="false"]:hover {
+  opacity: 1;
+}
+
+.story-block:hover {
+  transform: translateY(-3px);
+  border-color: rgba(86, 176, 164, 0.45);
+  box-shadow: 0 12px 30px rgba(20, 20, 20, 0.11), 0 3px 8px rgba(20, 20, 20, 0.05);
+}
+
+.story-block:hover::before {
+  opacity: 1;
+}
+
+.story-block:hover::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.story-block:active {
+  transform: translateY(-1px) scale(0.998);
+}
+
+.story-block[data-active="true"] {
+  border-color: #56b0a4;
+  box-shadow: 0 0 0 1px #56b0a4, 0 10px 30px -8px rgba(9, 97, 81, 0.22);
+}
+
+.story-block[data-active="true"]:hover {
+  box-shadow: 0 0 0 1px #56b0a4, 0 16px 34px -10px rgba(9, 97, 81, 0.28);
+}
+
+/* Section headings are not cards — same language, less weight. */
+.story-block--sec {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 12px 2px 4px;
+}
+
+.story-block--sec::after {
+  left: 2px;
+  right: 2px;
+}
+
+.story-block--sec:hover {
+  transform: translateY(-1px);
+  background: rgba(86, 176, 164, 0.06);
+  border-color: rgba(86, 176, 164, 0.28);
+  box-shadow: none;
+}
+
+.story-block--sec[data-active="true"] {
+  background: rgba(86, 176, 164, 0.07);
+  border-color: rgba(86, 176, 164, 0.28);
+  box-shadow: none;
+}
+
+/* Contents of a block arrive just behind the block itself, so a block reads
+   as one object assembling rather than a card and its filling racing. */
+.story-inner {
+  animation: fadeInUp var(--dur-4) var(--ease-lux) backwards;
+  animation-delay: calc(140ms + var(--i, 0) * 60ms);
+}
+
+/* --- Liquid section pill -------------------------------------------------- */
+/* Stretches to span origin + destination on the way across, then settles. The
+   stretch is what reads as liquid rather than as a box being slid. */
+.story-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 30px;
+  width: 0;
+  z-index: 0;
+  border-radius: 999px;
+  background: #18181c;
+  border: 1px solid #096151;
+  transform: translateX(0);
+  pointer-events: none;
+  opacity: 0;
+  transition: transform var(--dur-4) var(--ease-glide), width var(--dur-4) var(--ease-glide),
+    opacity var(--dur-2) ease-out;
+}
+
+.story-pill.is-settling {
+  transition: transform var(--dur-5) var(--ease-spring), width var(--dur-5) var(--ease-spring);
+}
+
+.story-secchip {
+  transition: color var(--dur-4) var(--ease-out), background-color var(--dur-4) var(--ease-out),
+    border-color var(--dur-4) var(--ease-out);
+}
+
+/* --- Header --------------------------------------------------------------- */
+/* No transition on font-size: it is written from the scroll position every
+   frame, so a transition would permanently trail the scroll. */
+.story-title {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  transition: color var(--dur-2) var(--ease-out), transform var(--dur-4) var(--ease-lux);
+}
+
+.story-title::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  right: 50%;
+  bottom: 2px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: #56b0a4;
+  opacity: 0;
+  transition: left var(--dur-5) var(--ease-lux), right var(--dur-5) var(--ease-lux),
+    opacity var(--dur-2) ease-out;
+}
+
+.story-title.is-live:hover {
+  transform: translateY(-2px);
+  color: #096151;
+}
+
+.story-title.is-live:hover::after {
+  left: 0;
+  right: 0;
+  opacity: 0.9;
+}
+
+.story-chip__label {
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.story-stat {
+  transition: transform var(--dur-4) var(--ease-lux), box-shadow var(--dur-4) var(--ease-soft),
+    border-color var(--dur-2) var(--ease-out);
+}
+
+.story-stat:hover {
+  transform: translateY(-2px);
+  border-color: rgba(86, 176, 164, 0.55);
+  box-shadow: 0 10px 22px -10px rgba(20, 20, 20, 0.28);
+}
+
+.story-stat__value {
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.story-stat:hover .story-stat__value {
+  color: #096151;
+}
+
+/* The arrow is out of flow and the label only yields room while hovered. In
+   flow it would steal that width permanently and clip the longest label at
+   rest — a state nobody asked for. */
+.story-stat__label {
+  min-width: 0;
+  transition: padding-right var(--dur-4) var(--ease-lux);
+}
+
+.story-stat__jump {
+  opacity: 0;
+  transform: translateX(-5px);
+  transition: opacity var(--dur-2) ease-out, transform var(--dur-4) var(--ease-lux);
+}
+
+.story-stat:hover .story-stat__label,
+.story-stat:focus-visible .story-stat__label {
+  padding-right: 15px;
+}
+
+.story-stat:hover .story-stat__jump,
+.story-stat:focus-visible .story-stat__jump {
+  opacity: 1;
+  transform: none;
+}
+
+/* --- Summary hero --------------------------------------------------------- */
+/* A very slow light drift across the card. 14s and alternate: at that speed it
+   is never something you catch moving, only something that is never quite
+   still — which is the difference between a live surface and a flat fill. */
+.story-hero {
+  position: relative;
+}
+
+.story-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.story-hero::after {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(40% 40% at 30% 25%, rgba(255, 255, 255, 0.55), transparent 70%);
+  animation: heroDrift 14s var(--ease-glide) infinite alternate;
+}
+
+@keyframes heroDrift {
+  from { transform: translate3d(-6%, -4%, 0); }
+  to { transform: translate3d(8%, 6%, 0); }
+}
+
+/* --- Event rows ----------------------------------------------------------- */
+.story-event__img {
+  transition: transform var(--dur-5) var(--ease-lux);
+}
+
+.story-event:hover .story-event__img {
+  transform: scale(1.08);
+}
+
+/* Sparklines draw themselves when their block becomes the active one. */
+.story-spark {
+  stroke-dasharray: 44;
+  stroke-dashoffset: 44;
+  animation: sparkDraw var(--dur-6) var(--ease-lux) both;
+  animation-delay: 220ms;
+}
+
+@keyframes sparkDraw {
+  to { stroke-dashoffset: 0; }
+}
+
+/* --- Resolution tiles ----------------------------------------------------- */
+.story-tile {
+  transition: transform var(--dur-4) var(--ease-lux), box-shadow var(--dur-4) var(--ease-soft);
+}
+
+.story-tile:hover {
+  transform: scale(1.04);
+  box-shadow: 0 12px 26px -10px rgba(20, 20, 20, 0.35);
+}
+
+.story-tile__sheen {
+  background: linear-gradient(120deg, transparent 40%, rgba(255, 255, 255, 0.35) 50%, transparent 60%);
+  transform: translateX(-130%);
+  opacity: 0;
+  transition: transform 1000ms var(--ease-glide), opacity var(--dur-2) ease-out;
+}
+
+.story-tile:hover .story-tile__sheen {
+  transform: translateX(130%);
+  opacity: 1;
+}
+
+/* --- Acquisition grid ----------------------------------------------------- */
+/* Captured quarters grow out of the baseline in reading order, so the capture
+   record assembles itself left-to-right instead of appearing all at once. */
+.story-cell {
+  transform-origin: center;
+  animation: cellIn var(--dur-4) var(--ease-spring) backwards;
+  animation-delay: calc(200ms + var(--i, 0) * 55ms);
+}
+
+@keyframes cellIn {
+  from { transform: scaleY(0.25); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* --- Outline menu --------------------------------------------------------- */
+.story-outline {
+  transform-origin: top left;
+  animation: outlineIn var(--dur-4) var(--ease-lux) backwards;
+}
+
+@keyframes outlineIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Dashboard section (Figma 308-25361)
+   --------------------------------------------------------------------------- */
+
+/* A KPI tile. Lifts a hair on hover and presses back in on click, so the row
+   reads as four physical objects rather than four painted rectangles. The
+   lift is deliberately smaller than .story-block's: these sit shoulder to
+   shoulder in a tight row, and a 4px rise there would look like the row was
+   buckling rather than one card responding. */
+.kpi-tile:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px -10px rgba(16, 16, 24, 0.22);
+}
+
+.kpi-tile:active:not(:disabled) {
+  transform: translateY(0);
+  transition-duration: var(--dur-1);
+}
+
+/* Disabled tiles (a metric with no per-tree drill-down) must not present a
+   hover affordance for an interaction that will never happen. */
+.kpi-tile:disabled {
+  cursor: default;
+}
+
+/* An insight card. The image inside does the zooming (see the component's
+   group-hover scale); the card itself only rises, so the two motions read as
+   one object with a parallax interior rather than two things animating. */
+.insight-card {
+  transition: transform var(--dur-3) var(--ease-lux), box-shadow var(--dur-3) var(--ease-lux);
+}
+
+.insight-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -12px rgba(16, 16, 24, 0.28);
+}
+
+.insight-card:active {
+  transform: translateY(-1px);
+  transition-duration: var(--dur-1);
+}
+
+/* Recharts positions the tooltip wrapper itself; this only styles the panel
+   we render inside it, giving it the same soft arrival the rest of the app's
+   floating surfaces use rather than appearing instantly. */
+.perf-tooltip {
+  animation: fadeIn var(--dur-2) var(--ease-out) backwards;
+  pointer-events: none;
+}
+
+/* --- Ambient background ---------------------------------------------------- */
+/* A few soft, blurred brand-green (#096151) blobs drifting behind both app
+   shells (the workspace root in App.tsx and the landing screen root in
+   LandingScreen.tsx) -- one hue at varying opacity, never a multi-colour
+   wash, so it reads as ambient chrome rather than decoration competing with
+   real KPIs/charts/tables. `.ambient-bg` is the absolutely-positioned,
+   overflow-hidden clipping box; each `.ambient-bg__blob` is one soft circle.
+   Unlayered on purpose (see the cascade-layer rule at the top of this file)
+   so nothing here needs `!important` to beat a stray utility class. */
+.ambient-bg {
+  /* `fixed`, not `absolute`: the workspace shell (App.tsx) is a normal
+     scrolling page with no height cap, so an absolutely-positioned layer
+     would be sized to the whole document and its blobs would drift mostly
+     out of view on any page taller than one screen. `fixed` pins it to the
+     viewport instead, so it stays visible at every scroll position. Safe for
+     the landing screen too -- that shell is already `fixed inset-0` itself,
+     so nothing there ever scrolls underneath it in the first place. */
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ambient-bg__blob {
+  position: absolute;
+  border-radius: 9999px;
+  background: #096151;
+  filter: blur(90px);
+}
+
+.ambient-bg__blob--1 {
+  top: -12%;
+  left: -8%;
+  width: 46vw;
+  height: 46vw;
+  opacity: 0.16;
+}
+
+.ambient-bg__blob--2 {
+  bottom: -18%;
+  right: -6%;
+  width: 40vw;
+  height: 40vw;
+  opacity: 0.12;
+}
+
+.ambient-bg__blob--3 {
+  top: 38%;
+  left: 48%;
+  width: 30vw;
+  height: 30vw;
+  opacity: 0.09;
+}
+
+/* Very slow, ambient drift -- 26-38s loops, well past anything a user would
+   consciously track. Guarded the same way `.story-hero`'s own ambient loop
+   is: applied unconditionally here, then explicitly cancelled below under
+   `prefers-reduced-motion: reduce`, so motion-sensitive users get the exact
+   same blobs frozen at their resting position instead of a jump-cut. */
+.ambient-bg__blob--1 {
+  animation: ambientDrift1 34s var(--ease-soft) infinite alternate;
+}
+
+.ambient-bg__blob--2 {
+  animation: ambientDrift2 40s var(--ease-soft) infinite alternate;
+}
+
+.ambient-bg__blob--3 {
+  animation: ambientDrift3 27s var(--ease-soft) infinite alternate;
+}
+
+@keyframes ambientDrift1 {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4%, 5%, 0) scale(1.08);
+  }
+}
+
+@keyframes ambientDrift2 {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(-5%, -4%, 0) scale(1.05);
+  }
+}
+
+@keyframes ambientDrift3 {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(-4%, 4%, 0) scale(0.94);
+  }
+}
+
 /* --- Reduced motion ------------------------------------------------------- */
 /* Everything above collapses. Vestibular disorders make parallax and travel
    genuinely unpleasant, and a dashboard is not the place to insist on it —
@@ -1423,7 +2143,59 @@ html {
   .u-press:hover,
   .u-press:active,
   .u-icon:hover,
-  .group:hover .u-icon {
+  .group:hover .u-icon,
+  .u-icon-host:hover:not(:disabled) svg,
+  .story-block:hover,
+  .story-block:active,
+  .story-block--sec:hover,
+  .story-stat:hover,
+  .story-tile:hover,
+  .story-event:hover .story-event__img,
+  .story-title.is-live:hover,
+  .kpi-tile:hover:not(:disabled),
+  .kpi-tile:active:not(:disabled),
+  .insight-card:hover,
+  .insight-card:active,
+  .insight-card:hover img {
     transform: none;
+  }
+
+  /* The defocus on entrance is the one thing the blanket rule above does not
+     reach: zeroing the duration still leaves `filter` at its `from` value for
+     an instant, and on a slow paint that lands as a visible smear. */
+  .animate-fade-in-up,
+  .view-enter,
+  .stagger > *,
+  .u-stagger > *,
+  .story-block,
+  .story-inner,
+  .modal-panel {
+    filter: none !important;
+  }
+
+  /* Ambient loops have no interaction to justify them. */
+  .story-hero::after,
+  .whats-next-btn,
+  .ambient-bg__blob--1,
+  .ambient-bg__blob--2,
+  .ambient-bg__blob--3 {
+    animation: none !important;
+  }
+
+  .u-sheen::after,
+  .story-tile__sheen {
+    display: none;
+  }
+
+  /* Belt-and-braces: useFlipReorder itself already skips the invert/play
+     sequence under reduced motion, so this class is never applied in that
+     case — but if it somehow were, it should not animate. */
+  .flip-settle {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .story-spark {
+    stroke-dashoffset: 0;
   }
 }

@@ -12,11 +12,13 @@ import {
 import type { ContentLayerId } from "./LayerPanel";
 import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
+import { CONTENT_HEIGHT_CLASS } from "../layout";
 
 // Explicit viewport-relative height: the ancestor chain uses `min-h-screen`
 // (auto height), so a `flex-1` child has no definite height to resolve against
-// and can collapse — which leaves MapLibre with a 0px-tall canvas.
-const MAP_HEIGHT = "h-[calc(100vh_-_150px)] min-h-[400px]";
+// and can collapse — which leaves MapLibre with a 0px-tall canvas. The calc
+// itself is shared with StoryView/AreasView — see layout.ts.
+const MAP_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
 
 export default function MapsView({
   area,

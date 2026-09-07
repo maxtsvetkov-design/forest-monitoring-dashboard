@@ -34,6 +34,26 @@ This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin con
 
 `src/main.tsx` imports `src/index.css`, so global font wiring belongs in `src/index.css`. Keep CSS `@import` statements first, then add any `@font-face` rules and font-family defaults there.
 
+## Further documentation
+
+The structure section above describes the Vite scaffold. The app built on top of
+it has its own conventions, documented in `docs/`. Read the relevant one before
+making non-trivial changes:
+
+- `docs/ARCHITECTURE.md` — navigation model (no router, and **two separate tab
+  strips** — the landing screen's and the workspace's), the independent time
+  scopes, the data pipeline, the shared content-height constant, the landing
+  screen's z-index ladder, and how the resize affordances share one hook.
+- `docs/DESIGN-SYSTEM.md` — motion tokens, the Tailwind cascade-layer rule
+  (unlayered CSS beats utility classes — this surprises people), card
+  primitives, chart conventions, reduced-motion handling.
+- `docs/FIGMA-MAP.md` — Figma file key, node IDs mapped to components, resolved
+  design tokens, and which screens are still provisional.
+- `docs/3D-CANOPY.md` — the three.js forest: how ~2,300 tree positions are
+  extracted from the generative SVG, the three coordinate spaces they pass
+  through, and the rules for rendering into MapLibre's own GL context. Read this
+  before touching `src/map/`.
+
 ## Code quality
 
 - Use double quotes for strings containing apostrophes (`"We're here to help"`), or escape them in single-quoted strings. An unescaped apostrophe in a single-quoted string breaks the build.

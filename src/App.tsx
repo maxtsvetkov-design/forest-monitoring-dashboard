@@ -23,17 +23,17 @@ import KpiCard from "./components/KpiCard";
 import LandingScreen from "./components/LandingScreen";
 import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./components/LayerPanel";
 import MapsView from "./components/MapsView";
+import StoryView from "./components/StoryView";
 import MetaStatsCard from "./components/MetaStatsCard";
 import NdviCard from "./components/NdviCard";
 import OverallHealthCard from "./components/OverallHealthCard";
 import TreeHistoryModal, { TreeMiniPopover } from "./components/TreeHistoryModal";
 import RecentEventsList from "./components/RecentEventsList";
-import TimelineRangeSlider from "./components/TimelineRangeSlider";
 import ToolbarBtn from "./components/ToolbarBtn";
 import TreeSurveyCard from "./components/TreeSurveyCard";
 import { areas } from "./data/areas";
 import { eventsInRange, generateEvents, type TreeEvent } from "./data/events";
-import { areaOverlays, getTimelapseImages, PROMO_PLANNED_CAPTURES } from "./data/overlays";
+import { areaOverlays } from "./data/overlays";
 import { healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
 import { useDateRange } from "./hooks/useDateRange";
@@ -145,7 +145,10 @@ export default function App() {
   const [visible, setVisible] = useState(false);
   // Whether the timeline is currently stepping through months on its own —
   // read by MapCanvas to pulse the canopy-health gradient while playback runs.
-  const [isTimelinePlaying, setIsTimelinePlaying] = useState(false);
+  // Always false now: the master timeline scrubber that could set this true
+  // is hidden (see the calendar-row comment further down), but the prop
+  // stays wired in case a future control drives it again.
+  const [isTimelinePlaying] = useState(false);
   // Owned here, not inside MapCanvas, so a layer hidden or a basemap picked
   // on one tab's map (Maps vs. Areas) stays that way on the other — each tab
   // mounts its own MapCanvas instance, so state living inside it would reset
@@ -185,7 +188,7 @@ export default function App() {
   // don't sync: moving between tabs never drags one scope's selection into the
   // other. `calendar` feeds the KPIs, charts and events; `range` is the map
   // master that the per-layer strips detach from.
-  const calendar = useDateRange(activeArea.snapshots);
+  const calendar = useDateRange(activeArea.snapshots, "latest");
   const { months, range, setRange } = useDateRange(activeArea.snapshots);
   const aggregated = calendar.aggregated;
   const layerTime = useLayerTime(activeArea.id, range);
@@ -195,20 +198,6 @@ export default function App() {
   // Always the full 12-month timeline, independent of the range slider --
   // see healthScoreSeries's comment.
   const healthScoreTrend = useMemo(() => healthScoreSeries(activeArea.snapshots), [activeArea]);
-  // Total surveyed population per month, for the small trend graph drawn
-  // over the timeline track — same species-count sum the donut charts and
-  // KPI cards read, not a separate figure.
-  const treeCountSeries = useMemo(
-    () =>
-      // Every species, summed — naming them individually was only ever
-      // possible while there were three of them.
-      activeArea.snapshots.map((s) => Object.values(s.speciesCounts).reduce((a, b) => a + b, 0)),
-    [activeArea],
-  );
-  // At-risk health breakdown per month, same order as `months` — read by the
-  // timeline's hover preview so it shows "how many were struggling that
-  // month," not just a date and a photo.
-  const healthCountsSeries = useMemo(() => activeArea.snapshots.map((s) => s.healthCounts), [activeArea]);
   const areaEvents = useMemo(
     () => generateEvents(areaOverlays[activeArea.id], activeArea.snapshots, activeArea.id),
     [activeArea],
@@ -223,7 +212,7 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
 
-  const tabs = ["Insights", "Areas", "Maps", "Assets"];
+  const tabs = ["Insights", "Areas", "Maps", "Assets", "Story"];
 
   // The active-tab pill is one element that slides between tabs rather than the
   // colour jumping from one button to another. Its geometry has to be measured
@@ -345,11 +334,18 @@ export default function App() {
   if (showLanding) {
     return (
       <LandingScreen
-        onEnter={(areaId) => {
+        onEnter={(areaId, opts) => {
           // Picking an area on the overview map opens the dashboard already
           // scoped to it, rather than dropping the user on whatever area
           // happened to be selected before.
           if (areaId) setActiveAreaId(areaId);
+          // A widget on the landing screen's own Dashboard tab can hand over a
+          // filter and a destination — the same drill-down contract the
+          // in-app Insights widgets use, just crossing the landing gate on
+          // the way. Both are optional: a plain onEnter() still lands on
+          // whichever tab was last open, as it always did.
+          if (opts?.filter) setPendingFilter(opts.filter);
+          if (opts?.tab) setActiveTab(opts.tab);
           setShowLanding(false);
         }}
       />
@@ -367,9 +363,19 @@ export default function App() {
       // ever asked it to stick — the timeline header just scrolled away with
       // the page. There's no horizontal overflow here to clip in the first
       // place (measured: scrollWidth === clientWidth with or without it).
-      className="flex w-full min-h-screen bg-[#ebece7]"
+      className="relative flex w-full min-h-screen bg-[#ebece7]"
       style={{ opacity: visible ? 1 : 0, transition: "opacity 0.3s ease-out" }}
     >
+      {/* Ambient brand-green blobs, sitting behind every card/panel below
+          (z-index: 0 vs. the sidebar/header's z-10+ and the normal content
+          flow above it) -- see `.ambient-bg` in index.css for the drift
+          keyframes and the reduced-motion guard. */}
+      <div className="ambient-bg" aria-hidden="true">
+        <div className="ambient-bg__blob ambient-bg__blob--1" />
+        <div className="ambient-bg__blob ambient-bg__blob--2" />
+        <div className="ambient-bg__blob ambient-bg__blob--3" />
+      </div>
+
       {/* Reserves the space the fixed sidebar below no longer occupies in flow */}
       <div className="w-[48px] shrink-0" aria-hidden="true" />
 
@@ -473,39 +479,15 @@ export default function App() {
             </div>
           </div>
 
-          {/* Timeline row. Used to also hold the Filters/Customize/Export
-              button group on the left — moved into the top header's own
-              right edge instead, so this row is just the timeline. */}
-          <div className="flex items-center px-2 py-2 gap-3 animate-fade-in-up" style={{ animationDelay: "190ms" }}>
-            {activeTab === "Maps" || activeTab === "Areas" ? (
-              <>
-                <div className="flex-1 min-w-0">
-                  <TimelineRangeSlider
-                    months={months}
-                    range={range}
-                    onChange={setRange}
-                    previewImages={getTimelapseImages(activeArea.id)}
-                    plannedCaptures={PROMO_PLANNED_CAPTURES}
-                    onPlayingChange={setIsTimelinePlaying}
-                    treeCountSeries={treeCountSeries}
-                    healthCountsSeries={healthCountsSeries}
-                  />
-                </div>
-                {layerTime.detachedIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={layerTime.resyncAll}
-                    title="Put every layer back on the master timeline"
-                    className="u-press shrink-0 self-end mb-[6px] px-[10px] h-[28px] rounded-[10px] border border-[#096151] text-[12px] text-[#096151] font-['Outfit',sans-serif] hover:bg-[#ebece7] cursor-pointer whitespace-nowrap"
-                  >
-                    {layerTime.detachedIds.length} detached ↺
-                  </button>
-                )}
-              </>
-            ) : (
+          {/* Calendar row — Insights/Assets only. Maps/Areas/Story used to show
+              the big master timeline scrubber here instead; each layer's own
+              coverage strip in the layer panel now carries that job, so the
+              row just doesn't render for those tabs rather than sitting empty. */}
+          {activeTab !== "Maps" && activeTab !== "Areas" && activeTab !== "Story" && (
+            <div className="flex items-center px-2 py-2 gap-3 animate-fade-in-up" style={{ animationDelay: "190ms" }}>
               <CalendarRangePicker months={calendar.months} range={calendar.range} onChange={calendar.setRange} />
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Content */}
@@ -549,6 +531,21 @@ export default function App() {
               onBasemapIndexChange={setBasemapIndex}
             />
           </div>
+        ) : activeTab === "Story" ? (
+          <div className="view-enter-soft">
+            <StoryView
+              area={activeArea}
+              range={range}
+              layerTime={layerTime}
+              isTimelinePlaying={isTimelinePlaying}
+              layerVisibility={layerVisibility}
+              onLayerVisibilityChange={setLayerVisibility}
+              layerOpacity={layerOpacity}
+              onLayerOpacityChange={setLayerOpacity}
+              basemapIndex={basemapIndex}
+              onBasemapIndexChange={setBasemapIndex}
+            />
+          </div>
         ) : activeTab === "Assets" ? (
           <AssetsView area={activeArea} range={calendar.range} />
         ) : (
@@ -557,7 +554,7 @@ export default function App() {
             <div className="flex-1 min-w-0 flex flex-col gap-0">
               {/* KPI row */}
               <div className="py-[16px]">
-                <div className="flex gap-[12px] flex-wrap lg:flex-nowrap">
+                <div className="flex gap-[12px] flex-wrap">
                   <OverallHealthCard
                     score={aggregated.ecosystemCondition.score}
                     change={aggregated.ecosystemCondition.change}

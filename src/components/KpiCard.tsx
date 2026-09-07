@@ -34,7 +34,7 @@ export default function KpiCard({
 }) {
   const Tag = onDrillDown ? "button" : "div";
   return (
-    <div className="flex-1 min-w-0 animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
+    <div className="flex-1 min-w-[152px] animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
       <div className="surface-card surface-card--interactive h-full group">
         {/* `w-full text-left` because a <button> is inline-block and
             centre-aligned by default — without them the card collapses to its
@@ -48,7 +48,7 @@ export default function KpiCard({
             onDrillDown ? "u-press cursor-pointer" : ""
           }`}
         >
-          <p className="text-[12px] font-normal text-[#464650] leading-[18px] font-['Outfit',sans-serif] truncate mb-1">
+          <p className="text-[12px] font-normal text-[#464650] leading-[16px] font-['Outfit',sans-serif] line-clamp-2 mb-1">
             {label}
           </p>
           <div className="flex items-center gap-[4px]">

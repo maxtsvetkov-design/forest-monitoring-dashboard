@@ -229,7 +229,9 @@ export default function TimelineRangeSlider({
           <div className="min-w-0 flex flex-col-reverse gap-[5px]" style={{ flex: `${lastCount} 1 0%` }}>
             <div
               ref={trackRef}
-              className={`tl-track relative select-none touch-none ${dragging ? "tl-track--dragging" : ""}`}
+              className={`tl-track relative select-none touch-none ${dragging ? "tl-track--dragging" : ""} ${
+                playing ? "tl-track--playing" : ""
+              }`}
               style={{ height: TRACK_HEIGHT }}
             >
               <div className="tl-rail" />

@@ -3,16 +3,28 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import type { DateRange } from "../data/aggregate";
-import type { MapOverlay } from "../data/overlays";
+import { plotWidthMeters, pointInQuad, type MapOverlay } from "../data/overlays";
+import { loadCanopies, MAX_CROWN_RADIUS_M, type Canopy } from "../data/canopies";
+import TreeCanopyLayer from "../map/TreeCanopyLayer";
 import { generateTreePins, pinSeverityAt, SEVERITY_COLOR, type PinSeverity, type TreePin } from "../data/treePins";
 import { generateTreeRecords, type TreeRecord } from "../data/trees";
 import type { MonthSnapshot } from "../data/types";
 import { publicUrl } from "../lib/publicUrl";
 import type { LayerTime } from "../hooks/useLayerTime";
-import LayerPanel, { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./LayerPanel";
+import { useFlyControls } from "../hooks/useFlyControls";
+import LayerPanel, {
+  DEFAULT_LAYER_HEIGHT,
+  DEFAULT_SHADOW_MODE,
+  type CanopyShadowMode,
+  DEFAULT_LAYER_OPACITY,
+  DEFAULT_LAYER_VISIBILITY,
+  LAYER_ORDER,
+  type ContentLayerId,
+} from "./LayerPanel";
 import { buildMapFilter, DEFAULT_MAP_CONTRAST, type MapColorMode } from "./mapColorModes";
 import MapToolbar from "./MapToolbar";
 import TreeHistoryModal from "./TreeHistoryModal";
+import TreeTwinCard from "./TreeTwinCard";
 import { CONDITION_KEYS, CONDITION_LABEL, type ConditionKey } from "../data/taxonomy";
 
 // OpenStreetMap data served as vector tiles by OpenFreeMap: free, unlimited,
@@ -50,6 +62,22 @@ const TERRAIN_SOURCE_ID = "terrain-dem";
 // Close enough that an individual tree fills a recognisable part of the frame,
 // while still showing the neighbours it should be compared against.
 const FOCUS_ZOOM = 18;
+
+/** Bounds for the derived inspect zoom. The ceiling is above MapLibre's own
+ * default maxZoom of 22 — a 1 m sapling cannot fill a viewport from 22, and
+ * the twin is modelled geometry rather than tiles, so there is no imagery to
+ * run out of. Raised only while a twin is open, and put back after. */
+const INSPECT_ZOOM_MIN = 18.5;
+const INSPECT_ZOOM_MAX = 23.5;
+/** Share of the free width one tree'''s crown should span. Well under half:
+ * the camera is pitched, so a crown sized to fill the frame horizontally
+ * overshoots it vertically and the top of the tree is cut off. */
+const INSPECT_CROWN_FILL = 0.38;
+const INSPECT_PITCH = 62;
+/** The twin card is docked right over the map. Padding shifts the projected
+ * centre left by that much, so the tree the card describes is not sitting
+ * behind the card describing it. */
+const INSPECT_CARD_GUTTER = 292;
 
 const LOAD_TIMEOUT_MS = 10000;
 
@@ -117,6 +145,11 @@ const DYING_OPACITY = 0.9;
 // blips, live-incident maps), not just a static highlight colour.
 const DYING_GLOW_SOURCE_ID = "area-dying-tree-glow";
 const DYING_GLOW_LAYER_ID = "area-dying-tree-glow-layer";
+
+// The three.js forest. Not a raster layer at all — a MapLibre *custom* layer
+// drawing into the map's own GL context, so it shares the camera and the depth
+// buffer with everything above. See src/map/TreeCanopyLayer.ts.
+const TREES_3D_LAYER_ID = "area-trees-3d";
 const DYING_GLOW_MAX_WIDTH = 700;
 const DYING_GLOW_MIN_OPACITY = 0.3;
 const DYING_GLOW_MAX_OPACITY = 0.85;
@@ -137,14 +170,6 @@ const CANOPY_PULSE_PERIOD_MS = 3200;
 const CANOPY_PULSE_TICK_MS = 120;
 const CANOPY_PULSE_MAX_WIDTH = 640;
 
-// Separation between the generative overlays (both the green trace and the
-// red dying-trees trace, which share this same slider) and the aerial photo,
-// in metres. The apparent lift still costs h·tan(pitch) of ground offset —
-// at pitch 60 a 300 m setting slides the artwork ~520 m, well past the plot's
-// own footprint — so a dramatic setting is expected to visibly drift off the
-// imagery at a steep tilt; that's the trade-off of the wider range, not a bug.
-const GENERATIVE_DEFAULT_HEIGHT_M = 0;
-const GENERATIVE_MAX_HEIGHT_M = 300;
 // The reveal window: Oct '25 (index 0) through May '26 (index 7) — the
 // recovery half of the 12-month timeline, before the final-quarter dieback
 // window the dying-trees overlay owns instead. Opacity ramps linearly across
@@ -170,10 +195,10 @@ function generativeRevealOpacity(range: DateRange | undefined): number {
  * order comes out right regardless of which one wins the race.
  */
 /**
- * Shifts a ground quad by the same "Overlay height" slider's apparent lift
- * the generative layer has always used (d = h·tan(pitch) along the camera's
- * own bearing) — shared so the dying-trees trace can be lifted in lockstep
- * with it instead of duplicating the derivation.
+ * Shifts a ground quad by the same apparent-lift derivation the generative
+ * layer has always used (d = h·tan(pitch) along the camera's own bearing) —
+ * shared so the dying-trees trace computes its own (independent) lift the
+ * same way, rather than duplicating the derivation.
  */
 function liftCoordinates(
   baseCoordinates: MapOverlay["coordinates"],
@@ -209,6 +234,19 @@ function ensureGenerativeOnTop(map: maplibregl.Map) {
   }
   if (hasAerial && map.getLayer(DYING_LAYER_ID)) {
     map.moveLayer(DYING_LAYER_ID);
+  }
+  // The 3D trees go up last, above all of the above. This function is called
+  // every time any raster layer is re-added (an area switch, a timelapse
+  // bucket swap while the timeline is scrubbed, a basemap change) -- each of
+  // those calls `moveLayer` on the rasters with no second argument, which
+  // always lands at the very top of the *whole* style, custom layers
+  // included. Without this, the 3D layer -- added once, whenever its crown
+  // table happens to finish loading -- would end up silently buried under a
+  // freshly re-topped canopy mask or generative-art raster the next time the
+  // user so much as drags the timeline, and the forest would vanish with no
+  // error anywhere.
+  if (hasAerial && map.getLayer(TREES_3D_LAYER_ID)) {
+    map.moveLayer(TREES_3D_LAYER_ID);
   }
 }
 
@@ -489,6 +527,8 @@ export default function MapCanvas({
   isTimelinePlaying,
   visibleTreeIds,
   focusTree,
+  inspectTree,
+  onExitInspect,
   onFocusArrived,
   onFocusMove,
   onPinClick,
@@ -550,6 +590,16 @@ export default function MapCanvas({
    * it selecting one would just zoom into anonymous imagery.
    */
   focusTree?: { id: string; lng: number; lat: number } | null;
+  /**
+   * A tree whose digital twin is open. Isolates the twin layer, drops the
+   * camera to eye level beside that tree and shows its full record — a
+   * different act from `focusTree`, which only flies over the plot and rings
+   * the spot. Kept as a separate prop for exactly that reason: one is "show me
+   * where", the other is "put me there".
+   */
+  inspectTree?: TreeRecord | null;
+  /** Closes the twin — the card's own button, or Escape. */
+  onExitInspect?: () => void;
   /** Fires once the fly-to for `focusTree` settles, with that tree's current
    * viewport position — lets a caller (App.tsx) open something (a floating
    * popover) anchored to the pin exactly when the camera arrives, rather than
@@ -608,6 +658,22 @@ export default function MapCanvas({
   // active (buildMapFilter), so it works the same way in every mode.
   const [colorMode, setColorMode] = useState<MapColorMode>("normal");
   const [mapContrast, setMapContrast] = useState(DEFAULT_MAP_CONTRAST);
+  // "Isolate": one content layer on an empty canvas — every other layer off
+  // AND the basemap blacked out, so the 3D canopy can be read as geometry
+  // rather than as a thing sitting on a photo.
+  //
+  // Deliberately a view override rather than a mutation of `layerVisibility`:
+  // the panel keeps showing what the user actually chose, and leaving
+  // isolation restores every layer exactly as it was without having to
+  // remember a pre-isolation snapshot.
+  const [isolatedId, setIsolatedId] = useState<ContentLayerId | null>(null);
+  const effectiveVisibility = useMemo(
+    () =>
+      isolatedId
+        ? (Object.fromEntries(LAYER_ORDER.map((id) => [id, id === isolatedId])) as Record<ContentLayerId, boolean>)
+        : layerVisibility,
+    [isolatedId, layerVisibility],
+  );
   const is3DRef = useRef(is3D);
   is3DRef.current = is3D;
   const [error, setError] = useState<string | null>(null);
@@ -660,17 +726,27 @@ export default function MapCanvas({
   // a stale value.
   const generativeRangeRef = useRef(generativeRange ?? range);
   generativeRangeRef.current = generativeRange ?? range;
-  // Separation between the generative overlay and the aerial photo, in metres.
-  // Mirrored into a ref because the custom layer's render loop reads it every
-  // frame outside React's render cycle.
-  const [generativeHeight, setGenerativeHeight] = useState(GENERATIVE_DEFAULT_HEIGHT_M);
-  const generativeHeightRef = useRef(generativeHeight);
-  generativeHeightRef.current = generativeHeight;
+  // Separation from the aerial photo, in metres, per layer — see
+  // DEFAULT_LAYER_HEIGHT. Mirrored into a ref because the custom layer's
+  // render loop and the position-update callbacks below read it every frame,
+  // outside React's render cycle.
+  const [layerHeight, setLayerHeight] = useState(DEFAULT_LAYER_HEIGHT);
+  const layerHeightRef = useRef(layerHeight);
+  layerHeightRef.current = layerHeight;
+  // Ground contact under the 3D canopy. Not part of the per-layer records
+  // above: it is the only layer with geometry that can cast anything, so a
+  // record would be five entries nothing ever reads. Held in a ref as well
+  // because the layer is constructed inside an effect that must not re-run
+  // (and refetch three.js) just because the mode changed.
+  const [shadowMode, setShadowMode] = useState<CanopyShadowMode>(DEFAULT_SHADOW_MODE);
+  const shadowModeRef = useRef(shadowMode);
+  shadowModeRef.current = shadowMode;
   // Lets the height-change effect re-apply the offset immediately without
   // re-running the layer-creation effect (which would refetch the image).
   const generativeUpdatePositionRef = useRef<(() => void) | null>(null);
-  // Same idea, for the dying-trees trace -- it shares the "Overlay height"
-  // slider (generativeHeightRef) rather than owning a second one.
+  // Same idea, for the dying-trees trace — it used to share the generative
+  // layer's own height (both "lifted together"); each now reads its own entry
+  // out of layerHeightRef instead.
   const dyingUpdatePositionRef = useRef<(() => void) | null>(null);
 
   // The gradient-recoloured canopy mask -- built once (module-cached) and
@@ -1186,7 +1262,7 @@ export default function MapCanvas({
       function updatePosition() {
         const m2 = mapRef.current;
         if (!m2 || !m2.getLayer(GENERATIVE_LAYER_ID)) return;
-        const ground = generativeHeightRef.current * Math.tan((m2.getPitch() * Math.PI) / 180);
+        const ground = layerHeightRef.current.generative * Math.tan((m2.getPitch() * Math.PI) / 180);
         const bearingRad = (m2.getBearing() * Math.PI) / 180;
         const dLat = (ground * Math.cos(bearingRad)) / metresPerDegLat;
         const dLng = (ground * Math.sin(bearingRad)) / metresPerDegLng;
@@ -1266,15 +1342,16 @@ export default function MapCanvas({
       });
       ensureGenerativeOnTop(m);
 
-      // Lifted in lockstep with the generative trace -- same slider
-      // (generativeHeightRef), same derivation (liftCoordinates) -- moving
-      // both the crisp trace and its glow halo's source together so the halo
-      // never separates from the shapes it's supposed to be glowing around.
+      // Its own height, independent of the generative trace's -- same
+      // derivation (liftCoordinates) applied to its own entry in
+      // layerHeightRef, moving both the crisp trace and its glow halo's
+      // source together so the halo never separates from the shapes it's
+      // supposed to be glowing around.
       const baseCoordinates = dyingTreeOverlay.coordinates;
       function updatePosition() {
         const m2 = mapRef.current;
         if (!m2) return;
-        const lifted = liftCoordinates(baseCoordinates, m2, generativeHeightRef.current);
+        const lifted = liftCoordinates(baseCoordinates, m2, layerHeightRef.current.dyingTrees);
         const source = m2.getSource(DYING_SOURCE_ID);
         if (source && "setCoordinates" in source) (source as maplibregl.ImageSource).setCoordinates(lifted);
         const glowSource = m2.getSource(DYING_GLOW_SOURCE_ID);
@@ -1306,7 +1383,7 @@ export default function MapCanvas({
   // "this area needs attention right now," not a response to scrubbing dates.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !loaded || !dyingTreeOverlay || !layerVisibility.dyingTrees) return;
+    if (!map || !loaded || !dyingTreeOverlay || !effectiveVisibility.dyingTrees) return;
 
     let raf = 0;
     let stopped = false;
@@ -1333,7 +1410,67 @@ export default function MapCanvas({
       stopped = true;
       cancelAnimationFrame(raf);
     };
-  }, [dyingTreeOverlay, loaded, layerVisibility.dyingTrees, styleVersion]);
+  }, [dyingTreeOverlay, loaded, effectiveVisibility.dyingTrees, styleVersion]);
+
+  // 3D canopy volume: a modelled tree standing in every crown the generative
+  // artwork traces. The crown table loads wherever that artwork exists, not
+  // only while the layer is switched on — the panel hides the chip until the
+  // table has arrived, so gating the fetch on visibility would strand a user
+  // who turned the layer off: no chip, and therefore no way back on.
+  //
+  // The genuinely expensive dependency, three.js, stays lazy regardless: it is
+  // dynamically imported by TreeCanopyLayer itself, on `onAdd`.
+  const [canopies, setCanopies] = useState<Canopy[]>([]);
+  useEffect(() => {
+    if (!generativeOverlay || canopies.length > 0) return;
+    let cancelled = false;
+    loadCanopies().then((table) => {
+      if (!cancelled) setCanopies(table);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [generativeOverlay, canopies.length]);
+
+  const treeLayerRef = useRef<TreeCanopyLayer | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    if (!generativeOverlay || !effectiveVisibility.trees3d || canopies.length === 0) return;
+
+    // Added last, so it draws over the rasters — a custom layer has no
+    // `moveLayer` counterpart in ensureGenerativeOnTop, and depending on
+    // `styleVersion` means it is re-added after those rasters on every
+    // basemap swap (setStyle discards custom layers along with everything
+    // else) rather than surviving underneath them.
+    const layer = new TreeCanopyLayer({
+      id: TREES_3D_LAYER_ID,
+      coordinates: generativeOverlay.coordinates,
+      canopies,
+      widthMeters: plotWidthMeters(areaId),
+      opacity: layerOpacityRef.current.trees3d,
+      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+      shadowMode: shadowModeRef.current,
+    });
+    map.addLayer(layer);
+    treeLayerRef.current = layer;
+
+    return () => {
+      treeLayerRef.current = null;
+      const m = mapRef.current;
+      // Guarded: a style swap may already have discarded it, and removing a
+      // layer that isn't there throws rather than no-opping.
+      if (m && m.getLayer(TREES_3D_LAYER_ID)) m.removeLayer(TREES_3D_LAYER_ID);
+    };
+  }, [generativeOverlay, loaded, effectiveVisibility.trees3d, canopies, areaId, styleVersion]);
+
+  useEffect(() => {
+    treeLayerRef.current?.setOpacity(layerOpacity.trees3d);
+  }, [layerOpacity.trees3d]);
+
+  useEffect(() => {
+    treeLayerRef.current?.setShadowMode(shadowMode);
+  }, [shadowMode]);
 
   // Re-applies the height offset immediately when the slider moves, rather
   // than waiting for the next camera `move` event to pick up the new value —
@@ -1342,7 +1479,7 @@ export default function MapCanvas({
   useEffect(() => {
     generativeUpdatePositionRef.current?.();
     dyingUpdatePositionRef.current?.();
-  }, [generativeHeight]);
+  }, [layerHeight.generative, layerHeight.dyingTrees]);
 
   // Reveals the artwork as the timeline's end handle moves through the
   // recovery window (Oct '25 → May '26) — see generativeRevealOpacity. Was a
@@ -1405,36 +1542,247 @@ export default function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
-    const visibility = layerVisibility.aerial ? "visible" : "none";
+    const visibility = effectiveVisibility.aerial ? "visible" : "none";
     if (map.getLayer(OVERLAY_LAYER_ID_A)) map.setLayoutProperty(OVERLAY_LAYER_ID_A, "visibility", visibility);
     if (map.getLayer(OVERLAY_LAYER_ID_B)) map.setLayoutProperty(OVERLAY_LAYER_ID_B, "visibility", visibility);
-  }, [layerVisibility.aerial, loaded, styleVersion, overlayReady]);
+  }, [effectiveVisibility.aerial, loaded, styleVersion, overlayReady]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded || !map.getLayer(CANOPY_LAYER_ID)) return;
-    map.setLayoutProperty(CANOPY_LAYER_ID, "visibility", layerVisibility.canopy ? "visible" : "none");
-  }, [layerVisibility.canopy, loaded, styleVersion, canopyImageUrl]);
+    map.setLayoutProperty(CANOPY_LAYER_ID, "visibility", effectiveVisibility.canopy ? "visible" : "none");
+  }, [effectiveVisibility.canopy, loaded, styleVersion, canopyImageUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded || !map.getLayer(GENERATIVE_LAYER_ID)) return;
-    map.setLayoutProperty(GENERATIVE_LAYER_ID, "visibility", layerVisibility.generative ? "visible" : "none");
-  }, [layerVisibility.generative, loaded, styleVersion, generativeOverlay]);
+    map.setLayoutProperty(GENERATIVE_LAYER_ID, "visibility", effectiveVisibility.generative ? "visible" : "none");
+  }, [effectiveVisibility.generative, loaded, styleVersion, generativeOverlay]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
-    const visibility = layerVisibility.dyingTrees ? "visible" : "none";
+    const visibility = effectiveVisibility.dyingTrees ? "visible" : "none";
     if (map.getLayer(DYING_LAYER_ID)) map.setLayoutProperty(DYING_LAYER_ID, "visibility", visibility);
     if (map.getLayer(DYING_GLOW_LAYER_ID)) map.setLayoutProperty(DYING_GLOW_LAYER_ID, "visibility", visibility);
-  }, [layerVisibility.dyingTrees, loaded, styleVersion, dyingTreeOverlay]);
+  }, [effectiveVisibility.dyingTrees, loaded, styleVersion, dyingTreeOverlay]);
 
   // Pins are DOM markers, not a style layer — hidden via a CSS class on the
   // map container (see index.css's .map--pins-off) rather than setLayoutProperty.
   useEffect(() => {
-    containerRef.current?.classList.toggle("map--pins-off", !layerVisibility.pins);
-  }, [layerVisibility.pins]);
+    containerRef.current?.classList.toggle("map--pins-off", !effectiveVisibility.pins);
+  }, [effectiveVisibility.pins]);
+
+  // Isolate mode's basemap blackout. There is no single "basemap" layer to
+  // switch off — Liberty alone ships dozens — so every style layer that isn't
+  // one of this app's own gets hidden individually, remembering what its
+  // visibility was first. Restoring from that record rather than force-setting
+  // "visible" matters: a style is free to ship layers already switched off,
+  // and un-isolating must not turn those on.
+  //
+  // Keyed on styleVersion as well, so a basemap picked *while* isolated comes
+  // back blacked out instead of reappearing under the isolated layer.
+  const basemapVisibilityRef = useRef(new Map<string, "visible" | "none" | undefined>());
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    let cancelled = false;
+
+    function apply() {
+      const m = mapRef.current;
+      if (!m || cancelled) return;
+      const ours = new Set<string>([
+        OVERLAY_LAYER_ID_A,
+        OVERLAY_LAYER_ID_B,
+        CANOPY_LAYER_ID,
+        GENERATIVE_LAYER_ID,
+        DYING_LAYER_ID,
+        DYING_GLOW_LAYER_ID,
+        TREES_3D_LAYER_ID,
+      ]);
+
+      if (isolatedId) {
+        const previous = new Map<string, "visible" | "none" | undefined>();
+        // `getLayersOrder()` rather than `getStyle().layers`: ids are all this
+        // needs, and getStyle() serializes the entire style (Liberty's is
+        // large) on every toggle — with the 3D canopy's custom layer sitting
+        // in that list as a special case it has no reason to touch.
+        for (const layerId of m.getLayersOrder()) {
+          if (ours.has(layerId)) continue;
+          // `visibility` can in principle be an expression; neither basemap
+          // here uses one, and the setter's own typings only take the literal
+          // forms — so anything that isn't an explicit "none" is restored as
+          // the plain default rather than round-tripped.
+          const was = m.getLayoutProperty(layerId, "visibility");
+          previous.set(layerId, was === "none" ? "none" : "visible");
+          m.setLayoutProperty(layerId, "visibility", "none");
+        }
+        basemapVisibilityRef.current = previous;
+        return;
+      }
+
+      for (const [id, visibility] of basemapVisibilityRef.current) {
+        // A style swap while isolated leaves ids here that the new style has
+        // never heard of; setLayoutProperty on a missing layer throws.
+        if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", visibility ?? "visible");
+      }
+      basemapVisibilityRef.current = new Map();
+    }
+
+    // Deferring on `styledata`, NOT on `idle`: the 3D canopy layer calls
+    // `triggerRepaint` every frame it animates, so a map showing it may never
+    // go idle at all — an `idle` deferral there is a blackout that never
+    // happens. `styledata` fires as soon as the style itself is usable, which
+    // is the only thing this actually waits for.
+    const deferred = !map.isStyleLoaded();
+    if (deferred) map.once("styledata", apply);
+    else apply();
+
+    return () => {
+      cancelled = true;
+      if (deferred) map.off("styledata", apply);
+    };
+  }, [isolatedId, loaded, styleVersion]);
+
+  // The canvas is transparent wherever no style layer paints, so the void an
+  // isolated layer floats in is this class's background (see .map--isolated).
+  useEffect(() => {
+    containerRef.current?.classList.toggle("map--isolated", isolatedId !== null);
+  }, [isolatedId]);
+
+  // Keyboard flight, but only with the 3D canopy isolated: that is the one
+  // layer with volume to move through, and the one view where the basemap
+  // being gone means there is nothing else for WASD to be mistaken for.
+  const flying = isolatedId === "trees3d";
+  useFlyControls(mapRef, flying);
+
+  /**
+   * Stands the camera beside the modelled crown nearest a point, framed so
+   * that one tree fills the shot.
+   *
+   * Two callers want exactly this: opening a tree's twin from the table, and
+   * focusing the twin layer from its own chip. They differ only in where they
+   * aim, so they share the flight rather than each carrying its own zoom and
+   * pitch to drift apart.
+   *
+   * The snap matters because the twin's geometry comes from the generative
+   * artwork's traced canopies while a TreeRecord's position comes from the
+   * population table — two independent derivations of the same plot. Flying to
+   * the record's own coordinates lands *near* its tree rather than at it, and
+   * a twin framing the gap between two trees is not a twin.
+   */
+  function flyToNearestCrown(near: [number, number], fallbackRadiusM: number) {
+    const map = mapRef.current;
+    if (!map) return;
+
+    let center = near;
+    let crownRadiusM = fallbackRadiusM;
+    if (generativeOverlay && canopies.length > 0) {
+      let best = Infinity;
+      for (const canopy of canopies) {
+        const [lng, lat] = pointInQuad(generativeOverlay.coordinates, canopy.u, canopy.v);
+        // Squared degrees, and only to rank: converting each candidate to
+        // metres would be 2,300 trig calls to pick the same winner.
+        const dLng = (lng - near[0]) * Math.cos((near[1] * Math.PI) / 180);
+        const dLat = lat - near[1];
+        const distance = dLng * dLng + dLat * dLat;
+        if (distance < best) {
+          best = distance;
+          center = [lng, lat];
+          crownRadiusM = Math.min(canopy.r * plotWidthMeters(areaId), MAX_CROWN_RADIUS_M);
+        }
+      }
+    }
+
+    // Zoom derived from that crown rather than fixed: crowns here run from
+    // about a metre across to twenty-eight, and one zoom that frames a mature
+    // ghaf leaves a sapling as a speck.
+    const container = map.getContainer();
+    const gutter =
+      inspectTree && container.clientWidth > INSPECT_CARD_GUTTER * 2 ? INSPECT_CARD_GUTTER : 0;
+    const freeWidth = Math.max(160, container.clientWidth - gutter);
+    const crownWidthM = Math.max(1.5, crownRadiusM * 2);
+    const metresPerPixel = crownWidthM / (freeWidth * INSPECT_CROWN_FILL);
+    const latRad = (center[1] * Math.PI) / 180;
+    const zoom = Math.min(
+      INSPECT_ZOOM_MAX,
+      Math.max(INSPECT_ZOOM_MIN, Math.log2((40075016.686 * Math.cos(latRad)) / metresPerPixel) - 8),
+    );
+    map.setMaxZoom(INSPECT_ZOOM_MAX);
+    // Terrain off for the duration.
+    //
+    // MapLibre will not let a camera descend below the terrain surface, and it
+    // enforces that by pulling the zoom back. Asking for zoom 21.6 at pitch 62
+    // over a DEM that puts this plot a few hundred metres up therefore landed
+    // at zoom 15.6 — the whole plot, from altitude, with no error and nothing
+    // in the way of a `fitBounds` to blame. The trees carry their own
+    // elevations relative to the scene origin, so a flat ground under them
+    // looks the same from here.
+    map.setTerrain(null);
+
+    // Padding only when the twin card has room to dock; on a pane narrower
+    // than roughly two card widths it covers the map whatever the camera does,
+    // and padding would just push the tree off the other edge.
+    //
+    // Attached conditionally rather than passed as `padding: undefined`, which
+    // is not the same thing: MapLibre reads `padding.top` unguarded and throws
+    // `Cannot read properties of undefined`. Inside a click handler that
+    // exception goes nowhere visible — the camera simply never moved, with no
+    // error in the console and every other camera call innocent.
+    const camera: maplibregl.FlyToOptions = {
+      center,
+      zoom,
+      pitch: INSPECT_PITCH,
+      duration: 1800,
+      essential: true,
+    };
+    if (gutter) camera.padding = { top: 0, bottom: 0, left: 0, right: gutter };
+    map.flyTo(camera);
+  }
+
+  // Opening a twin isolates the layer and stands the camera next to that one
+  // tree. Isolation is *entered* here rather than asked of the caller because
+  // it is not a separate choice — a twin with the aerial photo still draped
+  // over it is not a twin, it is the plot with a card on top.
+  useEffect(() => {
+    if (!inspectTree) return;
+    setIsolatedId("trees3d");
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    flyToNearestCrown([inspectTree.lng, inspectTree.lat], inspectTree.crownRadius);
+  }, [inspectTree, loaded, generativeOverlay, canopies, areaId]);
+
+  // Leaving isolation by any route (Escape, the panel's "Show all") also
+  // closes the twin: the card describes a tree the user can no longer see.
+  //
+  // Armed only once isolation has actually taken. Without the latch this fired
+  // on the very render that opened a twin — `inspectTree` is already set while
+  // `isolatedId` is still whatever it was — and closed the twin before it ever
+  // drew. The state and the effect that sets it land on different renders, and
+  // "not isolated yet" and "no longer isolated" look identical from here.
+  const twinIsolatedRef = useRef(false);
+  useEffect(() => {
+    if (!inspectTree) {
+      twinIsolatedRef.current = false;
+      return;
+    }
+    if (isolatedId === "trees3d") {
+      twinIsolatedRef.current = true;
+      return;
+    }
+    if (twinIsolatedRef.current) onExitInspect?.();
+  }, [isolatedId, inspectTree, onExitInspect]);
+
+  // Escape is the way out of a screen that has just gone black — the panel's
+  // own "Show all" button is the other.
+  useEffect(() => {
+    if (!isolatedId) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsolatedId(null);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isolatedId]);
 
   // Per-layer opacity from the LayerPanel's sliders. Each layer's *creation*
   // sites already bake the current factor into their first paint call (see
@@ -1947,6 +2295,110 @@ export default function MapCanvas({
     );
   }
 
+  /** The smallest lng/lat box containing every point given — used both for an
+   * overlay's four corners and for a scattered set of pins, so it takes any
+   * number of points rather than `MapOverlay`'s fixed 4-tuple. */
+  function boundsOf(points: readonly (readonly [number, number])[]): [[number, number], [number, number]] {
+    const lngs = points.map((c) => c[0]);
+    const lats = points.map((c) => c[1]);
+    return [
+      [Math.min(...lngs), Math.min(...lats)],
+      [Math.max(...lngs), Math.max(...lats)],
+    ];
+  }
+
+  /**
+   * Frames a single layer's own footprint — fired by clicking a chip's title
+   * in the layer panel. Every raster layer here (aerial, canopy, generative,
+   * dying-trees, the 3D trees) is draped over the *same* georeferenced quad —
+   * see `areaGenerativeOverlays`'s and `areaDyingTreeOverlays`' own comments —
+   * so "zoom to this layer" for those is "fit to the plot", same as the
+   * existing toolbar action. Pins are the one layer that's actually scattered
+   * within that footprint, so theirs fits the *visible* pins instead: tighter,
+   * and meaningfully different from clicking any other chip.
+   *
+   * The generative artwork and the 3D trees also tilt the camera in once the
+   * fit settles — both are explicitly "visible while tilted into 3D" (see
+   * their own subtitles), so a flat top-down frame would show nothing of what
+   * was just zoomed to. `toggle3D`'s own guard against a basemap swap in
+   * flight is repeated here for the same reason it exists there.
+   */
+  function focusLayer(id: ContentLayerId) {
+    const map = mapRef.current;
+    if (!map) return;
+
+    function fitAndTilt(coordinates: MapOverlay["coordinates"], tilt: boolean) {
+      const m = mapRef.current;
+      if (!m) return;
+      m.fitBounds(boundsOf(coordinates), { padding: 48, duration: 900 });
+      if (!tilt) return;
+      // No cancellation token: this is a one-shot click handler, not an effect
+      // with a natural cleanup phase. `mapRef.current` is re-read fresh below
+      // rather than closed over, the same guard `toggle3D` and the auto-fit
+      // effect above both rely on.
+      m.once("moveend", () => {
+        const m2 = mapRef.current;
+        if (!m2) return;
+        setIs3D(true);
+        if (m2.getSource(TERRAIN_SOURCE_ID)) {
+          m2.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration: 1.5 });
+        }
+        m2.easeTo({ pitch: 60, bearing: -20, duration: 700 });
+      });
+    }
+
+    switch (id) {
+      case "aerial":
+      case "canopy":
+        if (overlay) fitAndTilt(overlay.coordinates, false);
+        return;
+      case "dyingTrees":
+        if (dyingTreeOverlay) fitAndTilt(dyingTreeOverlay.coordinates, false);
+        return;
+      case "generative":
+        if (generativeOverlay) fitAndTilt(generativeOverlay.coordinates, true);
+        return;
+      case "trees3d": {
+        // Not the plot fit the other layers get: the twin is modelled geometry
+        // at real scale, and framing the whole 12 hectares shows it as green
+        // texture. It lands beside the tree nearest the plot's centre instead,
+        // through the same flight the table's twin button uses.
+        //
+        // One flight, not a fit followed by a push-in: `fitAndTilt` installs
+        // its own `once("moveend")` to tilt, a second handler registered here
+        // fired on that same event, and the two easeTo calls fought over the
+        // camera and left it staring at nothing.
+        if (!generativeOverlay) return;
+        setIs3D(true);
+        if (map.getSource(TERRAIN_SOURCE_ID)) {
+          map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration: 1.5 });
+        }
+        flyToNearestCrown(pointInQuad(generativeOverlay.coordinates, 0.5, 0.5), MAX_CROWN_RADIUS_M / 2);
+        return;
+      }
+      case "pins": {
+        const month = displayMonthRef.current;
+        const visible = pinsRef.current.filter(
+          ({ pin }) => pinSeverityAt(pin, month) !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id)),
+        );
+        if (visible.length === 0) {
+          if (overlay) fitAndTilt(overlay.coordinates, false);
+          return;
+        }
+        if (visible.length === 1) {
+          const { pin } = visible[0];
+          map.flyTo({ center: [pin.lng, pin.lat], zoom: FOCUS_ZOOM, duration: 900, essential: true });
+          return;
+        }
+        map.fitBounds(
+          boundsOf(visible.map(({ pin }): [number, number] => [pin.lng, pin.lat])),
+          { padding: 80, maxZoom: FOCUS_ZOOM, duration: 900 },
+        );
+        return;
+      }
+    }
+  }
+
   const collapsed = diagnostics.height < 1 || diagnostics.width < 1;
   // Per layer, not one shared label: a detached layer showing March must not
   // sit under a subtitle reading "As of September" because the master timeline
@@ -1981,6 +2433,40 @@ export default function MapCanvas({
         style={{ filter: buildMapFilter(colorMode, mapContrast) }}
       />
 
+      {/* Flight is keyboard-only, so it needs saying — nothing on a black
+          screen full of trees suggests pressing W. */}
+      {flying && !error && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-[10px] px-[12px] py-[6px] rounded-full bg-black/55 backdrop-blur-[2px] text-[11px] text-white/85 font-['Outfit',sans-serif] whitespace-nowrap pointer-events-none">
+          <span>
+            <b className="text-white">WASD</b> fly
+          </span>
+          <span>
+            <b className="text-white">Q/E</b> turn
+          </span>
+          <span>
+            <b className="text-white">R/F</b> height
+          </span>
+          <span>
+            <b className="text-white">Shift</b> boost
+          </span>
+          <span className="text-white/50">Esc to exit</span>
+        </div>
+      )}
+
+      {/* The twin's readout. Inside the map rather than beside it: the card
+          describes the tree the camera is standing next to, and the two
+          appearing and leaving together is what makes them one view. */}
+      {inspectTree && !error && (
+        <TreeTwinCard
+          tree={inspectTree}
+          months={monthLabelsForPanel}
+          onExit={() => {
+            setIsolatedId(null);
+            onExitInspect?.();
+          }}
+        />
+      )}
+
       {error && <StatusOverlay title="Map failed to load" message={error} diagnostics={diagnostics} />}
       {!error && collapsed && (
         <StatusOverlay
@@ -1990,24 +2476,51 @@ export default function MapCanvas({
         />
       )}
 
-      {chrome && loaded && !error && layerTime && (
+      {chrome && loaded && !error && layerTime && !inspectTree && (
         <LayerPanel
           areaName={areaName ?? areaId ?? "Area"}
           areaId={areaId ?? "area"}
           months={monthLabelsForPanel}
           layerTime={layerTime}
           visibility={layerVisibility}
-          onHideLayer={(id) => setLayerVisibility((v) => ({ ...v, [id]: false }))}
+          onHideLayer={(id) => {
+            setLayerVisibility((v) => ({ ...v, [id]: false }));
+            // Hiding the layer that's currently isolated would otherwise do
+            // nothing visible — isolation overrides visibility — and read as
+            // a dead button.
+            setIsolatedId((current) => (current === id ? null : current));
+          }}
           onShowLayer={(id) => setLayerVisibility((v) => ({ ...v, [id]: true }))}
+          onFocusLayer={focusLayer}
+          isolatedId={isolatedId}
+          onIsolateChange={(id) => {
+            setIsolatedId(id);
+            // Isolating also frames what it isolated. With the basemap and
+            // every other layer gone there is nothing left on screen to
+            // orient by, so a plot that happened to be off-frame — or a
+            // 12 ha one seen from the default zoom, which is a speck —
+            // reads as "isolate turned the map off". For the canopy layers
+            // focusLayer also tilts into 3D, which is the only view in which
+            // 2,300 modelled crowns read as trees rather than as noise.
+            if (id) focusLayer(id);
+          }}
           onReset={() => {
             setLayerVisibility(DEFAULT_LAYER_VISIBILITY);
             setLayerOpacity(DEFAULT_LAYER_OPACITY);
+            setLayerHeight(DEFAULT_LAYER_HEIGHT);
+            setShadowMode(DEFAULT_SHADOW_MODE);
+            setIsolatedId(null);
             setBasemapIndex(0);
           }}
           showGenerative={!!generativeOverlay}
           showDyingTrees={!!dyingTreeOverlay}
+          treeCount={canopies.length}
           opacity={layerOpacity}
           onOpacityChange={(id, value) => setLayerOpacity((o) => ({ ...o, [id]: value }))}
+          height={layerHeight}
+          onHeightChange={(id, value) => setLayerHeight((h) => ({ ...h, [id]: value }))}
+          shadowMode={shadowMode}
+          onShadowModeChange={setShadowMode}
           aerialSubtitle={aerialMonthLabel ? `As of ${aerialMonthLabel}` : "Drone capture"}
           canopySubtitle={canopyMonthLabel ? `As of ${canopyMonthLabel}` : "Health-weighted gradient"}
           pinCounts={pinCounts}
@@ -2015,30 +2528,6 @@ export default function MapCanvas({
           onBasemapPrev={() => setBasemapIndex((i) => (i - 1 + BASEMAPS.length) % BASEMAPS.length)}
           onBasemapNext={() => setBasemapIndex((i) => (i + 1) % BASEMAPS.length)}
         />
-      )}
-
-      {chrome && loaded && !error && generativeOverlay && !overlayMissing && (
-        <div className="absolute top-4 right-4 z-10 w-[196px] bg-white rounded-[14px] px-[12px] py-[10px] shadow-[var(--elev-3)]">
-          <div className="flex items-baseline justify-between mb-[6px] gap-2">
-            <span className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif]">Overlay height</span>
-            <span className="text-[12px] font-medium text-[#096151] font-['Outfit',sans-serif] tabular-nums">
-              {generativeHeight} m
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={GENERATIVE_MAX_HEIGHT_M}
-            step={10}
-            value={generativeHeight}
-            onChange={(e) => setGenerativeHeight(Number(e.target.value))}
-            aria-label="Height of the generative canopy art and dying-trees overlays above the aerial image, in metres"
-            className="w-full accent-[#096151] cursor-pointer"
-          />
-          <p className="text-[10px] text-[#71717a] font-['Outfit',sans-serif] leading-[14px] mt-[4px]">
-            {is3D ? "Distance above the aerial image — canopy art and dying-trees trace both lift together." : "Tilt into 3D to see the separation."}
-          </p>
-        </div>
       )}
 
       {chrome && loaded && !error && (

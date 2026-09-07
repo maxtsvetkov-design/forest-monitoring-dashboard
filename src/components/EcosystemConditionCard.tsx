@@ -87,7 +87,7 @@ export default function EcosystemConditionCard({
           }}
         >
           <span
-            className="text-[9px] font-bold font-['Outfit',sans-serif] px-[6px] py-[1px] rounded-full text-white whitespace-nowrap"
+            className="text-[9px] font-bold font-['Outfit',sans-serif] px-[6px] py-[2px] rounded-full text-white whitespace-nowrap"
             style={{ background: condition.color }}
           >
             {condition.label}

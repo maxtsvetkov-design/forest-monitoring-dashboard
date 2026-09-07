@@ -74,18 +74,24 @@ export default function AnimatedDonutChart({
 
   return (
     <div
-      className="flex-1 min-w-0 surface-card p-[14px] flex flex-col gap-[6px] animate-fade-in-up surface-card--interactive group"
+      className="flex-1 min-w-[212px] surface-card p-[14px] flex flex-col gap-[6px] animate-fade-in-up surface-card--interactive group"
       style={{ animationDelay: `${delay}ms` }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between w-full shrink-0">
-        <div className="flex items-center gap-[6px]">
-          <span className="text-[14px] font-bold text-[#18181c] leading-[22px] font-['Outfit',sans-serif] truncate">
+      <div className="flex items-start justify-between w-full shrink-0 gap-[8px]">
+        {/* items-start, not items-center: once the title can wrap, centring
+            would float the info icon against the middle of a two-line block. */}
+        {/* flex-1 so the title claims the row's free width. Without it the
+            wrapped title shrinks to its own content, the four cards in this
+            row redistribute, and the longest title ends up in the narrowest
+            card — the exact opposite of what it needs. */}
+        <div className="flex items-start gap-[6px] min-w-0 flex-1">
+          <span className="text-[14px] font-bold text-[#18181c] leading-[19px] font-['Outfit',sans-serif] line-clamp-3 min-h-[38px] flex-1 min-w-0">
             {title}
           </span>
-          <img src={imgIcInfoCircle} alt="info" className="w-4 h-4 opacity-50 group-hover:opacity-80 transition-opacity" />
+          <img src={imgIcInfoCircle} alt="info" className="w-4 h-4 mt-[2px] shrink-0 opacity-50 group-hover:opacity-80 transition-opacity" />
         </div>
-        <div className="flex gap-[2px]">
+        <div className="flex gap-[2px] shrink-0">
           <ChartActionBtn src={imgIcLink2} alt="link" />
           <ChartActionBtn src={imgIcDownload01} alt="download" />
         </div>

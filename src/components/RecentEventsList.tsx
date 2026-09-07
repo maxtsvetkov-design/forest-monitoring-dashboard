@@ -159,10 +159,15 @@ export default function RecentEventsList({
             >
               <TreePreview color={SEVERITY_COLOR[event.severity]} eventId={event.id} />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-[6px] min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  {/* The title wraps rather than truncating: "Tree fully
+                      defoliated" clipped to "Tree fully def..." beside a
+                      CRITICAL badge loses the one word that says what
+                      happened. The badge drops to the next line when the two
+                      cannot share one. */}
+                  <div className="flex items-start flex-wrap gap-x-[6px] gap-y-[3px] min-w-0">
                     <span
-                      className={`text-[14px] font-bold font-['Outfit',sans-serif] truncate ${
+                      className={`text-[14px] font-bold font-['Outfit',sans-serif] leading-[19px] ${
                         critical ? "text-[#B4231F]" : "text-[#18181c]"
                       }`}
                     >

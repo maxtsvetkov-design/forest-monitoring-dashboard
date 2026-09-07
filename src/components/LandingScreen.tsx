@@ -11,13 +11,17 @@ import {
   imgIcInfoCircle,
   imgIcLayers,
   imgIcPin,
-  imgIcPinDecorative,
   imgIcPolygon,
-  imgIcTrendingUp,
   imgUnion,
 } from "../assets";
 import { areas } from "../data/areas";
 import { aggregateRange } from "../data/aggregate";
+import { useDateRange } from "../hooks/useDateRange";
+import type { PendingAreaFilter } from "../hooks/useTreeFilters";
+import AIAssistant from "./AIAssistant";
+import AreaTable, { AREA_ROWS } from "./AreaTable";
+import AreaTableView from "./AreaTableView";
+import DashboardView from "./DashboardView";
 import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./LayerPanel";
 import {
   areaDyingTreeOverlays,
@@ -33,6 +37,7 @@ import DenseCoverageModal from "./DenseCoverageModal";
 import TierComparisonModal from "./TierComparisonModal";
 import SlotScore from "./SlotScore";
 import { CURRENT_TIER_INDEX, TIERS } from "../data/tiers";
+import { useDragResize } from "../hooks/useDragResize";
 
 /**
  * The app's front door — the "Project - Map 3D (Layers Panel)" screen from
@@ -48,7 +53,30 @@ import { CURRENT_TIER_INDEX, TIERS } from "../data/tiers";
 
 /** Tabs across the top. Only "All areas" is this screen; the rest hand off to
  * the dashboard, which owns its own equivalents of these views. */
-const TOP_TABS = ["Dashboard", "All areas", "Table", "Story", "Alma"] as const;
+const TOP_TABS = ["Dashboard", "All areas", "Table", "Story"] as const;
+
+type TopTab = (typeof TOP_TABS)[number];
+
+/**
+ * What each top tab does.
+ *
+ * Three of them are views of this screen and stay here: "All areas" is the
+ * overview map, "Dashboard" is the project summary section, "Table" is every
+ * monitored site at full width. Only "Story" has no landing-screen form — it
+ * is an in-app tab — so picking it crosses the gate.
+ *
+ * "Table" used to cross the gate too, landing on the workspace's Areas tab.
+ * That tab's table is per-TREE, though, which made the landing strip's "Table"
+ * a link to a different subject entirely; it now shows this screen's own
+ * subject — sites — and drilling into one from a row is what opens the
+ * per-tree view.
+ */
+const TAB_DESTINATION: Record<TopTab, string | null> = {
+  Dashboard: null,
+  "All areas": null,
+  Table: null,
+  Story: "Story",
+};
 
 /** Satellite basemap — BASEMAPS[1] in MapCanvas. The design's backdrop is
  * imagery, not the vector street map index 0 would give. */
@@ -67,54 +95,42 @@ function SidebarButton({ src, alt, onClick }: { src: string; alt: string; onClic
   );
 }
 
-/** One monitored area in the project sidebar — name, size and trend, the
- * three things the design puts on a row. Informational only: the banner
- * above is the sidebar's only link into the dashboard, so this renders as a
- * static row rather than a button. */
-function AreaRow({
-  name,
-  hectares,
-  trendPct,
-  delay,
-}: {
-  name: string;
-  hectares: string;
-  trendPct: number;
-  delay: number;
-}) {
-  return (
-    <div
-      className="w-full flex items-center justify-between gap-2 px-[8px] py-[12px] animate-fade-in-up"
-      style={{ animationDelay: `${delay}ms` }}
-    >
-      <span className="flex items-center gap-[6px] min-w-0">
-        <span className="shrink-0 w-[26px] h-[26px] flex items-center justify-center rounded-full border border-[rgba(0,0,0,0.09)]">
-          <img src={imgIcPinDecorative} alt="" className="w-4 h-4" />
-        </span>
-        <span className="text-[14px] text-[#464650] font-['Outfit',sans-serif] leading-[22px] truncate">{name}</span>
-        <span className="text-[12px] text-[#dedee3] font-['Outfit',sans-serif] shrink-0">|</span>
-        <span className="text-[12px] text-[#464650] font-['Outfit',sans-serif] leading-[18px] shrink-0 tabular-nums">
-          {hectares} ha
-        </span>
-      </span>
-      <span className="flex items-center gap-[4px] shrink-0">
-        <img src={imgIcTrendingUp} alt="" className="w-4 h-4" />
-        <span className="text-[12px] text-[rgba(0,0,0,0.5)] font-['Outfit',sans-serif] leading-[18px] tabular-nums">
-          {trendPct > 0 ? "+" : ""}
-          {trendPct}%
-        </span>
-      </span>
-    </div>
-  );
-}
+// The project sidebar's own width — draggable from its right edge, same
+// pattern as the site table's own column grips (see AreaTable).
+const SIDEBAR_DEFAULT_WIDTH = 566;
+const SIDEBAR_MIN_WIDTH = 420;
+const SIDEBAR_MAX_WIDTH = 900;
 
-export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) => void }) {
-  const [activeTab, setActiveTab] = useState<(typeof TOP_TABS)[number]>("All areas");
+export default function LandingScreen({
+  onEnter,
+}: {
+  onEnter: (areaId?: string, opts?: { tab?: string; filter?: PendingAreaFilter }) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<TopTab>("All areas");
   const [scope, setScope] = useState<"monitored" | "custom">("monitored");
 
   // The map behind this screen is the pilot plot's own imagery; the sidebar
   // lists every area the project covers.
   const heroArea = areas[0];
+
+  // The area the Dashboard tab is scoped to. Deliberately NOT `heroArea`:
+  // that one is always the pilot plot the background map renders, while the
+  // dashboard can be re-pointed from its own site table and insight strip
+  // without disturbing the map underneath it.
+  const [dashboardAreaId, setDashboardAreaId] = useState(areas[0].id);
+  const dashboardArea = areas.find((a) => a.id === dashboardAreaId) ?? areas[0];
+  // The dashboard's analytical window. Everything else on this screen reads
+  // full-range aggregates directly (see the site table below) — the dashboard
+  // is the only section here with a range the user can move.
+  const dashboardRange = useDateRange(dashboardArea.snapshots, "latest");
+
+  // Two tabs are views of this screen; the rest are in-app destinations. See
+  // TAB_DESTINATION.
+  function selectTopTab(tab: TopTab) {
+    const destination = TAB_DESTINATION[tab];
+    if (destination) onEnter(dashboardAreaId, { tab: destination });
+    else setActiveTab(tab);
+  }
 
   // MapCanvas keeps layer state with its caller. Nothing on this screen edits
   // it, but the real defaults mean the plot reads the same here as it will
@@ -247,23 +263,16 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
     });
   }, [boundaryPoint, parallax]);
 
-  // Real numbers rather than the design's repeated "4,214 ha / +2%"
-  // placeholder: the size is measured off the plot footprint actually drawn
-  // on the map (areaHectares), and the trend is that area's own latest
-  // month-on-month canopy-cover change — not the whole-series change, which
-  // over a full recovery year reads as a meaningless "+264%".
-  const rows = useMemo(
-    () =>
-      areas.map((area) => {
-        const last = area.snapshots[area.snapshots.length - 1];
-        const prev = area.snapshots[area.snapshots.length - 2] ?? last;
-        const trendPct = prev.canopyCoverPct
-          ? Math.round(((last.canopyCoverPct - prev.canopyCoverPct) / prev.canopyCoverPct) * 100)
-          : 0;
-        return { id: area.id, name: area.name, hectares: areaHectares(area.id), trendPct };
-      }),
-    [],
-  );
+  // The project sidebar's width — dragged from its own right edge. Kept as
+  // plain px rather than a percentage: the sidebar floats over the map at a
+  // fixed left offset, so a percentage of what would give no obviously
+  // "correct" denominator to measure against.
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const sidebarResize = useDragResize({
+    min: SIDEBAR_MIN_WIDTH,
+    max: SIDEBAR_MAX_WIDTH,
+    onChange: setSidebarWidth,
+  });
 
   const heroHectares = areaHectares(heroArea.id).toLocaleString();
   // Same blended NDVI + tree-health score the dashboard's own OverallHealthCard
@@ -297,6 +306,17 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
 
   return (
     <div className="fixed inset-0 z-[200] bg-[#ebece7] overflow-hidden">
+      {/* Ambient brand-green blobs, behind the map and every panel on this
+          screen -- see `.ambient-bg` in index.css. Mirrors the same
+          background on App.tsx's workspace shell so the two feel like one
+          continuous surface rather than the landing gate looking flatter
+          than the dashboard it opens into. */}
+      <div className="ambient-bg" aria-hidden="true">
+        <div className="ambient-bg__blob ambient-bg__blob--1" />
+        <div className="ambient-bg__blob ambient-bg__blob--2" />
+        <div className="ambient-bg__blob ambient-bg__blob--3" />
+      </div>
+
       {/* Satellite map, full bleed behind every panel on this screen. The
           two time-travel shortcuts only surface when the cursor is near the
           plot's own real boundary (not just anywhere over the map) — see
@@ -446,36 +466,109 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
           child: `fadeInDown` animates `transform`, which would otherwise
           override `-translate-x-1/2` and slide the bar off centre. Same
           split on the tool strip and the metadata bar below. */}
-      <div className="absolute top-[8px] left-1/2 -translate-x-1/2 z-20">
+      {/* Above the dashboard overlay's own z-[25], so the strip stays usable
+          while the Dashboard tab is showing and can switch back out of it. */}
+      <div className="absolute top-[8px] left-1/2 -translate-x-1/2 z-[28]">
         <div
           className="bg-white rounded-[12px] p-[4px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-down"
           style={{ animationDelay: "60ms" }}
         >
-          {/* Decorative — the banner below is the only link into the
-              dashboard, so these tabs display state rather than trigger it. */}
+          {/* These were `<span>`s that only displayed state — the banner below
+              was the sole way into the app. They are real controls now: two
+              switch this screen's own section, three enter the app. */}
           <div className="flex gap-[2px] bg-[#f6f6f8] border border-[#dedee3] rounded-[10px] p-[2px]">
           {TOP_TABS.map((tab) => (
-            <span
+            <button
               key={tab}
+              type="button"
+              onClick={() => selectTopTab(tab)}
               aria-pressed={activeTab === tab}
-              className={`px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap transition-colors duration-150 ${
+              title={TAB_DESTINATION[tab] ? `Open ${tab} in the project workspace` : undefined}
+              className={`u-press px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
                 activeTab === tab
                   ? "bg-[#096151] border border-[#dedee3] text-[#ebece7] shadow-[0px_4px_4px_rgba(0,0,0,0.08),0px_2px_2px_rgba(0,0,0,0.04)]"
-                  : "text-[#464650]"
+                  : "text-[#464650] hover:text-[#18181c]"
               }`}
             >
               {tab}
-              </span>
+              </button>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Project sidebar */}
+      {/* The Dashboard section — Figma node 308-25361. Covers the overview map
+          and its sidebar rather than being laid out beside them: this screen's
+          root is `overflow-hidden`, so the dashboard brings its own scroller.
+          Mounted only while its tab is active, which also means its charts
+          replay their entrance animation each time the tab is opened rather
+          than sitting already-drawn behind the map.
+
+          No `view-enter` on the scroller itself — DashboardView's own root
+          already carries it, and nesting two would run the entrance twice. */}
+      {activeTab === "Dashboard" && (
+        <div className="absolute inset-0 z-[25] bg-[#ebece7] overflow-y-auto scroll-slim">
+          <div className="pt-[64px]">
+            <DashboardView
+              area={dashboardArea}
+              allAreas={areas}
+              range={dashboardRange.range}
+              months={dashboardRange.months}
+              onRangeChange={dashboardRange.setRange}
+              // A KPI drill-down crosses the landing gate: it opens the
+              // workspace on Areas with the filter already applied, which is
+              // where the per-tree answer to "show me these" actually lives.
+              onDrillIntoAreas={(filter) => onEnter(dashboardAreaId, { tab: "Areas", filter })}
+              // The site table re-scopes this preview in place — paging
+              // through rows is "show me that area's numbers", not "leave
+              // this screen".
+              onSelectArea={setDashboardAreaId}
+              // The insight strip crosses the gate instead: a card reads as
+              // "go look at this place", so clicking it opens that area's
+              // dedicated workspace rather than just swapping the preview.
+              onOpenArea={(areaId) => onEnter(areaId)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* The Table section — every monitored site at full width, rather than
+          the same rows squeezed into the overview sidebar below. Same overlay
+          treatment as the Dashboard above: this screen's root is
+          `overflow-hidden`, so the section brings its own scroller. */}
+      {activeTab === "Table" && (
+        <div className="absolute inset-0 z-[25] bg-[#ebece7] overflow-y-auto scroll-slim">
+          <div className="pt-[64px]">
+            <AreaTableView onSelectSite={onEnter} />
+          </div>
+        </div>
+      )}
+
+      {/* Project sidebar — width is user-resizable, see the grip on its right
+          edge below. */}
       <div
-        className="absolute left-[65px] top-[8px] z-20 w-[300px] bg-[#ebece7] rounded-[16px] p-[12px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-left"
-        style={{ animationDelay: "120ms" }}
+        className={`absolute left-[65px] top-[8px] z-20 bg-[#ebece7] rounded-[16px] p-[12px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-left ${
+          sidebarResize.dragging ? "" : "transition-[width] duration-(--dur-4) ease-(--ease-lux)"
+        }`}
+        style={{ width: sidebarWidth }}
       >
+        <button
+          type="button"
+          aria-label="Resize project sidebar"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth}
+          onPointerDown={(e) => sidebarResize.begin(e, sidebarWidth)}
+          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, w - 16));
+            else if (e.key === "ArrowRight") setSidebarWidth((w) => Math.min(SIDEBAR_MAX_WIDTH, w + 16));
+            else return;
+            e.preventDefault();
+          }}
+          className={`edge-resize-grip ${sidebarResize.dragging ? "edge-resize-grip--active" : ""}`}
+          title="Drag to resize · double-click to reset"
+        />
         <div className="flex items-center gap-[10px] pb-[8px] border-b border-[#dedee3]">
           <button
             type="button"
@@ -516,11 +609,7 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
             green above). Static by design — an earlier pass had a rotating
             foil ring, a gloss sweep and breathing glow blobs here, which made
             the sidebar's quietest job the loudest thing on screen. */}
-        <button
-          type="button"
-          onClick={() => onEnter()}
-          className="u-press w-full mt-[12px] flex flex-col p-[20px] rounded-[16px] border border-[#e2e4d9] bg-[#f2f4ec] cursor-pointer text-left"
-        >
+        <button type="button" onClick={() => onEnter()} className="hidden">
           <span className="flex items-center gap-[6px] text-[12px] font-medium text-[#5b5b66] font-['Outfit',sans-serif] leading-[18px]">
             Forest Monitoring{!heroHealthy && " — needs attention"}
           </span>
@@ -547,7 +636,7 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
           </div>
 
           <div
-            className="flex items-center gap-[6px] self-start px-[9px] py-[5px] rounded-[6px] mt-[12px]"
+            className="flex items-center gap-[6px] self-start px-[8px] py-[4px] rounded-[6px] mt-[12px]"
             style={{ background: heroHealthy ? "#9ee6bd" : "#f79256" }}
           >
             <span className="text-[11px] font-semibold leading-[14px] text-[#18181c] font-['Outfit',sans-serif] whitespace-nowrap">
@@ -581,23 +670,13 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
             ))}
           </div>
 
-          <div className="bg-white rounded-[10px]  overflow-hidden divide-y divide-[#dedee3]">
-            {scope === "monitored" ? (
-              rows.map((row, i) => (
-                <AreaRow
-                  key={row.id}
-                  name={row.name}
-                  hectares={row.hectares.toLocaleString()}
-                  trendPct={row.trendPct}
-                  delay={160 + i * 50}
-                />
-              ))
-            ) : (
-              <p className="px-[8px] py-[24px] text-[12px] text-[#71717a] font-['Outfit',sans-serif] text-center">
-                No custom areas drawn yet.
-              </p>
-            )}
-          </div>
+          {scope === "monitored" ? (
+            <AreaTable rows={AREA_ROWS} onSelectSite={onEnter} />
+          ) : (
+            <p className="bg-white rounded-[12px] px-[8px] py-[24px] text-[12px] text-[#71717a] font-['Outfit',sans-serif] text-center">
+              No custom areas drawn yet.
+            </p>
+          )}
         </div>
       </div>
 
@@ -638,6 +717,15 @@ export default function LandingScreen({ onEnter }: { onEnter: (areaId?: string) 
           <span className="text-[10px] text-white font-['Outfit',sans-serif] leading-[16px]">4km</span>
         </div>
       </div>
+
+      {/* The assistant is meant to be reachable from every page, and this
+          screen is the one place App.tsx's own <AIAssistant /> can't cover —
+          it early-returns here, before that render. Mounted INSIDE this root
+          rather than beside it in App: this div is `fixed z-[200]`, which
+          makes it a stacking context that a z-30 sibling could never rise
+          above. Inside it, the assistant's z-30 clears this screen's panels
+          (z-20), the dashboard overlay (z-25) and the tab strip (z-28). */}
+      <AIAssistant />
     </div>
   );
 }

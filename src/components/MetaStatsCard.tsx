@@ -13,14 +13,14 @@ export default function MetaStatsCard({
   delay: number;
 }) {
   return (
-    <div className="flex-1 min-w-0 animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
-      {/* justify-start + a fixed gap, not justify-between: this card sits in
+    <div className="flex-1 min-w-fit animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
+      {/* items-start + a fixed gap, not justify-between: this card sits in
           a row stretched to match OverallHealthCard's much taller height, and
-          spreading three short rows evenly across all of that left them
-          looking lost rather than compact. Grouped tight at the top instead,
+          spreading the stats evenly across all of that left them looking lost
+          rather than compact. Grouped tight at the top instead, side by side,
           with the extra height just going unused below — same as any other
           KPI tile that doesn't fill its row's full height. */}
-      <div className="surface-card surface-card--interactive h-full group flex flex-col justify-start gap-[16px] p-[14px]">
+      <div className="surface-card surface-card--interactive h-full group flex items-start justify-start flex-wrap gap-x-[20px] gap-y-[10px] p-[14px]">
         {items.map((item) => (
           <div key={item.label} className="flex flex-col">
             <span className="text-[20px] font-bold text-[#18181c] leading-[26px] font-['Outfit',sans-serif] tabular-nums whitespace-nowrap">
