@@ -14,6 +14,7 @@ import { generateTreeRecordsAt } from "../data/trees";
 import { clamp, useDragResize } from "../hooks/useDragResize";
 import { applyPendingFilter, useTreeFilters, type PendingAreaFilter } from "../hooks/useTreeFilters";
 import type { ContentLayerId } from "./LayerPanel";
+import { useSlidingPill } from "../hooks/useSlidingPill";
 import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
@@ -27,23 +28,35 @@ const AREAS_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
 
 type RightPanel = "table" | "events";
 
+const RIGHT_PANEL_OPTIONS: { key: RightPanel; label: string }[] = [
+  { key: "table", label: "Trees table" },
+  { key: "events", label: "Recent events" },
+];
+
 /** Small segmented control — the right pane's own view switch, distinct
- * from the top-bar's Insights/Areas/Maps/Assets tabs one level up. */
+ * from the top-bar's Insights/Areas/Maps/Assets tabs one level up. Shares
+ * useSlidingPill and the `.seg-track`/`.tab-pill` classes with that top bar
+ * rather than approximating the same look with its own colour-swap: the
+ * point is that switching a pane reads as the same *kind* of action as
+ * switching a tab, not a coincidentally similar one. */
 function RightPanelSwitcher({ value, onChange }: { value: RightPanel; onChange: (v: RightPanel) => void }) {
-  const OPTIONS: { key: RightPanel; label: string }[] = [
-    { key: "table", label: "Trees table" },
-    { key: "events", label: "Recent events" },
-  ];
+  const { trackRef, setItemRef, pill, ready, morphing } = useSlidingPill(value);
   return (
-    <div className="inline-flex gap-[2px] bg-[#f6f6f8] border border-[#dedee3] rounded-[10px] p-[2px] shrink-0">
-      {OPTIONS.map((opt) => (
+    <div ref={trackRef} className="seg-track relative shrink-0">
+      <div
+        aria-hidden="true"
+        className={`tab-pill ${ready ? "" : "tab-pill--instant"} ${morphing ? "tab-pill--morphing" : ""}`}
+        style={{ left: `${pill.left}px`, width: `${pill.width}px` }}
+      />
+      {RIGHT_PANEL_OPTIONS.map((opt) => (
         <button
           key={opt.key}
+          ref={setItemRef(opt.key)}
           type="button"
           onClick={() => onChange(opt.key)}
           aria-pressed={value === opt.key}
-          className={`u-press px-[10px] py-[4px] rounded-[6px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
-            value === opt.key ? "bg-[#096151] text-white" : "text-[#5b5b66] hover:text-[#18181c]"
+          className={`relative z-[1] px-[10px] py-[4px] rounded-[7px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-200 ${
+            value === opt.key ? "text-white" : "text-[#5b5b66] hover:text-[#18181c]"
           }`}
         >
           {opt.label}

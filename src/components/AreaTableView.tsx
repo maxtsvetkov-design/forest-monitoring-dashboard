@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { imgFilterFunnel01, imgIcSettings, imgUpload01 } from "../assets";
+import ToolbarBtn from "./ToolbarBtn";
 import AreaTable, { AREA_ROWS, type SiteRowData } from "./AreaTable";
 
 /**
@@ -6,9 +8,15 @@ import AreaTable, { AREA_ROWS, type SiteRowData } from "./AreaTable";
  * table, rather than the same rows squeezed into the overview sidebar.
  *
  * The table itself is the sidebar's own AreaTable, mounted at full width. What
- * this view adds is what the 566px sidebar had no room for: a heading with a
- * live count, and a search box. Search is owned here rather than inside
- * AreaTable so the sidebar mount stays exactly as narrow as it was.
+ * this view adds is what the 566px sidebar had no room for: a heading, a
+ * search box, and the toolbar row above the table (Filters/Reset on the
+ * left, Export/Customize on the right) — laid out per the Figma "Monitored
+ * areas" table (node 2993:47329). Its two date-range fields aren't ported:
+ * that mockup's dataset has a per-site "dates active" column to filter by,
+ * this one doesn't, and two date pickers that filter nothing would be worse
+ * chrome than none. Filters/Customize/Export are the same decorative
+ * ToolbarBtn already used in App.tsx's own top bar rather than a new
+ * button style invented for this one screen.
  */
 
 /**
@@ -36,25 +44,48 @@ export default function AreaTableView({ onSelectSite }: { onSelectSite: (areaId:
               : `(${visible.length} of ${AREA_ROWS.length})`}
           </span>
         </h1>
-        {query && (
+      </div>
+
+      {/* Toolbar: search + Filters/Reset on the left, Export/Customize on the
+          right — the same two-group arrangement the Figma reference uses,
+          minus its two date-range fields (see the file header for why). */}
+      <div className="flex items-center justify-between gap-[12px] flex-wrap">
+        <div className="flex items-center gap-[8px] flex-wrap">
+          <label className="relative flex items-center shrink-0">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              fill="none"
+              className="absolute left-[10px] text-[#8a8a94] pointer-events-none"
+            >
+              <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M9.5 9.5 12.5 12.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search sites or projects…"
+              aria-label="Search monitored sites"
+              className="w-[240px] pl-[30px] pr-[12px] py-[8px] text-[13px] font-['Outfit',sans-serif] bg-white border border-[#dedee3] rounded-[9px] outline-none focus:border-[#096151] transition-colors duration-150"
+            />
+          </label>
+          <ToolbarBtn src={imgFilterFunnel01} label="Filters" />
           <button
             type="button"
             onClick={() => setQuery("")}
-            className="text-[12px] text-[#096151] hover:underline font-['Outfit',sans-serif] shrink-0 cursor-pointer"
+            disabled={!query}
+            className="u-press px-[12px] py-[8px] text-[13px] text-[#5b5b66] font-['Outfit',sans-serif] rounded-[9px] border border-[#dedee3] bg-white hover:text-[#18181c] hover:bg-[#f6f6f8] disabled:opacity-40 disabled:cursor-default cursor-pointer transition-colors duration-150"
           >
-            Clear search
+            Reset
           </button>
-        )}
+        </div>
+        <div className="flex items-center gap-[4px] shrink-0">
+          <ToolbarBtn src={imgUpload01} label="Export" />
+          <ToolbarBtn src={imgIcSettings} label="Customize" />
+        </div>
       </div>
-
-      <input
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search sites or projects…"
-        aria-label="Search monitored sites"
-        className="w-full max-w-[360px] px-[12px] py-[7px] text-[13px] font-['Outfit',sans-serif] bg-white border border-[#dedee3] rounded-[8px] outline-none focus:border-[#096151] transition-colors duration-150"
-      />
 
       <AreaTable rows={visible} onSelectSite={onSelectSite} />
     </div>

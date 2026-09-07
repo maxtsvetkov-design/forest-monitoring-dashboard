@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import ManagerContactToast from "./ManagerContactToast";
 
 /**
  * Full-screen promo for adding denser capture coverage — styled after a
@@ -23,6 +24,11 @@ export default function DenseCoverageModal({
   onClose: () => void;
 }) {
   const [requested, setRequested] = useState(false);
+  // A second, later flag rather than reusing `requested` for both: the button
+  // stays "Imagery requested" permanently once clicked, but the confirmation
+  // toast is a moment, not a permanent fixture of the page — it announces the
+  // click, then gets out of the way.
+  const [showConfirmation, setShowConfirmation] = useState(false);
   const additional = plannedCaptures - previewImages.length;
   const earliest = previewImages[0];
   const latest = previewImages[previewImages.length - 1];
@@ -42,6 +48,8 @@ export default function DenseCoverageModal({
     };
   }, [onClose]);
 
+
+
   return createPortal(
     <div
       className="fixed inset-0 z-[1200] overflow-y-auto animate-fade-in"
@@ -60,6 +68,13 @@ export default function DenseCoverageModal({
           <path d="M2 2l12 12M14 2 2 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         </svg>
       </button>
+
+      {showConfirmation && (
+        <ManagerContactToast
+          detail={`We've logged the request for ${additional} additional captures — expect an email within one business day to confirm the cadence.`}
+          onDismiss={() => setShowConfirmation(false)}
+        />
+      )}
 
       <div className="min-h-full flex items-center px-8 py-16 md:px-20">
         <div className="w-full max-w-[1200px] mx-auto grid md:grid-cols-2 gap-16 items-center">
@@ -81,7 +96,10 @@ export default function DenseCoverageModal({
               <button
                 type="button"
                 disabled={requested}
-                onClick={() => setRequested(true)}
+                onClick={() => {
+                  setRequested(true);
+                  setShowConfirmation(true);
+                }}
                 className="u-press flex items-center gap-2 px-7 py-4 rounded-full bg-[#18181c] hover:bg-[#2e2e35] disabled:bg-[#0a7761] text-white text-[15px] font-semibold cursor-pointer disabled:cursor-default transition-colors"
               >
                 {requested && (

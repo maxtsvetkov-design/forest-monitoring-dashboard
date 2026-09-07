@@ -14,6 +14,7 @@ import {
   imgIcPolygon,
   imgUnion,
 } from "../assets";
+import AmbientBackground from "./AmbientBackground";
 import { areas } from "../data/areas";
 import { aggregateRange } from "../data/aggregate";
 import { useDateRange } from "../hooks/useDateRange";
@@ -311,11 +312,7 @@ export default function LandingScreen({
           background on App.tsx's workspace shell so the two feel like one
           continuous surface rather than the landing gate looking flatter
           than the dashboard it opens into. */}
-      <div className="ambient-bg" aria-hidden="true">
-        <div className="ambient-bg__blob ambient-bg__blob--1" />
-        <div className="ambient-bg__blob ambient-bg__blob--2" />
-        <div className="ambient-bg__blob ambient-bg__blob--3" />
-      </div>
+      <AmbientBackground />
 
       {/* Satellite map, full bleed behind every panel on this screen. The
           two time-travel shortcuts only surface when the cursor is near the

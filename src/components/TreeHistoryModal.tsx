@@ -2,9 +2,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { TreeEvent } from "../data/events";
 import { generateTreeHistory } from "../data/treeHistory";
+import { MAX_CROWN_RADIUS_M } from "../data/canopies";
 import type { TreeRecord } from "../data/trees";
 import type { HealthKey } from "../data/types";
-import { CONDITIONS, CONDITION_COLOR } from "../data/taxonomy";
+import { CONDITIONS, CONDITION_COLOR, CONDITION_LABEL, type ConditionKey } from "../data/taxonomy";
 
 const SEVERITY_COLOR = CONDITION_COLOR;
 
@@ -13,6 +14,38 @@ const SEVERITY_COLOR = CONDITION_COLOR;
 const HEALTH_KEY: Record<string, HealthKey> = Object.fromEntries(
   CONDITIONS.map((c) => [c.label, c.key]),
 );
+
+/** A tree's condition, restated as a 0-100 "score" and a letter grade —
+ * `CONDITIONS` is already ordered worst-first (see its own definition), so
+ * the rank is free; nothing here is invented, it's the same five bands the
+ * rest of the app already shows, just given a number and a letter the way a
+ * scorecard reads instead of a badge-and-word pair. */
+const CONDITION_RANK: Record<ConditionKey, number> = Object.fromEntries(
+  CONDITIONS.map((c, i) => [c.key, i]),
+) as Record<ConditionKey, number>;
+
+function conditionScore(key: ConditionKey): number {
+  return Math.round((CONDITION_RANK[key] / (CONDITIONS.length - 1)) * 100);
+}
+
+function scoreGrade(score: number): string {
+  if (score >= 90) return "A";
+  if (score >= 70) return "B";
+  if (score >= 50) return "C";
+  if (score >= 25) return "D";
+  return "F";
+}
+
+/** A 12-point scalloped seal, computed once rather than a hand-typed path —
+ * the badge shape from the reference image, sized to a 0-100 viewBox so any
+ * caller can drop it in at whatever pixel size it needs. */
+const BADGE_POINTS = Array.from({ length: 24 }, (_, i) => {
+  const angle = (Math.PI / 12) * i - Math.PI / 2;
+  const r = i % 2 === 0 ? 50 : 43;
+  const x = 50 + r * Math.cos(angle);
+  const y = 50 + r * Math.sin(angle);
+  return `${x.toFixed(2)},${y.toFixed(2)}`;
+}).join(" ");
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -23,9 +56,16 @@ function formatDate(date: Date): string {
  * tree (see App.tsx's pendingTreeFocus) — a portal to document.body so it sits
  * above the map and everything else, the same reasoning as MapCanvas's own
  * pin tooltip.
+ *
+ * Sized to fit the scorecard, the event callout and the full survey history
+ * without its own inner scroll on a normal viewport — `scroll-slim` on the
+ * content area stays on only as a fallback for a genuinely short window, not
+ * as the expected way to read this popover. `POPOVER_MAX_HEIGHT` is a floor
+ * for `placePopover`'s own clamping math; the actual box asks for whatever
+ * the viewport can spare, up to that.
  */
-const POPOVER_WIDTH = 360;
-const POPOVER_MAX_HEIGHT = 480;
+const POPOVER_WIDTH = 456;
+const POPOVER_MAX_HEIGHT = 840;
 // The ring drawn on the focused tree (.tree-focus in index.css) is 30px
 // across; the gap has to clear its radius plus a visible seam, not just be an
 // arbitrary margin, or the card's edge lands on top of the ring it's pointing at.
@@ -35,19 +75,121 @@ const VIEWPORT_PADDING = 12;
 
 /** Clamps the popover's top-left so it stays fully on screen, preferring a
  * position beside (never directly over) the pin it points at. */
-function placePopover(anchor: { x: number; y: number }) {
+function placePopover(anchor: { x: number; y: number }, maxHeight: number) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   // Default: to the right of the pin, vertically centred on it.
   let left = anchor.x + POPOVER_GAP;
-  let top = anchor.y - POPOVER_MAX_HEIGHT / 2;
+  let top = anchor.y - maxHeight / 2;
   // Flip to the left of the pin if there's no room on the right.
   if (left + POPOVER_WIDTH + VIEWPORT_PADDING > vw) {
     left = anchor.x - POPOVER_GAP - POPOVER_WIDTH;
   }
   left = Math.max(VIEWPORT_PADDING, Math.min(left, vw - POPOVER_WIDTH - VIEWPORT_PADDING));
-  top = Math.max(VIEWPORT_PADDING, Math.min(top, vh - POPOVER_MAX_HEIGHT - VIEWPORT_PADDING));
+  top = Math.max(VIEWPORT_PADDING, Math.min(top, vh - maxHeight - VIEWPORT_PADDING));
   return { left, top };
+}
+
+/** One scorecard metric — a label, a real value restated 0-100 to size the
+ * bar, and the value's own honest unit as the number actually shown (the bar
+ * is never asked to speak for itself; the number next to it always does). */
+function MetricBar({ label, pct, display, color }: { label: string; pct: number; display: string; color: string }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] text-[#8a8a94] font-['Outfit',sans-serif]">{label}</p>
+      <div className="flex items-center gap-[8px] mt-[3px]">
+        <span className="text-[15px] font-bold text-[#18181c] font-['Outfit',sans-serif] tabular-nums whitespace-nowrap">
+          {display}
+        </span>
+        <span className="flex-1 h-[6px] rounded-full bg-[#ececec] overflow-hidden">
+          <span className="block h-full rounded-full" style={{ width: `${clamped}%`, background: color }} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The reference image's scorecard — a scalloped badge and a big 0-100 number,
+ * a row of real per-tree measurements restated as bars, and this tree's own
+ * condition history as a segmented strip. Every number here already exists
+ * elsewhere in the app (the pin popover, the digital twin card, the events
+ * feed); this is a denser second look at the same tree, not a new dataset.
+ */
+function TreeScorecard({ tree }: { tree: TreeRecord }) {
+  const key = HEALTH_KEY[tree.health];
+  const color = CONDITION_COLOR[key];
+  const score = conditionScore(key);
+  const grade = scoreGrade(score);
+  const canopyRetainedPct = 100 - tree.canopyLossPct;
+
+  return (
+    <div
+      className="rounded-[18px] p-3.5"
+      style={{ background: `linear-gradient(180deg, ${color}1c 0%, rgba(255,255,255,0) 70%)` }}
+    >
+      <div className="flex items-center gap-[14px]">
+        <svg width="52" height="52" viewBox="0 0 100 100" className="shrink-0" aria-hidden="true">
+          <polygon points={BADGE_POINTS} fill={color} />
+          <text
+            x="50"
+            y="59"
+            textAnchor="middle"
+            fontSize="42"
+            fontWeight="800"
+            fill="white"
+            fontFamily="Outfit, sans-serif"
+          >
+            {grade}
+          </text>
+        </svg>
+        <div>
+          <div className="flex items-baseline gap-[4px]">
+            <span className="text-[32px] font-extrabold text-[#18181c] font-['Outfit',sans-serif] leading-none tabular-nums">
+              {score}
+            </span>
+            <span className="text-[14px] font-medium text-[#8a8a94] font-['Outfit',sans-serif]">/ 100</span>
+          </div>
+          <p className="text-[10px] tracking-wide text-[#8a8a94] font-bold uppercase font-['Outfit',sans-serif] mt-[1px]">
+            Condition score · {tree.health}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-x-[16px] gap-y-[12px] mt-[12px]">
+        <MetricBar
+          label="Height"
+          pct={(tree.height / (MAX_CROWN_RADIUS_M * 2)) * 100}
+          display={`${tree.height} m`}
+          color={color}
+        />
+        <MetricBar
+          label="Crown radius"
+          pct={(tree.crownRadius / MAX_CROWN_RADIUS_M) * 100}
+          display={`${tree.crownRadius} m`}
+          color={color}
+        />
+        <MetricBar label="Canopy retained" pct={canopyRetainedPct} display={`${canopyRetainedPct}%`} color={color} />
+      </div>
+
+      <div className="mt-[12px]">
+        <p className="text-[11px] font-bold text-[#464650] font-['Outfit',sans-serif] mb-[6px]">
+          Condition over the survey window
+        </p>
+        <div className="flex gap-[2px]">
+          {tree.conditionHistory.map((c, i) => (
+            <span
+              key={i}
+              title={CONDITION_LABEL[c]}
+              className="flex-1 h-[14px] rounded-[3px] first:rounded-l-[5px] last:rounded-r-[5px]"
+              style={{ background: CONDITION_COLOR[c] }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** One of the popover's two footer actions. There's no ticketing/mail backend
@@ -199,9 +341,13 @@ export default function TreeHistoryModal({
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
-  const color = SEVERITY_COLOR[HEALTH_KEY[tree.health]];
   const history = generateTreeHistory(tree);
-  const { left, top } = placePopover(anchor);
+  // Bounded by the viewport, not just the `POPOVER_MAX_HEIGHT` ceiling — on
+  // most windows that leaves room for the scorecard, the event callout and
+  // the full survey history with nothing clipped; only a genuinely short
+  // window falls back to the inner `scroll-slim` area below.
+  const maxHeight = Math.min(POPOVER_MAX_HEIGHT, window.innerHeight - VIEWPORT_PADDING * 2);
+  const { left, top } = placePopover(anchor, maxHeight);
 
   // No backdrop: this floats beside the pin rather than blocking the map, so
   // the map stays fully interactive — pan, zoom, and other pins keep working
@@ -214,8 +360,8 @@ export default function TreeHistoryModal({
         role="dialog"
         aria-modal="false"
         aria-label={`Tree ${tree.id} history`}
-        style={{ left, top, width: POPOVER_WIDTH, maxHeight: POPOVER_MAX_HEIGHT }}
-        className="tree-modal pointer-events-auto absolute bg-white rounded-[14px] border border-[#dedee3] shadow-[0px_12px_36px_-8px_rgba(0,0,0,0.25)] max-w-[92vw] flex flex-col overflow-hidden animate-fade-in"
+        style={{ left, top, width: POPOVER_WIDTH, maxHeight }}
+        className="tree-modal pointer-events-auto absolute bg-white rounded-[20px] border border-[#dedee3] shadow-[0px_20px_52px_-12px_rgba(0,0,0,0.3)] max-w-[92vw] flex flex-col overflow-hidden animate-fade-in"
         // The pin tooltip this can collapse into stops its own clicks from
         // bubbling for the same reason — a click on a header/footer button
         // here must not reach the map's "click anywhere outside closes the
@@ -225,7 +371,7 @@ export default function TreeHistoryModal({
         {/* Header: the tree id doubles as the "link to the pin" the modal was
             asked to carry — clicking it re-centres the map in case the user
             panned away while reading. */}
-        <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-[#ebece7] shrink-0">
+        <div className="flex items-start justify-between gap-3 px-4 pt-3.5 pb-2.5 border-b border-[#ebece7] shrink-0">
           <div className="min-w-0">
             <button
               type="button"
@@ -281,25 +427,13 @@ export default function TreeHistoryModal({
           </div>
         </div>
 
-        <div className="scroll-slim overflow-y-auto px-4 py-3 flex flex-col gap-4">
-          {/* Current status */}
-          <div className="flex items-center gap-3">
-            <span
-              className="inline-flex items-center gap-[6px] px-[10px] py-[4px] rounded-full text-[13px] font-medium font-['Outfit',sans-serif]"
-              style={{ background: `${color}14`, border: `1px solid ${color}33`, color }}
-            >
-              <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: color }} />
-              {tree.health}
-            </span>
-            <span className="text-[12px] text-[#5b5b66] font-['Outfit',sans-serif]">
-              Canopy loss: {tree.canopyLossPct}%
-            </span>
-          </div>
+        <div className="scroll-slim overflow-y-auto px-5 py-3 flex flex-col gap-3">
+          <TreeScorecard tree={tree} />
 
           {/* The notification that opened this modal — absent when opened by
               expanding a plain pin click instead of a Recent Events row. */}
           {event && (
-            <div className="bg-[#f6f6f8] border border-[#ebece7] rounded-[10px] px-3 py-2.5">
+            <div className="bg-[#f6f6f8] border border-[#ebece7] rounded-[10px] px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif]">{event.title}</span>
                 <span className="text-[11px] text-[#71717a] font-['Outfit',sans-serif] shrink-0">{formatDate(event.date)}</span>
@@ -310,10 +444,10 @@ export default function TreeHistoryModal({
 
           {/* History */}
           <div>
-            <p className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-2">History of surveys</p>
+            <p className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-[6px]">History of surveys</p>
             <div className="flex flex-col">
               {history.map((h, i) => (
-                <div key={i} className="relative flex gap-3 pb-3 last:pb-0">
+                <div key={i} className="relative flex gap-3 pb-2 last:pb-0">
                   {/* Timeline rail: a dot per entry, connected by a line — the
                       last entry has no line below it since there's nothing after. */}
                   <div className="flex flex-col items-center shrink-0 w-[10px]">
@@ -335,7 +469,7 @@ export default function TreeHistoryModal({
 
         {/* Footer actions — the two next steps a flagged tree actually needs:
             loop in a person, or queue it for a second, more certain look. */}
-        <div className="flex items-center gap-[8px] px-4 py-3 border-t border-[#ebece7] shrink-0">
+        <div className="flex items-center gap-[8px] px-4 py-2.5 border-t border-[#ebece7] shrink-0">
           <CTAButton
             label="Contact ecologist"
             confirmedLabel="Request sent"

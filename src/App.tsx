@@ -37,7 +37,9 @@ import { areaOverlays } from "./data/overlays";
 import { healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
 import { useDateRange } from "./hooks/useDateRange";
+import AmbientBackground from "./components/AmbientBackground";
 import CalendarRangePicker from "./components/CalendarRangePicker";
+import { useSlidingPill } from "./hooks/useSlidingPill";
 import { useLayerTime } from "./hooks/useLayerTime";
 import type { PendingAreaFilter } from "./hooks/useTreeFilters";
 
@@ -214,55 +216,22 @@ export default function App() {
 
   const tabs = ["Insights", "Areas", "Maps", "Assets", "Story"];
 
-  // The active-tab pill is one element that slides between tabs rather than the
-  // colour jumping from one button to another. Its geometry has to be measured
-  // from the DOM because the tabs are text-width, not fixed-width.
-  const tabBarRef = useRef<HTMLDivElement>(null);
-  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [pill, setPill] = useState({ left: 0, width: 0 });
-  const [pillReady, setPillReady] = useState(false);
-
-  // Layout effect, not effect: measuring after paint would show the pill at its
-  // old position for a frame.
-  useLayoutEffect(() => {
-    const el = tabRefs.current[activeTab];
-    if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
-    // `showLanding` flipping off is what first mounts this tab bar (it's
-    // behind an early `if (showLanding) return <LandingScreen />` above) —
-    // without it in the deps, this effect only ever reran on an actual tab
-    // switch, and the pill (and its first-landing welcome glow) never
-    // measured on the very first view of the dashboard.
-  }, [activeTab, showLanding]);
-
-  // Fonts finishing loading or the window resizing changes the tabs' widths; a
-  // pill measured once would then sit slightly off its label.
-  useEffect(() => {
-    const bar = tabBarRef.current;
-    if (!bar) return;
-    const observer = new ResizeObserver(() => {
-      const el = tabRefs.current[activeTab];
-      if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
-    });
-    observer.observe(bar);
-    return () => observer.disconnect();
-  }, [activeTab, showLanding]);
-
-  // Transitions stay off until the first real measurement lands, otherwise the
-  // pill visibly flies in from x=0 on page load.
-  useEffect(() => {
-    if (pill.width === 0) return;
-    const frame = requestAnimationFrame(() => setPillReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, [pill.width]);
-
-  // Squash-and-stretch wobble layered on top of the pill's left/width slide —
-  // a liquid travel reads as stretching wide+flat as it sets off, overshooting
-  // narrow+tall, then settling, not just a rectangle interpolating position.
-  // Skipped on the very first render (nothing has moved yet to wobble about)
-  // and timed to roughly the pill's own travel duration so the wobble finishes
-  // alongside the slide instead of snapping back mid-flight.
-  const [pillMorphing, setPillMorphing] = useState(false);
-  const pillMounted = useRef(false);
+  // The active-tab pill is one element that slides between tabs rather than
+  // the colour jumping from one button to another — see useSlidingPill,
+  // shared with the Areas view's own Trees table/Recent events switch so
+  // both read as the same physical pill, not two similar-looking animations.
+  // `showLanding` is in the resize-dep list because it's what first mounts
+  // this tab bar (it's behind an early `if (showLanding) return
+  // <LandingScreen />` above) — without it, the pill (and its first-landing
+  // welcome glow below) never measured on the very first view of the
+  // dashboard.
+  const {
+    trackRef: tabBarRef,
+    setItemRef: setTabRef,
+    pill,
+    ready: pillReady,
+    morphing: pillMorphing,
+  } = useSlidingPill(activeTab, [showLanding]);
 
   // Plays once, right after the pill's first real measurement lands (so it
   // doesn't fire against pill.width === 0), and only while still on the
@@ -275,15 +244,6 @@ export default function App() {
     const t = setTimeout(() => setPillWelcoming(false), 1400);
     return () => clearTimeout(t);
   }, [pillReady]);
-  useEffect(() => {
-    if (!pillMounted.current) {
-      pillMounted.current = true;
-      return;
-    }
-    setPillMorphing(true);
-    const t = setTimeout(() => setPillMorphing(false), 650);
-    return () => clearTimeout(t);
-  }, [activeTab]);
 
   const treesChange = formatKpiChange(aggregated.totalTrees.change, (n) => Math.round(n).toLocaleString());
   const healthyTreesChange = formatKpiChange(aggregated.healthyTrees.change, (n) => Math.round(n).toLocaleString());
@@ -368,13 +328,10 @@ export default function App() {
     >
       {/* Ambient brand-green blobs, sitting behind every card/panel below
           (z-index: 0 vs. the sidebar/header's z-10+ and the normal content
-          flow above it) -- see `.ambient-bg` in index.css for the drift
-          keyframes and the reduced-motion guard. */}
-      <div className="ambient-bg" aria-hidden="true">
-        <div className="ambient-bg__blob ambient-bg__blob--1" />
-        <div className="ambient-bg__blob ambient-bg__blob--2" />
-        <div className="ambient-bg__blob ambient-bg__blob--3" />
-      </div>
+          flow above it) while the entrance settles -- see AmbientBackground
+          for the fade-out-then-unmount and `.ambient-bg` in index.css for
+          the drift keyframes and the reduced-motion guard. */}
+      <AmbientBackground />
 
       {/* Reserves the space the fixed sidebar below no longer occupies in flow */}
       <div className="w-[48px] shrink-0" aria-hidden="true" />
@@ -454,9 +411,7 @@ export default function App() {
                 {tabs.map((tab) => (
                   <button
                     key={tab}
-                    ref={(el) => {
-                      tabRefs.current[tab] = el;
-                    }}
+                    ref={setTabRef(tab)}
                     onClick={() => switchTab(tab)}
                     aria-current={activeTab === tab ? "page" : undefined}
                     className={`relative z-[1] px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap transition-colors duration-200 ${
