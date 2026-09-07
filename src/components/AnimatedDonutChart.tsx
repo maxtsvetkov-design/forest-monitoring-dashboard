@@ -55,7 +55,7 @@ export default function AnimatedDonutChart({
   title: string;
   delay: number;
   /** When given, both the wedges and the legend rows become clickable, calling
-   * back with that row's `name`. Used by the health chart to jump into Areas
+   * back with that row's `name`. Used by the health chart to jump into Assets
    * pre-filtered to the clicked condition — see App.tsx. */
   onSliceClick?: (name: string) => void;
   /** 1 (default) stacks the legend as a single list; 2 wraps it into a

@@ -16,7 +16,7 @@ export default function NdviCard({
   value: number;
   change?: { change: string; trend: "up" | "down" } | null;
   delay: number;
-  /** Opens Areas filtered to the flagged trees dragging this reading down —
+  /** Opens Assets filtered to the flagged trees dragging this reading down —
    * there is no per-tree NDVI to filter on directly (see App.tsx). */
   onDrillDown?: () => void;
 }) {

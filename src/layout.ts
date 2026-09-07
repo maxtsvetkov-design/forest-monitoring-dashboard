@@ -1,8 +1,8 @@
 /**
- * Reserved vertical chrome above and below the Maps/Story/Areas content area.
+ * Reserved vertical chrome above and below the Maps/Story/Assets content area.
  * All three sit under the same sticky header (App.tsx) and wrap their own
  * content in the same `mt-[10px]` / outer `pb-6`, so one number serves all
- * three instead of three independently-drifting copies of it (AreasView used
+ * three instead of three independently-drifting copies of it (AssetsView used
  * to carry this literal three times over, for its map pane, its divider, and
  * its table pane, which all have to agree exactly or the split-pane divider
  * stops lining up with the panes on either side of it).

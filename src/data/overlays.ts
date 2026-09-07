@@ -76,7 +76,7 @@ const AERIAL_ASPECT = 2752 / 1536;
 /**
  * Keyed by Area id (see areas.ts). Every area in `areas` needs an entry:
  * callers dereference this map directly (App.tsx's generateEvents,
- * Areas/Maps views' baseOverlay), so a missing one is a crash, not an area
+ * Assets/Maps views' baseOverlay), so a missing one is a crash, not an area
  * that quietly renders without imagery — which is exactly what selecting
  * anything but Al Maha in the area switcher used to do.
  *
@@ -258,7 +258,7 @@ export const areaDyingTreeSequence: Record<string, string[]> = {
 
 /**
  * Picks the dieback frame for the selected range's END month — the same "as
- * of this date" rule MapCanvas's flagged pins and the Areas table both use.
+ * of this date" rule MapCanvas's flagged pins and the Assets table both use.
  * Months before the sequence's own window (`totalMonths - sequence.length`)
  * get the mildest frame, since nothing has visibly failed yet; the sequence's
  * own last frame covers the final month and everything past it (there is

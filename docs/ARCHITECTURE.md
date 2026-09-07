@@ -14,7 +14,7 @@ config file) live in `AGENTS.md`. This document is about the app's own shape.
 
 - `showLanding` — a boolean gate. `true` early-returns `<LandingScreen />`
   before any of the workspace chrome renders.
-- `activeTab` — one of `Insights | Areas | Maps | Assets | Story`.
+- `activeTab` — one of `Insights | Assets | Maps | Areas | Story`.
 
 Consequences worth knowing before you change anything:
 
@@ -42,12 +42,12 @@ two ways via `TAB_DESTINATION`:
 `onEnter` therefore takes optional navigation intent:
 
 ```ts
-onEnter: (areaId?: string, opts?: { tab?: string; filter?: PendingAreaFilter }) => void
+onEnter: (areaId?: string, opts?: { tab?: string; filter?: PendingAssetFilter }) => void
 ```
 
 Both fields are optional, so a bare `onEnter()` still behaves exactly as it did.
 This is what lets a KPI card on the landing dashboard drill through the gate and
-land on Areas with its filter already applied.
+land on Assets with its filter already applied.
 
 ### Where the dashboard lives
 
@@ -78,8 +78,8 @@ const { months, range, setRange } = useDateRange(...);      // map playback
 
 | Scope | Drives | Used by |
 |---|---|---|
-| `calendar` | "what period am I analysing?" | Insights, Assets |
-| `range` | "what month is the map showing?" | Maps, Areas, Story |
+| `calendar` | "what period am I analysing?" | Insights, Areas |
+| `range` | "what month is the map showing?" | Maps, Assets, Story |
 
 The landing screen's dashboard section owns a **third**, independent
 `useDateRange` (`dashboardRange`), because it lives outside `App` entirely and
@@ -104,6 +104,7 @@ MonthSnapshot[]  (one measurement per month, a flow not a running total)
       ├── data/dashboard.ts   ──→ Dashboard section (KPIs, line chart, donuts, table)
       ├── data/canopies.ts    ──→ 3D canopy layer (see below — the exception)
       ├── data/story.ts       ──→ Story tab content
+      ├── data/storyMap.ts    ──→ what the map does per story block (see below)
       ├── data/events.ts      ──→ Recent-events feed
       └── data/trees.ts       ──→ per-tree records for the table + map pins
 ```
@@ -118,6 +119,30 @@ Two rules that are easy to break:
    no independent signal in this dataset — they are computed from canopy cover
    and the condition mix. Each has a comment explaining what it stands in for.
    Don't present them as measured.
+
+## The Story tab drives the map
+
+Each story block declares a `StoryMapView` (`data/storyMap.ts`): a camera
+`frame`, the content `layers` to light, an optional `colorMode`, and the `note`
+shown under the block explaining why that view suits its numbers. `StoryPanel`
+reports the active block up to `StoryView`, which passes that block's view to
+`MapCanvas` as `storyView`.
+
+Three things worth knowing before changing it:
+
+- **It is a view override, not a mutation.** `layerVisibility` and
+  `basemapIndex` live in App.tsx and are shared by every tab; writing to them
+  from the story would silently rewrite what Maps shows. `MapCanvas` composes
+  the story's layer set into `effectiveVisibility` alongside `isolatedId`
+  instead, and the layer panel's own handlers clear it — touching the panel
+  hands the map back to the reader until they move to another block.
+- **The basemap is deliberately not driven.** Swapping it calls `setStyle`,
+  which destroys every source and layer the app added and needs the lot
+  rebuilt. Colour mode gets a comparable visual shift for one CSS `filter`.
+- **The camera moves once, not twice.** `focusLayer` and the auto-fit both
+  chain a tilt off `moveend` and both carry comments about how that races. The
+  story effect computes the fit with `cameraForBounds` up front and sends
+  centre, zoom, pitch and bearing in a single `easeTo`/`flyTo`.
 
 ### The one thing not derived from snapshots
 
@@ -143,8 +168,8 @@ That height is **one shared constant**:
 export const CONTENT_HEIGHT_CLASS = "h-[calc(100vh_-_102px)]";
 ```
 
-`MapsView`, `AreasView` and `StoryView` all import it. It used to be a `150px`
-literal copy-pasted into all three (three times in `AreasView` alone), sized for
+`MapsView`, `AssetsView` and `StoryView` all import it. It used to be a `150px`
+literal copy-pasted into all three (three times in `AssetsView` alone), sized for
 a timeline row that has since been made `hidden` — which silently wasted ~48px
 at the bottom of every map tab. If you change the header, change `layout.ts`;
 it carries a dev-time assertion and the arithmetic that produced 102.
@@ -173,7 +198,7 @@ until it can measure its container.
 
 | Where | Unit | Divider class |
 |---|---|---|
-| `AreasView` — map ↔ table | % of container | `.split-divider` |
+| `AssetsView` — map ↔ table | % of container | `.split-divider` |
 | `StoryView` — map ↔ story panel | % of container | `.split-divider` |
 | `LandingScreen` sidebar, `LayerPanel` | px | `.edge-resize-grip` |
 

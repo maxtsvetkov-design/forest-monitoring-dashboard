@@ -281,7 +281,7 @@ html, body, #root {
   background: #0a0f0d;
 }
 
-/* The ring drawn around a tree picked in the Areas table is a DOM marker, so
+/* The ring drawn around a tree picked in the Assets table is a DOM marker, so
    hiding the pin layer never reached it — on an otherwise empty canvas it
    would be the one stray thing left floating. */
 .map--isolated .tree-focus {
@@ -436,7 +436,7 @@ html, body, #root {
 }
 
 /* ---------------------------------------------------------------------------
-   Areas view: resize affordances
+   Assets view: resize affordances
    --------------------------------------------------------------------------- */
 
 /* Set on <body> for the duration of any drag (see useDragResize). Without it,
@@ -969,7 +969,7 @@ body.is-dragging-resize {
 }
 
 
-/* Ring over the tree selected in the Areas table. Drawn for every selection,
+/* Ring over the tree selected in the Assets table. Drawn for every selection,
    not just flagged ones: healthy trees carry no pin, so without the ring a
    selection would fly the camera to imagery with nothing marked on it. */
 /* Load-bearing: the pulse animates `transform`, and MapLibre positions a marker
@@ -1352,7 +1352,7 @@ body.is-dragging-resize {
   }
 }
 
-/* Opacity only. Used for the Maps and Areas views: a `transform` on an ancestor
+/* Opacity only. Used for the Maps and Assets views: a `transform` on an ancestor
    of MapLibre's WebGL canvas forces it into a new containing block and costs a
    full recomposite mid-animation, which makes the map feel worse than no
    transition at all. Fading is free. */
@@ -1583,6 +1583,19 @@ html {
 .scroll-slim:hover::-webkit-scrollbar-thumb {
   background: #a6a6b0;
   background-clip: content-box;
+}
+
+/* Fully invisible scrollbar, same `overscroll-behavior` containment as
+   `.scroll-slim` — for a strip that scrolls (a chip row too narrow for the
+   viewport) but is dragged or wheel-scrolled, not read as a scroll pane in
+   its own right; a visible thumb there reads as chrome, not a control. */
+.scroll-hidden {
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.scroll-hidden::-webkit-scrollbar {
+  display: none;
 }
 
 /* --- Modal panels --------------------------------------------------------- */

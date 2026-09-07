@@ -15,7 +15,7 @@ interface DragResizeOptions {
 /**
  * Pointer-drag along the X axis, mapped to a clamped number.
  *
- * Both resize affordances in the Areas view reduce to this: the split-pane
+ * Both resize affordances in the Assets view reduce to this: the split-pane
  * divider drags a percentage, a column's grip drags a pixel width. The only
  * difference is the unit, which the caller supplies as `scale` (value units per
  * pixel of travel) when the drag begins — the split pane can't know its scale

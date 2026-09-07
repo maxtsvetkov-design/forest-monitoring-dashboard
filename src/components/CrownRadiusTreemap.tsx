@@ -37,7 +37,7 @@ export default function CrownRadiusTreemap({
 }: {
   data: CrownBucketDatum[];
   delay: number;
-  /** Clicking a band jumps to Areas filtered to that crown-radius bucket.
+  /** Clicking a band jumps to Assets filtered to that crown-radius bucket.
    * Receives the band's index, which maps 1:1 onto b1..b5. */
   onSelectBucket?: (bucketIndex: number) => void;
   /** Change in the share of trees in the two largest crown-radius buckets vs

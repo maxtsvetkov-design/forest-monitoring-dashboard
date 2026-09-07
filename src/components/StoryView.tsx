@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
-import { buildStory, buildStoryHeader } from "../data/story";
+import { buildStory, buildStoryHeader, type StoryBlock } from "../data/story";
 import {
   areaDyingTreeOverlays,
   areaGenerativeOverlays,
@@ -17,14 +17,14 @@ import MapCanvas from "./MapCanvas";
 import StoryPanel from "./StoryPanel";
 import { CONTENT_HEIGHT_CLASS } from "../layout";
 
-// Same explicit viewport-relative height MapsView/AreasView use — the
+// Same explicit viewport-relative height MapsView/AssetsView use — the
 // ancestor chain is auto-height, so a flex-1 child has nothing definite to
 // resolve against and would collapse MapLibre's canvas to 0px. The calc
 // itself is shared — see layout.ts.
 const VIEW_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[420px]`;
 
 // The map's share of the row, as a percentage — the story panel takes the
-// rest. Same split-pane contract as AreasView (left pane sized, right pane
+// rest. Same split-pane contract as AssetsView (left pane sized, right pane
 // `flex-1`), so dragging means the same thing on both tabs. The bounds are
 // wider here because the story panel stays readable much narrower than a
 // table does: at 82% the panel is still ~250px, enough for its cards.
@@ -52,6 +52,7 @@ export default function StoryView({
   onLayerOpacityChange,
   basemapIndex,
   onBasemapIndexChange,
+  onClose,
 }: {
   area: Area;
   range: DateRange;
@@ -63,6 +64,9 @@ export default function StoryView({
   onLayerOpacityChange: Dispatch<SetStateAction<Record<ContentLayerId, number>>>;
   basemapIndex: number;
   onBasemapIndexChange: Dispatch<SetStateAction<number>>;
+  /** Leaves the story and returns to the plain Maps tab. Optional so other
+   * callers of StoryView aren't forced to supply a way out. */
+  onClose?: () => void;
 }) {
   const aerialRange = layerTime.rangeFor.aerial;
   const dyingRange = layerTime.rangeFor.dyingTrees;
@@ -92,6 +96,20 @@ export default function StoryView({
   // selected range. The map beside it still follows the timeline.
   const blocks = useMemo(() => buildStory(area), [area]);
   const header = useMemo(() => buildStoryHeader(area), [area]);
+
+  // The block currently being read, and through it the map view that block
+  // asks for. Held here rather than inside either half because it is the one
+  // piece of state the panel and the map genuinely share — the panel decides
+  // it, the map obeys it, and neither needs to know about the other.
+  //
+  // The *view*, not the block, is what reaches MapCanvas, and those view
+  // objects are module-level constants (see storyMap.ts). So the camera effect
+  // keys on a reference that is stable for the life of the app: re-selecting a
+  // block, or any re-render for an unrelated reason, hands down the identical
+  // object and the map stays where it is. Only actually moving to a block with
+  // a different view is a camera change.
+  const [activeBlock, setActiveBlock] = useState<StoryBlock | undefined>(undefined);
+  const handleActiveBlockChange = useCallback((block: StoryBlock | undefined) => setActiveBlock(block), []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT_PCT);
@@ -132,11 +150,12 @@ export default function StoryView({
           onLayerOpacityChange={onLayerOpacityChange}
           basemapIndex={basemapIndex}
           onBasemapIndexChange={onBasemapIndexChange}
+          storyView={activeBlock?.map ?? null}
           className="w-full h-full"
         />
       </div>
 
-      {/* Same divider the Areas view uses. MapCanvas watches its own container
+      {/* Same divider the Assets view uses. MapCanvas watches its own container
           with a ResizeObserver and calls map.resize(), so dragging needs no
           explicit resize call here either. */}
       <div
@@ -167,7 +186,12 @@ export default function StoryView({
       />
 
       <div className="flex-1 min-w-0 h-full">
-        <StoryPanel header={header} blocks={blocks} />
+        <StoryPanel
+          header={header}
+          blocks={blocks}
+          onActiveBlockChange={handleActiveBlockChange}
+          onClose={onClose}
+        />
       </div>
     </div>
   );

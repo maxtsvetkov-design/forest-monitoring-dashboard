@@ -17,7 +17,7 @@ export default function DashboardKpiCard({
 }: {
   kpi: DashboardKpi;
   delay: number;
-  /** Jumps to the Areas tab filtered to the trees this number counts. Absent
+  /** Jumps to the Assets tab filtered to the trees this number counts. Absent
    * for metrics with no per-tree equivalent — the card then stays inert
    * rather than offering a drill-down that lands nowhere. */
   onDrillDown?: () => void;
@@ -37,7 +37,7 @@ export default function DashboardKpiCard({
       disabled={!interactive}
       onClick={onDrillDown}
       title={kpi.hint}
-      aria-label={interactive ? `${kpi.label}: ${formatKpi(kpi.value, kpi.format)}. Show these trees in Areas` : undefined}
+      aria-label={interactive ? `${kpi.label}: ${formatKpi(kpi.value, kpi.format)}. Show these trees in Assets` : undefined}
       className={`kpi-tile group animate-fade-in-up flex-1 min-w-[190px] text-left flex flex-col gap-[6px] px-[14px] py-[12px] rounded-[12px] border transition-[transform,box-shadow,background-color,border-color] duration-(--dur-3) ease-(--ease-lux) ${
         alert
           ? "bg-[#fbe3dd] border-[rgba(216,48,32,0.28)]"

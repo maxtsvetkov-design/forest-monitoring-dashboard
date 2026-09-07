@@ -60,7 +60,7 @@ export interface DashboardKpi {
   /** Tooltip text: what this number actually measures, since several of these
    * labels come from the mockup rather than from the dataset. */
   hint: string;
-  /** Condition labels this KPI counts, handed to the Areas tab's filter when
+  /** Condition labels this KPI counts, handed to the Assets tab's filter when
    * the card is clicked. Absent when the metric has no per-tree equivalent. */
   drillConditions?: string[];
 }

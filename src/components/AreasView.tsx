@@ -1,339 +1,180 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useState } from "react";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
-import { eventsInRange, generateEvents, type TreeEvent } from "../data/events";
-import {
-  areaDyingTreeOverlays,
-  areaGenerativeOverlays,
-  areaOverlays,
-  dyingTreeOverlayForRange,
-  getTimelapseImages,
-  timelapseBucketIndex,
-} from "../data/overlays";
-import { generateTreeRecordsAt } from "../data/trees";
-import { clamp, useDragResize } from "../hooks/useDragResize";
-import { applyPendingFilter, useTreeFilters, type PendingAreaFilter } from "../hooks/useTreeFilters";
-import type { ContentLayerId } from "./LayerPanel";
-import { useSlidingPill } from "../hooks/useSlidingPill";
-import type { LayerTime } from "../hooks/useLayerTime";
-import MapCanvas from "./MapCanvas";
-import RecentEventsList from "./RecentEventsList";
-import TreeTable from "./TreeTable";
-import { CONTENT_HEIGHT_CLASS } from "../layout";
+import { getTimelapseImages, timelapseBucketIndex } from "../data/overlays";
+import { PREVIEW_TREE_IMAGE_IDS, TREE_PHOTO_SPRITE_URL, spriteTileAt } from "../data/treePhotoSprite";
 
-// Shared with MapsView/StoryView — see layout.ts. All three panes below
-// (the map, the divider between them, and the table) must resolve to this
-// exact same height or the divider stops lining up with its neighbours.
-const AREAS_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
+// One CSS grid, `grid-auto-flow: dense` packing every tile (captures and
+// tree crops alike) into whatever gaps its neighbours leave — the actual
+// mechanism a bento layout relies on, rather than hand-placing each cell.
+// Column counts step up with viewport width; the per-tile spans below are
+// written against the xl (12-col) grid and simply clamp down gracefully on
+// narrower ones since Tailwind's arbitrary col-span values cap at the grid's
+// own column count.
+const BENTO_GRID = "grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-12 auto-rows-[92px] gap-[10px] [grid-auto-flow:dense]";
 
-type RightPanel = "table" | "events";
+// A hand-tuned rhythm of hero / medium / small cells for the five aerial
+// captures — the "big number surrounded by small ones" bento look, rather
+// than every tile being the same size.
+const CAPTURE_SPANS = ["col-span-4 row-span-2", "col-span-4 row-span-2", "col-span-2 row-span-2", "col-span-2 row-span-1", "col-span-2 row-span-1"];
 
-const RIGHT_PANEL_OPTIONS: { key: RightPanel; label: string }[] = [
-  { key: "table", label: "Trees table" },
-  { key: "events", label: "Recent events" },
-];
+// A handful of tree crops get pulled out to 2x2 "featured" cells so the
+// photo library doesn't read as one flat grid; everything else stays 1x1 and
+// the dense auto-flow packs it into whatever space the featured cells leave.
+const FEATURED_TREE_INDICES = new Set([2, 7, 12]);
 
-/** Small segmented control — the right pane's own view switch, distinct
- * from the top-bar's Insights/Areas/Maps/Assets tabs one level up. Shares
- * useSlidingPill and the `.seg-track`/`.tab-pill` classes with that top bar
- * rather than approximating the same look with its own colour-swap: the
- * point is that switching a pane reads as the same *kind* of action as
- * switching a tab, not a coincidentally similar one. */
-function RightPanelSwitcher({ value, onChange }: { value: RightPanel; onChange: (v: RightPanel) => void }) {
-  const { trackRef, setItemRef, pill, ready, morphing } = useSlidingPill(value);
+/** One drone capture — full-resolution, so these stay individual files
+ * (a sprite is for small repeated thumbnails; blowing a 1500m aerial photo
+ * up from a 200x200 sprite tile would look terrible). Labeled by whichever
+ * month its position in the timelapse falls closest to. `object-cover`
+ * crops rather than stretches, so the photo's real proportions survive
+ * every bento span this can be given, wide hero or narrow strip alike.
+ * `active` mirrors the timeline slider's current position (same bucket math
+ * Maps/Assets use for their own overlay swap), so dragging the slider is
+ * visibly reflected here too rather than this grid being frozen in place. */
+function CaptureCard({
+  url,
+  label,
+  span,
+  active,
+  delay,
+}: {
+  url: string;
+  label: string;
+  span: string;
+  active: boolean;
+  delay: number;
+}) {
   return (
-    <div ref={trackRef} className="seg-track relative shrink-0">
-      <div
-        aria-hidden="true"
-        className={`tab-pill ${ready ? "" : "tab-pill--instant"} ${morphing ? "tab-pill--morphing" : ""}`}
-        style={{ left: `${pill.left}px`, width: `${pill.width}px` }}
-      />
-      {RIGHT_PANEL_OPTIONS.map((opt) => (
-        <button
-          key={opt.key}
-          ref={setItemRef(opt.key)}
-          type="button"
-          onClick={() => onChange(opt.key)}
-          aria-pressed={value === opt.key}
-          className={`relative z-[1] px-[10px] py-[4px] rounded-[7px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-200 ${
-            value === opt.key ? "text-white" : "text-[#5b5b66] hover:text-[#18181c]"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
+    <div
+      className={`group relative rounded-[10px] overflow-hidden border bg-[#dedee3] animate-fade-in-up shadow-[0px_1.823px_1.687px_0px_rgba(0,0,0,0.04)] transition-all duration-300 ${span} ${
+        active
+          ? "border-[#096151] ring-2 ring-[#096151] ring-offset-2 ring-offset-[#ebece7]"
+          : "border-[#dedee3] opacity-55 hover:opacity-90 hover:shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08),0px_6px_20px_-4px_rgba(0,0,0,0.1)]"
+      }`}
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <img src={url} alt="" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent px-3 py-2 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-white font-['Outfit',sans-serif]">{label}</span>
+        {active && (
+          <span className="shrink-0 inline-flex items-center h-[16px] px-[6px] rounded-full text-[9px] font-bold tracking-wide bg-[#096151] text-white">
+            IN VIEW
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-// Neither pane may be squeezed to uselessness: below ~30% the map is too small
-// to orient in and the table can't show a single full row.
-const MIN_SPLIT_PCT = 30;
-const MAX_SPLIT_PCT = 70;
-const DEFAULT_SPLIT_PCT = 50;
-const KEYBOARD_SPLIT_STEP = 5;
-
-export default function AreasView({
-  area,
-  range,
-  layerTime,
-  isTimelinePlaying,
-  pendingFilter,
-  onPendingFilterApplied,
-  layerVisibility,
-  onLayerVisibilityChange,
-  layerOpacity,
-  onLayerOpacityChange,
-  basemapIndex,
-  onBasemapIndexChange,
-}: {
-  area: Area;
-  range: DateRange;
-  /** Per-layer ranges, forwarded to the layer panel's coverage strips. */
-  layerTime: LayerTime;
-  /** Whether the timeline's play button is currently stepping through
-   * months — see MapCanvas's canopy gradient pulse. */
-  isTimelinePlaying?: boolean;
-  /** A filter handed over from a clicked Insights widget, to apply once and
-   * then report consumed — see App.tsx's pendingFilter. */
-  pendingFilter?: PendingAreaFilter | null;
-  onPendingFilterApplied?: () => void;
-  /** Shared across every map view — see App.tsx. */
-  layerVisibility: Record<ContentLayerId, boolean>;
-  onLayerVisibilityChange: Dispatch<SetStateAction<Record<ContentLayerId, boolean>>>;
-  layerOpacity: Record<ContentLayerId, number>;
-  onLayerOpacityChange: Dispatch<SetStateAction<Record<ContentLayerId, number>>>;
-  basemapIndex: number;
-  onBasemapIndexChange: Dispatch<SetStateAction<number>>;
-}) {
-  // Each overlay resolves from its OWN layer's range, not the master one, so a
-  // layer detached in the panel actually renders a different month than its
-  // neighbours. The generative art shares the aerial footprint but keeps its
-  // own range: the two are separate chips and can be scrubbed apart.
-  const aerialRange = layerTime.rangeFor.aerial;
-  const dyingRange = layerTime.rangeFor.dyingTrees;
-
-  const baseOverlay = areaOverlays[area.id];
-  const timelapseImages = getTimelapseImages(area.id);
-  // A plain number, not memoized — cheap arithmetic, and its whole purpose is
-  // to be a stable primitive the useMemo below can key on. Memoizing on
-  // `range` directly would rebuild MapCanvas's overlay layer (a full
-  // source/layer teardown) on every pixel of a slider drag instead of only
-  // when the visible image actually needs to change.
-  const timelapseBucket = timelapseImages
-    ? timelapseBucketIndex(aerialRange, area.snapshots.length, timelapseImages.length)
-    : -1;
-  const overlay = useMemo(
-    () => (timelapseImages && timelapseBucket >= 0 ? { ...baseOverlay, url: timelapseImages[timelapseBucket] } : baseOverlay),
-    [baseOverlay, timelapseImages, timelapseBucket],
+/** One tile sliced out of the shared tree-photo sprite sheet (see
+ * data/treePhotoSprite.ts) — the whole grid below is one network request,
+ * not seventeen, which is the actual point of a sprite sheet.
+ *
+ * `aspect-square self-start` (rather than letting the tile stretch to fill
+ * whatever row/col span it's given) is what keeps every crop's real square
+ * proportions intact: these grid cells aren't reliably square themselves —
+ * column width varies with viewport/breakpoint while the row unit is a
+ * fixed px — so stretching a sprite region to fill a non-square box would
+ * warp the photo. Sizing from its own aspect ratio instead means a 2x2
+ * "featured" tile may leave a sliver of empty space rather than distort,
+ * which reads as intentional bento spacing rather than a bug. */
+function SpriteTile({ index, span, delay }: { index: number; span: string; delay: number }) {
+  const tile = spriteTileAt(index);
+  return (
+    <button
+      type="button"
+      className={`group relative self-start aspect-square w-full rounded-[10px] overflow-hidden border border-[#dedee3] animate-fade-in-up cursor-pointer ${span}`}
+      style={{ animationDelay: `${delay}ms` }}
+      title={`Tree crop ${index + 1}`}
+    >
+      <span
+        className="absolute inset-0 block transition-transform duration-300 group-hover:scale-[1.08]"
+        style={{
+          backgroundImage: tile.backgroundImage,
+          backgroundPosition: tile.backgroundPosition,
+          backgroundSize: tile.backgroundSize,
+        }}
+      />
+      <span className="absolute inset-0 ring-0 group-hover:ring-2 ring-inset ring-[#096151] transition-all duration-150" />
+    </button>
   );
+}
 
-  // Same "as of the range's end month" rule as the tree inventory below —
-  // dragging into the final three months escalates this from the mild frame
-  // to the severe one.
-  const dyingTreeOverlay = useMemo(
-    () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, dyingRange, area.snapshots.length),
-    [area.id, area.snapshots.length, dyingRange.endIndex],
-  );
+export default function AreasView({ area, range }: { area: Area; range: DateRange }) {
+  const captureUrls = getTimelapseImages(area.id) ?? [];
+  const totalMonths = area.snapshots.length;
 
-  // The plot's standing inventory as of the LAST month in the selected range:
-  // one row per tree, showing the condition that tree was in that month.
-  //
-  // Not every month in the range concatenated together — the population
-  // persists now (see treePopulation.ts), so a tree exists in all twelve
-  // months and listing the range would repeat every tree once per month
-  // selected. "The plot as it stands at this date" is both the smaller list
-  // and the true one, and it is exactly the rule MapCanvas applies to pins, so
-  // rows and pins keep showing the same trees.
-  const inRange = useMemo(
-    () => generateTreeRecordsAt(overlay, area.id, area.snapshots, range.endIndex),
-    [overlay, area.id, area.snapshots, range.endIndex],
-  );
+  // Even split across the real month labels, same idea as
+  // overlays.ts's timelapseBucketIndex but read forward (capture index ->
+  // representative month) instead of backward (range -> capture index).
+  const captureLabel = (i: number) => {
+    if (totalMonths === 0) return `Capture ${i + 1}`;
+    const monthIndex = Math.min(totalMonths - 1, Math.floor(((i + 0.5) / captureUrls.length) * totalMonths));
+    return area.snapshots[monthIndex]?.label ?? `Capture ${i + 1}`;
+  };
 
-  const filters = useTreeFilters(inRange);
+  // Same bucket math MapsView/AssetsView use to pick which aerial photo the
+  // map itself shows for the current timeline selection — reused here so
+  // this grid highlights the very same capture, and moves in step with it
+  // as the slider is dragged.
+  const activeCaptureIndex = timelapseBucketIndex(range, totalMonths, captureUrls.length);
 
-  // Same source and range-filtering as the Insights sidebar's own Recent
-  // Events list (App.tsx) — generated off the base (non-timelapse-swapped)
-  // overlay there too, so switching to this panel here shows the identical
-  // set rather than a second, independently-rolled one.
-  const areaEvents = useMemo(() => generateEvents(baseOverlay, area.snapshots, area.id), [baseOverlay, area.snapshots, area.id]);
-  const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
-
-  const [rightPanel, setRightPanel] = useState<RightPanel>("table");
-
-  // Applies a filter handed in from outside the table (a clicked widget on
-  // Insights) exactly once, then reports it consumed so App.tsx clears the
-  // pending value — otherwise navigating back to Areas later would re-apply a
-  // stale filter the user never asked for on that visit.
-  useEffect(() => {
-    if (!pendingFilter) return;
-    applyPendingFilter(filters, pendingFilter);
-    onPendingFilterApplied?.();
-    // filters and onPendingFilterApplied are stable across renders of this
-    // hook/prop, and including them would re-fire on every filter change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingFilter]);
-
-  // The map honours the same filters as the table. Memoised so the identity is
-  // stable — MapCanvas's visibility effect depends on this set, and a fresh one
-  // each render would re-run it on every keystroke.
-  const visibleTreeIds = useMemo(
-    () => new Set(filters.visible.map((t) => t.id)),
-    [filters.visible],
-  );
-
-  // Highlights + scrolls to a row in the table. Set by either a table row
-  // click or a map pin click — the two entry points share this one state
-  // because both mean the same thing to the table ("show me this tree").
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Purely a pointer-hover echo from the map (see onPinHover) — highlights the
-  // matching row without selecting it or moving the camera the way a click does.
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-
-  // A SEPARATE target for the map's fly-to/ring, set only by table row clicks.
-  // A pin click deliberately does not touch this: the user is already looking
-  // right at that pin on the map, so re-flying the camera to zoom 18 on top of
-  // an action that only asked to highlight a table row would be an
-  // unrequested camera hijack, not a convenience.
-  const [flyToId, setFlyToId] = useState<string | null>(null);
-
-  // An event's tree is selected/flown-to exactly like a table row click —
-  // this panel and the table are two views onto the same right-hand pane
-  // for the same map, so "select this tree" should mean the same thing
-  // from either one rather than jumping to a different tab.
-  function handleSelectEvent(event: TreeEvent) {
-    setSelectedId(event.tree.id);
-    setFlyToId(event.tree.id);
-    setRightPanel("table");
-  }
-
-  // Derived from the visible set rather than stored alongside it: a tree that
-  // the timeline or a filter has just excluded should stop being focused, and
-  // deriving means there is no stale selection to clean up.
-  // The tree whose digital twin is open. Held as an id and resolved against
-  // the visible set for the same reason `flyToId` is: a tree filtered or
-  // scrolled out of the window should close its own twin rather than leave a
-  // card describing something no longer on the map.
-  const [inspectId, setInspectId] = useState<string | null>(null);
-  const inspectTree = useMemo(
-    () => filters.visible.find((t) => t.id === inspectId) ?? null,
-    [filters.visible, inspectId],
-  );
-
-  const focusTree = useMemo(() => {
-    const found = filters.visible.find((t) => t.id === flyToId);
-    return found ? { id: found.id, lng: found.lng, lat: found.lat } : null;
-  }, [filters.visible, flyToId]);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT_PCT);
-  const split = useDragResize({
-    min: MIN_SPLIT_PCT,
-    max: MAX_SPLIT_PCT,
-    onChange: setSplitPct,
-  });
-
-  function nudgeSplit(delta: number) {
-    setSplitPct((prev) => clamp(prev + delta, MIN_SPLIT_PCT, MAX_SPLIT_PCT));
-  }
+  const [spriteSheetOpen, setSpriteSheetOpen] = useState(false);
 
   return (
-    <div ref={containerRef} className="flex gap-0 px-4 pb-6">
-      {/* Explicit height: the ancestor chain is `min-h-screen` (auto height), so a
-          `flex-1` child has no definite height to resolve against and can collapse,
-          leaving MapLibre with a 0px-tall canvas. */}
-      <MapCanvas
-        layerTime={layerTime}
-        pinsRange={layerTime.rangeFor.pins}
-        generativeRange={layerTime.rangeFor.generative}
-        center={area.center}
-        zoom={11.5}
-        overlay={overlay}
-        generativeOverlay={areaGenerativeOverlays[area.id]}
-        dyingTreeOverlay={dyingTreeOverlay}
-        areaId={area.id}
-        areaName={area.name}
-        snapshots={area.snapshots}
-        range={range}
-        isTimelinePlaying={isTimelinePlaying}
-        visibleTreeIds={visibleTreeIds}
-        focusTree={focusTree}
-        inspectTree={inspectTree}
-        onExitInspect={() => setInspectId(null)}
-        onPinClick={(id) => setSelectedId(id)}
-        onPinHover={setHoveredId}
-        layerVisibility={layerVisibility}
-        onLayerVisibilityChange={onLayerVisibilityChange}
-        layerOpacity={layerOpacity}
-        onLayerOpacityChange={onLayerOpacityChange}
-        basemapIndex={basemapIndex}
-        onBasemapIndexChange={onBasemapIndexChange}
-        className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
-        style={{ width: `${splitPct}%` }}
-      />
-
-      {/* MapCanvas already watches its container with a ResizeObserver and calls
-          map.resize(), so dragging this divider needs no explicit resize call. */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize map and table panes"
-        aria-valuenow={Math.round(splitPct)}
-        aria-valuemin={MIN_SPLIT_PCT}
-        aria-valuemax={MAX_SPLIT_PCT}
-        tabIndex={0}
-        onPointerDown={(e) => {
-          const width = containerRef.current?.getBoundingClientRect().width ?? 0;
-          if (width === 0) return;
-          // px of travel → percent of the container.
-          split.begin(e, splitPct, 100 / width);
-        }}
-        onDoubleClick={() => setSplitPct(DEFAULT_SPLIT_PCT)}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowLeft") {
-            e.preventDefault();
-            nudgeSplit(-KEYBOARD_SPLIT_STEP);
-          } else if (e.key === "ArrowRight") {
-            e.preventDefault();
-            nudgeSplit(KEYBOARD_SPLIT_STEP);
-          }
-        }}
-        className={`split-divider mt-[10px] ${AREAS_HEIGHT} ${split.dragging ? "split-divider--active" : ""}`}
-      />
-
-      <div className={`flex-1 min-w-0 ${AREAS_HEIGHT} mt-[10px] flex flex-col gap-[8px]`}>
-        <div className="flex justify-center shrink-0">
-          <RightPanelSwitcher value={rightPanel} onChange={setRightPanel} />
+    <div className="view-enter px-4 pb-6 flex flex-col gap-[14px]">
+      <div className="flex items-center justify-between gap-2 py-[10px]">
+        <div>
+          <h2 className="text-[14px] font-bold text-[#18181c] leading-[22px] font-['Outfit',sans-serif]">Areas</h2>
+          <p className="text-[12px] text-[#71717a] font-['Outfit',sans-serif] mt-[2px]">
+            {captureUrls.length} aerial capture{captureUrls.length === 1 ? "" : "s"} and {PREVIEW_TREE_IMAGE_IDS.length} ground-truth
+            tree crops — the highlighted capture tracks the timeline above.
+          </p>
         </div>
-        <div className="flex-1 min-h-0">
-          {rightPanel === "table" ? (
-            <TreeTable
-              records={inRange}
-              filters={filters}
-              areaName={area.name}
-              onSelect={(t) => {
-                setSelectedId(t.id);
-                setFlyToId(t.id);
-              }}
-              selectedId={selectedId}
-              hoveredId={hoveredId}
-              // Only offered while the twin layer is on: the button lands the
-              // camera among modelled trees, and with the layer off it would
-              // land in an empty sky.
-              onInspect={
-                layerVisibility.trees3d
-                  ? (t) => {
-                      setSelectedId(t.id);
-                      setInspectId(t.id);
-                    }
-                  : undefined
-              }
-              inspectingId={inspectId}
-            />
-          ) : (
-            <RecentEventsList events={visibleEvents} delay={0} onSelectEvent={handleSelectEvent} />
-          )}
+        <button
+          type="button"
+          onClick={() => setSpriteSheetOpen((o) => !o)}
+          className="u-press shrink-0 text-[11px] font-medium text-[#096151] hover:text-[#0a7761] font-['Outfit',sans-serif]"
+        >
+          {spriteSheetOpen ? "Hide sprite sheet" : "View raw sprite sheet"}
+        </button>
+      </div>
+
+      {spriteSheetOpen && (
+        <div className="border border-[#dedee3] rounded-[10px] p-[10px] bg-[#ebece7] animate-fade-in">
+          <img
+            src={TREE_PHOTO_SPRITE_URL}
+            alt="Sprite sheet containing every tree-photo thumbnail on this page"
+            className="w-full h-auto rounded-[6px] border border-[#dedee3]"
+            style={{ imageRendering: "pixelated" }}
+          />
+          <p className="text-[10px] text-[#71717a] font-['Outfit',sans-serif] mt-[6px]">
+            One 1200x600 PNG — every tree-crop tile below is this same file, cropped in place via CSS
+            background-position rather than loaded separately.
+          </p>
         </div>
+      )}
+
+      <div className={BENTO_GRID}>
+        {captureUrls.map((url, i) => (
+          <CaptureCard
+            key={url}
+            url={url}
+            label={captureLabel(i)}
+            span={CAPTURE_SPANS[i % CAPTURE_SPANS.length]}
+            active={i === activeCaptureIndex}
+            delay={i * 40}
+          />
+        ))}
+        {PREVIEW_TREE_IMAGE_IDS.map((id, i) => (
+          <SpriteTile
+            key={id}
+            index={i}
+            span={FEATURED_TREE_INDICES.has(i) ? "col-span-2 row-span-2" : "col-span-1 row-span-1"}
+            delay={captureUrls.length * 40 + i * 20}
+          />
+        ))}
       </div>
     </div>
   );

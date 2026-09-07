@@ -78,7 +78,7 @@ function pickTreeForEvent(
  * reloads but distinct per area.
  *
  * Every event carries a real `tree` record from the shared population — the
- * exact trees the map's pins and the Areas table are built from — rather than a
+ * exact trees the map's pins and the Assets table are built from — rather than a
  * fabricated ID, which is what lets "open this event" jump the map to an actual
  * point on the imagery.
  *
@@ -96,7 +96,7 @@ export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], 
   const events: TreeEvent[] = [];
 
   // One inventory per month, built once and reused — the pure, seeded
-  // population means this reproduces exactly what AreasView and MapCanvas see.
+  // population means this reproduces exactly what AssetsView and MapCanvas see.
   const byMonth = snapshots.map((_, monthIndex) =>
     generateTreeRecordsAt(overlay, areaId, snapshots, monthIndex, scale),
   );

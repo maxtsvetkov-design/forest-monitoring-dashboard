@@ -22,6 +22,7 @@ import LayerPanel, {
   type ContentLayerId,
 } from "./LayerPanel";
 import { buildMapFilter, DEFAULT_MAP_CONTRAST, type MapColorMode } from "./mapColorModes";
+import type { StoryFrame, StoryMapView } from "../data/storyMap";
 import MapToolbar from "./MapToolbar";
 import TreeHistoryModal from "./TreeHistoryModal";
 import TreeTwinCard from "./TreeTwinCard";
@@ -80,6 +81,115 @@ const INSPECT_PITCH = 62;
 const INSPECT_CARD_GUTTER = 292;
 
 const LOAD_TIMEOUT_MS = 10000;
+
+/** The browser event AIAssistant listens for to time its one proactive nudge
+ * — fired the first time the user actually moves ANY map instance (drag,
+ * zoom or click), not on mount. A plain DOM event rather than a prop threaded
+ * through MapsView/AssetsView/StoryView/App: three separate call sites mount
+ * their own MapCanvas, and the assistant that should react is whichever one
+ * happens to be on screen, not something each view needs to know about. */
+export const MAP_INTERACT_EVENT = "nabat:map-interact";
+
+/** Module-level, not component state: the guard has to survive across three
+ * independent MapCanvas mounts (Maps/Assets/Story/landing), so "already fired"
+ * must live outside any one of them. */
+let hasFiredMapInteract = false;
+function notifyFirstMapInteraction() {
+  if (hasFiredMapInteract) return;
+  hasFiredMapInteract = true;
+  window.dispatchEvent(new Event(MAP_INTERACT_EVENT));
+}
+
+/**
+ * How each of the Story panel's camera archetypes actually sits over the plot
+ * — see `StoryFrame` in data/storyMap.ts for what each one is *for*.
+ *
+ * `zoomDelta` is relative to a plain fit of the plot's own footprint, which is
+ * what makes these comparable: `plot` is that fit, `context` is two stops back
+ * from it, `terrain` three and a half. Absolute zooms would drift apart the
+ * moment a differently-sized area was added.
+ *
+ * The two tilted frames tilt for opposite reasons and so sit at different
+ * distances. `terrain` pulls a long way *out* because 12 hectares of desert
+ * plain is flat — vertical exaggeration only reads once enough landscape is in
+ * shot for the relief to have somewhere to rise from. `canopy` pushes *in*,
+ * because 2,300 modelled trees seen from altitude are green texture and only
+ * resolve into individual crowns close up.
+ *
+ * `bearing` is off-north in both, and deliberately not the same amount: a tilt
+ * with the north axis still square on reads as a photo that has been skewed
+ * rather than as a place being looked at from somewhere.
+ *
+ * `pitch` stays at or under 60 because that is MapLibre's default `maxPitch`,
+ * and it enforces it by silently clamping — asking for 64 gets 60 with no
+ * error, so the table would claim a tilt the camera never takes.
+ */
+const STORY_FRAMES: Record<
+  Exclude<StoryFrame, "twin">,
+  { pitch: number; bearing: number; exaggeration: number | null; padding: number; zoomDelta: number }
+> = {
+  context: { pitch: 0, bearing: 0, exaggeration: null, padding: 40, zoomDelta: -2.1 },
+  plot: { pitch: 0, bearing: 0, exaggeration: null, padding: 44, zoomDelta: 0 },
+  // Exaggerated well past the app's usual 1.5. The DEM here is real and has
+  // 600 m of range in shot — the foothills east of the site — but the basemap
+  // draws it as flat colour fills with no hillshade, so a deformed surface with
+  // no shading across it is very nearly invisible. Since this frame exists to
+  // make the ground itself legible, the vertical scale has to carry the whole
+  // reading on its own.
+  terrain: { pitch: 60, bearing: -28, exaggeration: 3.4, padding: 40, zoomDelta: -2.9 },
+  canopy: { pitch: 56, bearing: -18, exaggeration: null, padding: 48, zoomDelta: 0.55 },
+};
+
+/**
+ * The map's own chrome overlaps the canvas rather than sitting beside it — the
+ * layer panel is docked over the left edge and the toolbar over the right. A
+ * frame computed against the full container therefore centres the plot behind
+ * the panel, which on the Story tab means the left third of the site is
+ * permanently hidden under the very controls describing it.
+ *
+ * Fed to `cameraForBounds` as asymmetric padding, which shifts the centre as
+ * well as loosening the fit, so the plot ends up centred in the part of the
+ * canvas that is actually visible. Same reasoning as INSPECT_CARD_GUTTER, for
+ * the other side of the map.
+ */
+const CHROME_GUTTER_LEFT = 300;
+const CHROME_GUTTER_RIGHT = 58;
+
+/**
+ * Relief shading, added only while a `terrain` story frame is up.
+ *
+ * Tilting the camera over a DEM deforms the ground, but OpenStreetMap's vector
+ * style paints that ground as flat colour fills — and a deformed surface with
+ * no shading variation across it is very nearly invisible, however far it is
+ * exaggerated. Measured from the map itself: the visible extent here spans
+ * 194 m to 801 m of real elevation and still read as a flat road map.
+ *
+ * The shading is what makes the relief legible, and it is free: it reads the
+ * same DEM source the terrain is already using, so it costs no extra tiles.
+ */
+const HILLSHADE_LAYER_ID = "story-hillshade";
+
+/** The `twin` story frame's share of the width for one crown — see the
+ * `crownFill` argument on flyToNearestCrown. A quarter of what a real digital
+ * twin uses, because this frame is about standing *among* the trees rather than
+ * in front of one: at the twin's own 0.38 the camera ends up at the foot of a
+ * single trunk, which shows a tree but not a habitat. */
+const STORY_TWIN_CROWN_FILL = 0.09;
+
+/** Past this much zoom change, the move arcs (`flyTo`) instead of sliding
+ * (`easeTo`). A slide across five zoom levels is a smear — nothing in frame
+ * survives long enough to track — whereas an arc pulls up, translates while
+ * everything is small, and descends, which the eye reads as one journey. Below
+ * the threshold the arc is the wrong instinct: it adds a pointless climb
+ * between two views that were nearly the same size already. */
+const STORY_ARC_ZOOM_DELTA = 1.5;
+/** Long enough to be followed, short enough that clicking three blocks in a
+ * row doesn't feel like waiting. Arcs get more, because they cover more. */
+const STORY_EASE_MS = 1150;
+const STORY_ARC_MS = 1900;
+/** MapLibre's own default ceiling. Restored when a story frame moves away from
+ * the twin, which raises it (see INSPECT_ZOOM_MAX). */
+const DEFAULT_MAX_ZOOM = 22;
 
 // Drives --pin-t (see index.css): pins are crisp teardrop icons at the
 // framed/zoomed-in view (auto-frame lands around z16; "Fit to plot" similar)
@@ -534,12 +644,13 @@ export default function MapCanvas({
   onPinClick,
   onPinHover,
   onOverlayQuadChange,
+  storyView,
   chrome = true,
 }: {
   center: [number, number];
   zoom?: number;
   className?: string;
-  /** Inline sizing — the Areas split pane drives width as a percentage. */
+  /** Inline sizing — the Assets split pane drives width as a percentage. */
   style?: CSSProperties;
   show3DToggle?: boolean;
   overlay?: MapOverlay;
@@ -579,13 +690,13 @@ export default function MapCanvas({
    * play button is stepping through months — see the canopy layer effects. */
   isTimelinePlaying?: boolean;
   /**
-   * Restricts pins to these tree ids, on top of `range` — this is how the Areas
+   * Restricts pins to these tree ids, on top of `range` — this is how the Assets
    * table's health and species filters reach the map, so ticking "Dead" leaves
    * only dead trees on the imagery. Omit to show everything in range.
    */
   visibleTreeIds?: Set<string>;
   /**
-   * A tree selected in the Areas table. The camera flies to it and a ring marks
+   * A tree selected in the Assets table. The camera flies to it and a ring marks
    * the spot — the ring matters because healthy trees carry no pin, so without
    * it selecting one would just zoom into anonymous imagery.
    */
@@ -610,11 +721,11 @@ export default function MapCanvas({
    * instead of drifting off the pin it's meant to point at. */
   onFocusMove?: (pos: { x: number; y: number }) => void;
   /** Fires with a pin's tree id when it's clicked, in addition to opening its
-   * tooltip — lets a caller (AreasView) select and scroll to the matching
+   * tooltip — lets a caller (AssetsView) select and scroll to the matching
    * table row without this component knowing the table exists. */
   onPinClick?: (treeId: string) => void;
   /** Fires with a pin's tree id on hover, and `null` on pointer-out — a
-   * lighter-weight signal than `onPinClick`, meant for a caller (AreasView)
+   * lighter-weight signal than `onPinClick`, meant for a caller (AssetsView)
    * to highlight the matching table row without selecting it or moving the
    * camera. */
   onPinHover?: (treeId: string | null) => void;
@@ -624,6 +735,17 @@ export default function MapCanvas({
    * lets a caller (LandingScreen) draw its own outline over the plot's real
    * footprint and detect hovering near it, without owning a map instance. */
   onOverlayQuadChange?: (quad: { x: number; y: number }[] | null) => void;
+  /**
+   * The map state the Story panel's currently-read block asks for — camera
+   * frame, which layers to light, colour treatment. See data/storyMap.ts.
+   *
+   * Applied once per *change of view object*, never continuously: the story
+   * proposes a starting point for each block and then gets out of the way, so
+   * panning, tilting or toggling a layer afterwards is never fought. The
+   * layers it asks for are a view override on top of `layerVisibility` rather
+   * than a write to it — same reasoning as `isolatedId` below.
+   */
+  storyView?: StoryMapView | null;
   /** Set false to render the map bare — no layer panel, toolbar or overlay-
    * height slider. The project-overview first screen (LandingScreen) brings
    * its own sidebar and tool strip from the Figma design and would otherwise
@@ -636,7 +758,7 @@ export default function MapCanvas({
   // state: rebuilding it doesn't need a re-render, only the separate
   // range-visibility effect (below) reading it does.
   const pinsRef = useRef<{ pin: TreePin; marker: maplibregl.Marker }[]>([]);
-  // The ring drawn over a tree selected in the Areas table.
+  // The ring drawn over a tree selected in the Assets table.
   const focusMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Which of the two aerial-overlay slots (OVERLAY_*_ID_A/B) is currently
   // showing, and what the previous overlay prop was -- used to tell a hard
@@ -667,13 +789,64 @@ export default function MapCanvas({
   // isolation restores every layer exactly as it was without having to
   // remember a pre-isolation snapshot.
   const [isolatedId, setIsolatedId] = useState<ContentLayerId | null>(null);
-  const effectiveVisibility = useMemo(
-    () =>
-      isolatedId
-        ? (Object.fromEntries(LAYER_ORDER.map((id) => [id, id === isolatedId])) as Record<ContentLayerId, boolean>)
-        : layerVisibility,
-    [isolatedId, layerVisibility],
-  );
+  /**
+   * The layer set the current story block asked for, or null when the story
+   * isn't driving (every tab but Story, or once the reader has overridden it
+   * from the layer panel — see the panel's handlers below, which clear this).
+   *
+   * The same view-override reasoning as `isolatedId`: the panel keeps showing
+   * the reader's own choices, and stepping out of the story restores them with
+   * nothing to remember.
+   */
+  const [storyLayers, setStoryLayers] = useState<Set<ContentLayerId> | null>(null);
+
+  /** Every layer off except the ones named — the shape both overrides need. */
+  const onlyLayers = (on: (id: ContentLayerId) => boolean) =>
+    Object.fromEntries(LAYER_ORDER.map((id) => [id, on(id)])) as Record<ContentLayerId, boolean>;
+
+  // Three sources want a say in what is visible, and they are ranked by how
+  // deliberate the act behind each one was:
+  //
+  //   isolate  — someone pressed a button meaning "only this". The most
+  //              specific request available, so nothing outranks it.
+  //   story    — nobody asked for this directly; it came attached to the block
+  //              being read. A suggestion, and suggestions lose to instructions
+  //              — which is also why touching the layer panel clears it (see
+  //              the panel's handlers) rather than being overridden here.
+  //   panel    — the reader's standing choices, and the answer whenever neither
+  //              override is in play.
+  //
+  // Both overrides are exhaustive: they name what is on, and everything else is
+  // off. An additive story view would inherit whatever the previous block left
+  // showing, so the same block would mean different things depending on how you
+  // arrived at it.
+  const effectiveVisibility = useMemo(() => {
+    if (isolatedId) return onlyLayers((id) => id === isolatedId);
+    if (storyLayers) return onlyLayers((id) => storyLayers.has(id));
+    return layerVisibility;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isolatedId, storyLayers, layerVisibility]);
+
+  /**
+   * The same value, readable from the async callbacks that add layers.
+   *
+   * The generative trace and the dying-trees trace are both added from an
+   * `Image.onload`, which can land long after the effect that sets their
+   * visibility has run — and that effect only re-fires when the boolean it
+   * watches *changes*. A layer created into an already-settled "hidden" state
+   * therefore appeared at the style default (visible) with nothing left to turn
+   * it off. Latent for as long as visibility only ever changed by hand; the
+   * story's exhaustive layer sets hit it on the first block.
+   */
+  const effectiveVisibilityRef = useRef(effectiveVisibility);
+  effectiveVisibilityRef.current = effectiveVisibility;
+
+  /** Applies the current visibility to a layer the moment it is added, for the
+   * async creation paths that would otherwise miss it. */
+  function applyCurrentVisibility(map: maplibregl.Map, layerId: string, id: ContentLayerId) {
+    if (!map.getLayer(layerId)) return;
+    map.setLayoutProperty(layerId, "visibility", effectiveVisibilityRef.current[id] ? "visible" : "none");
+  }
   const is3DRef = useRef(is3D);
   is3DRef.current = is3D;
   const [error, setError] = useState<string | null>(null);
@@ -926,7 +1099,7 @@ export default function MapCanvas({
         map = new maplibregl.Map({
           container: el,
           // Seeds from the shared basemapIndex (see App.tsx) so a fresh
-          // MapCanvas mount -- e.g. switching from the Maps tab to Areas --
+          // MapCanvas mount -- e.g. switching from the Maps tab to Assets --
           // starts on whichever basemap was already picked, rather than
           // always resetting to OpenStreetMap.
           style: BASEMAPS[basemapIndex].style,
@@ -984,6 +1157,14 @@ export default function MapCanvas({
       // the dashboard's own visual language.
       map.on("rotate", () => setBearing(map.getBearing()));
 
+      // The one signal AIAssistant's proactive tip waits on — see
+      // notifyFirstMapInteraction. `.once` on each so a single map instance
+      // that's dragged repeatedly doesn't keep re-attempting the (already
+      // no-op'd) dispatch.
+      map.once("dragstart", notifyFirstMapInteraction);
+      map.once("zoomstart", notifyFirstMapInteraction);
+      map.once("click", notifyFirstMapInteraction);
+
       // Zoomed-out pins crossfade from crisp teardrop icons into soft glowing
       // circles — set as a single CSS custom property on the container
       // (inherited by every pin, see index.css) rather than React state or a
@@ -1038,7 +1219,7 @@ export default function MapCanvas({
   }, []);
 
   // The map is created once with the initial center/zoom; when the caller passes
-  // a new center — e.g. switching areas in the Areas tab — fly the existing map
+  // a new center — e.g. switching areas in the Assets tab — fly the existing map
   // instance there instead of recreating it.
   const isFirstCenter = useRef(true);
   useEffect(() => {
@@ -1252,6 +1433,7 @@ export default function MapCanvas({
           "raster-fade-duration": 0,
         },
       });
+      applyCurrentVisibility(m, GENERATIVE_LAYER_ID, "generative");
       ensureGenerativeOnTop(m);
 
       const baseCoordinates = generativeOverlay.coordinates;
@@ -1340,6 +1522,8 @@ export default function MapCanvas({
         source: DYING_SOURCE_ID,
         paint: { "raster-opacity": DYING_OPACITY * layerOpacityRef.current.dyingTrees, "raster-fade-duration": 0 },
       });
+      applyCurrentVisibility(m, DYING_LAYER_ID, "dyingTrees");
+      applyCurrentVisibility(m, DYING_GLOW_LAYER_ID, "dyingTrees");
       ensureGenerativeOnTop(m);
 
       // Its own height, independent of the generative trace's -- same
@@ -1671,7 +1855,16 @@ export default function MapCanvas({
    * the record's own coordinates lands *near* its tree rather than at it, and
    * a twin framing the gap between two trees is not a twin.
    */
-  function flyToNearestCrown(near: [number, number], fallbackRadiusM: number) {
+  function flyToNearestCrown(
+    near: [number, number],
+    fallbackRadiusM: number,
+    /** How much of the free width that one crown should span, overriding
+     * INSPECT_CROWN_FILL. The default frames a single tree because that is what
+     * a digital twin is; the Story panel's `twin` frame asks for a much smaller
+     * share so several trees stay in shot — it is showing the habitat animals
+     * are surveyed in, and one trunk filling the viewport shows no habitat. */
+    crownFill: number = INSPECT_CROWN_FILL,
+  ) {
     const map = mapRef.current;
     if (!map) return;
 
@@ -1702,7 +1895,7 @@ export default function MapCanvas({
       inspectTree && container.clientWidth > INSPECT_CARD_GUTTER * 2 ? INSPECT_CARD_GUTTER : 0;
     const freeWidth = Math.max(160, container.clientWidth - gutter);
     const crownWidthM = Math.max(1.5, crownRadiusM * 2);
-    const metresPerPixel = crownWidthM / (freeWidth * INSPECT_CROWN_FILL);
+    const metresPerPixel = crownWidthM / (freeWidth * crownFill);
     const latRad = (center[1] * Math.PI) / 180;
     const zoom = Math.min(
       INSPECT_ZOOM_MAX,
@@ -1901,8 +2094,13 @@ export default function MapCanvas({
   // finished last silently undid the other's zoom/position. A focus request is
   // an explicit navigation intent from outside the map (a Recent Events click)
   // and should win outright rather than contend with the passive default framing.
+  // Also skipped while the Story panel is driving, for exactly the reason the
+  // `focusTree` guard exists: both this and the story effect below fire off
+  // `overlayReady` flipping true on mount, both move the camera, and whichever
+  // landed second silently won. The story's first block is an explicit request
+  // for a specific frame, so it takes precedence over the passive default.
   useEffect(() => {
-    if (!show3DToggle || !overlay || !overlayReady || focusTree) return;
+    if (!show3DToggle || !overlay || !overlayReady || focusTree || storyView) return;
 
     const map = mapRef.current;
     if (!map) return;
@@ -1940,7 +2138,7 @@ export default function MapCanvas({
       cancelled = true;
     };
     // Deliberately `overlay?.coordinates`, not `overlay` itself: MapsView and
-    // AreasView swap `overlay.url` as the timeline crosses each timelapse
+    // AssetsView swap `overlay.url` as the timeline crosses each timelapse
     // bucket (see their `{ ...baseOverlay, url: ... }`), which hands this
     // effect a new overlay object on every image change while `coordinates`
     // — spread from the same stable `baseOverlay` — keeps its original array
@@ -1950,7 +2148,135 @@ export default function MapCanvas({
     // user had just set. `coordinates` only actually changes when the area
     // itself does, which is the one case this auto-fit is meant to cover.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show3DToggle, overlay?.coordinates, overlayReady, focusTree]);
+  }, [show3DToggle, overlay?.coordinates, overlayReady, focusTree, storyView]);
+
+  /**
+   * Applies the Story panel's current block view — the one place the story and
+   * the map actually meet.
+   *
+   * Keyed on `storyView`'s identity, and those objects are module-level
+   * constants in storyMap.ts, so this fires exactly when the reader moves to a
+   * block with a different view and never on an unrelated re-render. Between
+   * firings the map is entirely the reader's: this sets a starting point, it
+   * does not hold one.
+   *
+   * One camera call, not a fit followed by a tilt. `focusLayer` and the
+   * auto-fit above both chain a tilt off `moveend` and both carry a comment
+   * about the ways that races; here the fit is computed up front with
+   * `cameraForBounds` and the pitch and bearing ride along in the same move, so
+   * there is no second animation to collide with the first — and the whole
+   * transition reads as one gesture rather than two.
+   */
+  useEffect(() => {
+    if (!storyView) return;
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+
+    // Colour and layers land immediately; only the camera is animated. A
+    // cross-faded colour mode on top of a moving camera reads as the render
+    // breaking rather than as two things changing.
+    setColorMode(storyView.colorMode ?? "normal");
+    setStoryLayers(new Set(storyView.layers));
+
+    const coords = overlay?.coordinates ?? generativeOverlay?.coordinates;
+    if (!coords) return;
+
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+    if (storyView.frame === "twin") {
+      // Reuses the twin flight wholesale rather than approximating it: it
+      // already snaps to a real modelled crown, derives its zoom from that
+      // crown's own radius, and drops terrain for the descent. See
+      // flyToNearestCrown for why each of those matters.
+      setIs3D(true);
+      flyToNearestCrown(pointInQuad(coords, 0.5, 0.5), MAX_CROWN_RADIUS_M / 2, STORY_TWIN_CROWN_FILL);
+      return;
+    }
+
+    const frame = STORY_FRAMES[storyView.frame];
+    // Panel and toolbar sit *over* the canvas, so the plot is framed against
+    // the part of it the reader can actually see — see CHROME_GUTTER_LEFT. The
+    // gutters are dropped on a pane too narrow to spare them, where they would
+    // squeeze the plot off the opposite edge rather than clear of the panel.
+    const container = map.getContainer();
+    const roomForChrome = chrome && layerTime && container.clientWidth > (CHROME_GUTTER_LEFT + CHROME_GUTTER_RIGHT) * 1.8;
+    const fit = map.cameraForBounds(boundsOf(coords), {
+      padding: {
+        top: frame.padding,
+        bottom: frame.padding,
+        left: frame.padding + (roomForChrome ? CHROME_GUTTER_LEFT : 0),
+        right: frame.padding + (roomForChrome ? CHROME_GUTTER_RIGHT : 0),
+      },
+    });
+    if (!fit) return;
+
+    // Raised only for the twin, so put it back before asking for anything
+    // else — MapLibre clamps to maxZoom silently, and a stale 23.5 ceiling
+    // would let a later frame overshoot rather than error.
+    map.setMaxZoom(DEFAULT_MAX_ZOOM);
+
+    const baseZoom = typeof fit.zoom === "number" ? fit.zoom : map.getZoom();
+    const zoom = Math.max(1, baseZoom + frame.zoomDelta);
+
+    // Terrain first: the DEM has to be attached before the tilt begins, or the
+    // camera spends the whole move over flat ground and the relief pops in at
+    // the end. Removing it early is harmless by comparison.
+    if (frame.exaggeration !== null) {
+      if (map.getSource(TERRAIN_SOURCE_ID)) {
+        map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration: frame.exaggeration });
+        if (!map.getLayer(HILLSHADE_LAYER_ID)) {
+          // Inserted beneath this app's own rasters rather than appended on
+          // top, so the aerial capture and the traces still read normally over
+          // shaded ground. Falls back to the top of the stack when no such
+          // layer exists yet — on a bare-terrain block there is nothing above
+          // it to get behind.
+          const above = [OVERLAY_LAYER_ID_A, OVERLAY_LAYER_ID_B, GENERATIVE_LAYER_ID].find((id) => map.getLayer(id));
+          map.addLayer(
+            {
+              id: HILLSHADE_LAYER_ID,
+              type: "hillshade",
+              source: TERRAIN_SOURCE_ID,
+              paint: {
+                "hillshade-exaggeration": 0.72,
+                "hillshade-shadow-color": "#3c3a33",
+                "hillshade-highlight-color": "#fffdf6",
+                "hillshade-accent-color": "#8a7f66",
+              },
+            },
+            above,
+          );
+        }
+      }
+    } else {
+      map.setTerrain(null);
+      if (map.getLayer(HILLSHADE_LAYER_ID)) map.removeLayer(HILLSHADE_LAYER_ID);
+    }
+    // Keeps the toolbar's own 2D/3D button honest about where the camera is.
+    setIs3D(frame.pitch > 0);
+
+    const camera = {
+      center: fit.center,
+      zoom,
+      pitch: frame.pitch,
+      bearing: frame.bearing,
+      essential: true,
+    } satisfies maplibregl.FlyToOptions;
+
+    if (reduced) {
+      map.jumpTo(camera);
+      return;
+    }
+
+    if (Math.abs(zoom - map.getZoom()) > STORY_ARC_ZOOM_DELTA) {
+      map.flyTo({ ...camera, duration: STORY_ARC_MS, curve: 1.3 });
+    } else {
+      // easeOutCubic: leaves at once, arrives slowly. The response has to be
+      // immediate — the block was just clicked — while the settle is what
+      // makes the move readable.
+      map.easeTo({ ...camera, duration: STORY_EASE_MS, easing: (t) => 1 - Math.pow(1 - t, 3) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storyView, loaded, overlayReady, overlay?.coordinates, generativeOverlay?.coordinates, canopies]);
 
   // Builds the full-timeline pool of flagged-tree pins once per overlay/area.
   // Positions come from the overlay's own image space (see generateTreePins),
@@ -1997,7 +2323,7 @@ export default function MapCanvas({
         onPinClick?.(pin.id);
       });
       // Hover-only signal, separate from the click above — lets a caller
-      // (AreasView) highlight the matching table row as the pointer roams
+      // (AssetsView) highlight the matching table row as the pointer roams
       // the map, without that light touch also opening the click tooltip or
       // moving the camera the way a click does.
       el.addEventListener("mouseenter", () => onPinHover?.(pin.id));
@@ -2054,7 +2380,7 @@ export default function MapCanvas({
     };
   }, [overlay, overlayReady, loaded, areaId, snapshots]);
 
-  // Shows/hides pins to match the selected date range and, in the Areas view,
+  // Shows/hides pins to match the selected date range and, in the Assets view,
   // the table's active filters — this is what makes dragging the timeline or
   // ticking a health chip visibly add and remove flagged trees rather than
   // showing a single fixed set. Runs right after the build effect above (same
@@ -2107,7 +2433,7 @@ export default function MapCanvas({
     setActivePin((prev) => (prev && !visibleIds.has(prev.pin.id) ? null : prev));
   }, [overlay, overlayReady, loaded, areaId, snapshots, range, pinsRange, visibleTreeIds]);
 
-  // Flies to the tree selected in the Areas table and rings it. Runs after the
+  // Flies to the tree selected in the Assets table and rings it. Runs after the
   // visibility effect above so that, for a flagged tree, the marker it wants to
   // open a tooltip for is already unhidden.
   useEffect(() => {
@@ -2139,7 +2465,7 @@ export default function MapCanvas({
     // earlier would place it against the pre-flight screen position. A healthy
     // tree simply has no pin to find, and the ring carries the selection alone.
     //
-    // Only when the caller has no `onFocusArrived` of its own (AreasView):
+    // Only when the caller has no `onFocusArrived` of its own (AssetsView):
     // a caller that passes it (MapsView/App.tsx) is about to open its own
     // bigger popover for this same tree, and showing this compact tooltip
     // underneath it too meant both were open at once — this tooltip is that
@@ -2489,12 +2815,22 @@ export default function MapCanvas({
             // nothing visible — isolation overrides visibility — and read as
             // a dead button.
             setIsolatedId((current) => (current === id ? null : current));
+            // Same dead-button problem, one level out: a story block's layer
+            // set also outranks `layerVisibility`, so toggling a chip while
+            // the story is driving would appear to do nothing. Touching the
+            // panel is the reader taking the map back — the story stops
+            // proposing until they move to another block.
+            setStoryLayers(null);
           }}
-          onShowLayer={(id) => setLayerVisibility((v) => ({ ...v, [id]: true }))}
+          onShowLayer={(id) => {
+            setLayerVisibility((v) => ({ ...v, [id]: true }));
+            setStoryLayers(null);
+          }}
           onFocusLayer={focusLayer}
           isolatedId={isolatedId}
           onIsolateChange={(id) => {
             setIsolatedId(id);
+            setStoryLayers(null);
             // Isolating also frames what it isolated. With the basemap and
             // every other layer gone there is nothing left on screen to
             // orient by, so a plot that happened to be off-frame — or a
@@ -2510,6 +2846,8 @@ export default function MapCanvas({
             setLayerHeight(DEFAULT_LAYER_HEIGHT);
             setShadowMode(DEFAULT_SHADOW_MODE);
             setIsolatedId(null);
+            setStoryLayers(null);
+            setColorMode("normal");
             setBasemapIndex(0);
           }}
           showGenerative={!!generativeOverlay}

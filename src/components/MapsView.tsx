@@ -17,7 +17,7 @@ import { CONTENT_HEIGHT_CLASS } from "../layout";
 // Explicit viewport-relative height: the ancestor chain uses `min-h-screen`
 // (auto height), so a `flex-1` child has no definite height to resolve against
 // and can collapse — which leaves MapLibre with a 0px-tall canvas. The calc
-// itself is shared with StoryView/AreasView — see layout.ts.
+// itself is shared with StoryView/AssetsView — see layout.ts.
 const MAP_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
 
 export default function MapsView({
@@ -64,7 +64,7 @@ export default function MapsView({
 
   const baseOverlay = areaOverlays[area.id];
   const timelapseImages = getTimelapseImages(area.id);
-  // See AreasView's identical comment: a plain number so the useMemo below
+  // See AssetsView's identical comment: a plain number so the useMemo below
   // can key on it instead of the `range` object, which changes reference on
   // every pixel of a slider drag.
   const timelapseBucket = timelapseImages
@@ -75,7 +75,7 @@ export default function MapsView({
     [baseOverlay, timelapseImages, timelapseBucket],
   );
 
-  // See AreasView's identical use — escalates through the dieback sequence as
+  // See AssetsView's identical use — escalates through the dieback sequence as
   // the range's end month moves into the final three months of the window.
   const dyingTreeOverlay = useMemo(
     () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, dyingRange, area.snapshots.length),

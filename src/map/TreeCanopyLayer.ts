@@ -725,7 +725,7 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
     this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
 
     // The renderer was constructed around whatever size the map canvas was at
-    // the time. A resized container (the Areas split pane, a window resize)
+    // the time. A resized container (the Assets split pane, a window resize)
     // changes the drawing buffer without telling three, which would then draw
     // into a stale viewport.
     const canvas = map.getCanvas();

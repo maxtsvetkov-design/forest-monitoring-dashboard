@@ -3,7 +3,7 @@ import { imgFilterFunnel01, imgIcSettings, imgUpload01 } from "../assets";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
 import { buildDashboard, type DashboardInsight } from "../data/dashboard";
-import type { PendingAreaFilter } from "../hooks/useTreeFilters";
+import type { PendingAssetFilter } from "../hooks/useTreeFilters";
 import CalendarRangePicker from "./CalendarRangePicker";
 import ClassificationDonut from "./ClassificationDonut";
 import DashboardKpiCard from "./DashboardKpiCard";
@@ -109,7 +109,7 @@ export default function DashboardView({
   range,
   months,
   onRangeChange,
-  onDrillIntoAreas,
+  onDrillIntoAssets,
   onSelectArea,
   onOpenArea,
 }: {
@@ -118,9 +118,9 @@ export default function DashboardView({
   range: DateRange;
   months: string[];
   onRangeChange: (range: DateRange) => void;
-  /** Hands a filter to the Areas tab and switches to it — the same drill-down
+  /** Hands a filter to the Assets tab and switches to it — the same drill-down
    * contract the Insights tab's widgets use. */
-  onDrillIntoAreas: (filter: PendingAreaFilter) => void;
+  onDrillIntoAssets: (filter: PendingAssetFilter) => void;
   /** Re-scopes this dashboard preview to a different area, in place. Used by
    * the site table, where paging through rows shouldn't leave the preview. */
   onSelectArea: (areaId: string) => void;
@@ -168,7 +168,7 @@ export default function DashboardView({
             delay={T_KPI + i * 70}
             onDrillDown={
               kpi.drillConditions
-                ? () => onDrillIntoAreas({ kind: "health", values: kpi.drillConditions! })
+                ? () => onDrillIntoAssets({ kind: "health", values: kpi.drillConditions! })
                 : undefined
             }
           />

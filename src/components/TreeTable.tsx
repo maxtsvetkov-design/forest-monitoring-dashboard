@@ -147,7 +147,7 @@ function FacetChip({
 interface TreeTableProps {
   /** Everything in the selected date range, before filters. Drives the "of m" count. */
   records: TreeRecord[];
-  /** Filter state, owned by AreasView so the map can honour it too. */
+  /** Filter state, owned by AssetsView so the map can honour it too. */
   filters: TreeFilters;
   areaName: string;
   /** Selecting a row flies the map to that tree. */
@@ -228,7 +228,7 @@ export default function TreeTable({
   });
 
   // Scrolls the selected row into view whenever it changes -- including a
-  // selection made from OUTSIDE the table (a map pin click in AreasView),
+  // selection made from OUTSIDE the table (a map pin click in AssetsView),
   // since the map has no idea where the table has scrolled to.
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -370,7 +370,7 @@ export default function TreeTable({
           // Fixed layout so the <col> widths are authoritative. `minWidth: 100%`
           // lets the table stretch to fill a wide pane, while the px width means
           // a pane narrower than the columns scrolls horizontally instead of
-          // crushing them — see the split-pane divider in AreasView.
+          // crushing them — see the split-pane divider in AssetsView.
           <table
             className="text-left border-collapse"
             style={{ tableLayout: "fixed", width: `${totalWidth}px`, minWidth: "100%" }}

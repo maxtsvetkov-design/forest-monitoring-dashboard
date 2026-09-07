@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState, type ReactElement } from "react
 import { imgIcTrendingUp } from "../assets";
 import { areas } from "../data/areas";
 import { aggregateRange } from "../data/aggregate";
+import type { CategoryDatum } from "../data/types";
 import { areaHectares } from "../data/overlays";
 import { CURRENT_TIER_INDEX, TIERS } from "../data/tiers";
 import { useDragResize } from "../hooks/useDragResize";
@@ -19,15 +20,24 @@ import { SortArrow, type SortDir } from "./SortArrow";
  * own dashboard; the project group header stays non-navigational, since a
  * project isn't a site with a dashboard to open.
  *
- * Sortable, resizable columns — the same behaviour as the Areas tab's own
+ * Sortable, resizable columns — the same behaviour as the Assets tab's own
  * TreeTable (see COLUMNS/toggleSort/useDragResize there), adapted to this
  * table's shape. Sorting applies WITHIN each project group rather than
  * flattening across all of them: a group is "this project's sites," and
  * reordering site A above site B should never make it look like it moved to
  * a different project.
+ *
+ * `variant` controls how many columns render. The sidebar (566px, "compact")
+ * gets the five columns it always has; the Table tab ("full") adds the
+ * columns modelled on the Figma "Monitored areas" table (node 2993:47329) —
+ * but only the ones this dataset actually backs. That mockup's own "Saplings"
+ * and "Hive capacity" columns, and its per-site "Control"/"Seeding" type, have
+ * no equivalent here (no age-class or apiary data, and every site sits on the
+ * one contract-wide tier — see TierTag) and are not ported; a fabricated
+ * number is worse than a missing column.
  */
 
-type SortableKey = "hectares" | "activity" | "health" | "tier";
+type SortableKey = "hectares" | "activity" | "health" | "tier" | "trees" | "insights" | "ndvi" | "since";
 
 export interface SiteRowData {
   id: string;
@@ -38,6 +48,25 @@ export interface SiteRowData {
   lastActivityTime: number;
   healthScore: number;
   trendPct: number;
+  /** Total tree count as of the latest month, and its change since the prior
+   * period — the table's analogue of the Figma reference's "Estimated trees"
+   * column, minus that column's min–max bracket (this dataset has one count,
+   * not a confidence range around it). */
+  totalTrees: number;
+  totalTreesChange: number | null;
+  /** Trees NOT in an unflagged condition as of the latest month
+   * (total − healthy) — what "Insights" stands for here: findings waiting on
+   * a decision, not a separate metric this dataset doesn't track. */
+  flaggedTrees: number;
+  /** Real per-condition breakdown behind `totalTrees`, for the same small
+   * segmented bar the reference table draws under its own tree count. */
+  healthData: CategoryDatum[];
+  /** Blended-signal NDVI (see aggregate.ts's ndviFor) over the full range. */
+  avgNdvi: number;
+  /** The first month this area has a snapshot for — as close as this dataset
+   * gets to the reference's "Dates active" column. */
+  monitoredSinceLabel: string;
+  monitoredSinceTime: number;
 }
 
 /**
@@ -54,17 +83,15 @@ export interface SiteRowData {
  */
 export const AREA_ROWS: SiteRowData[] = areas.map((area) => {
   const last = area.snapshots[area.snapshots.length - 1];
+  const first = area.snapshots[0] ?? last;
   const prev = area.snapshots[area.snapshots.length - 2] ?? last;
   const trendPct = prev.canopyCoverPct
     ? Math.round(((last.canopyCoverPct - prev.canopyCoverPct) / prev.canopyCoverPct) * 100)
     : 0;
-  // Same blended NDVI + tree-health score as heroScore/OverallHealthCard, read
-  // over this area's own full range — the table's health chip can't disagree
-  // with what the dashboard reports one click later.
-  const healthScore = aggregateRange(area.snapshots, {
-    startIndex: 0,
-    endIndex: area.snapshots.length - 1,
-  }).ecosystemCondition.score;
+  // One aggregate over the area's full range feeds every derived column below
+  // — the table's health chip, tree count and NDVI can never disagree with
+  // what the dashboard reports one click later, because it's the same call.
+  const agg = aggregateRange(area.snapshots, { startIndex: 0, endIndex: area.snapshots.length - 1 });
   return {
     id: area.id,
     name: area.name,
@@ -79,8 +106,15 @@ export const AREA_ROWS: SiteRowData[] = areas.map((area) => {
     // nonsense, the same trap TreeTable's own columns avoid by sorting on a raw
     // value instead of the rendered text.
     lastActivityTime: last.date.getTime(),
-    healthScore,
+    healthScore: agg.ecosystemCondition.score,
     trendPct,
+    totalTrees: agg.totalTrees.value,
+    totalTreesChange: agg.totalTrees.change,
+    flaggedTrees: Math.max(0, agg.totalTrees.value - agg.healthyTrees.value),
+    healthData: agg.healthData,
+    avgNdvi: agg.ndvi.value,
+    monitoredSinceLabel: first.label,
+    monitoredSinceTime: first.date.getTime(),
   };
 });
 
@@ -94,18 +128,30 @@ interface SiteColumn {
   minWidth?: number;
   sortValue: (row: SiteRowData) => number | string;
   defaultDir: SortDir;
+  /** Hidden in the sidebar's "compact" variant — see the file header. */
+  fullOnly?: boolean;
 }
 
 const SITE_COLUMNS: SiteColumn[] = [
   { key: "name", label: "Project & site", sortValue: (r) => r.name, defaultDir: "asc" },
   { key: "hectares", label: "Ha", defaultWidth: 32, minWidth: 30, sortValue: (r) => r.hectares, defaultDir: "desc" },
   {
-    key: "activity",
-    label: "Activity",
-    defaultWidth: 68,
-    minWidth: 56,
-    sortValue: (r) => r.lastActivityTime,
+    key: "trees",
+    label: "Estimated trees",
+    defaultWidth: 112,
+    minWidth: 96,
+    sortValue: (r) => r.totalTrees,
     defaultDir: "desc",
+    fullOnly: true,
+  },
+  {
+    key: "insights",
+    label: "Insights",
+    defaultWidth: 64,
+    minWidth: 56,
+    sortValue: (r) => r.flaggedTrees,
+    defaultDir: "desc",
+    fullOnly: true,
   },
   {
     key: "health",
@@ -120,6 +166,32 @@ const SITE_COLUMNS: SiteColumn[] = [
     // sorts by.
     sortValue: (r) => r.healthScore,
     defaultDir: "desc",
+  },
+  {
+    key: "ndvi",
+    label: "Avg NDVI",
+    defaultWidth: 68,
+    minWidth: 56,
+    sortValue: (r) => r.avgNdvi,
+    defaultDir: "desc",
+    fullOnly: true,
+  },
+  {
+    key: "activity",
+    label: "Activity",
+    defaultWidth: 68,
+    minWidth: 56,
+    sortValue: (r) => r.lastActivityTime,
+    defaultDir: "desc",
+  },
+  {
+    key: "since",
+    label: "Dates active",
+    defaultWidth: 84,
+    minWidth: 72,
+    sortValue: (r) => r.monitoredSinceTime,
+    defaultDir: "asc",
+    fullOnly: true,
   },
   {
     key: "tier",
@@ -167,6 +239,17 @@ const COLUMN_ICON: Record<SiteColumn["key"], ReactElement> = {
     </svg>
   ),
   hectares: <></>,
+  trees: (
+    <svg width="11" height="11" viewBox="0 0 12 12" {...headerIconStroke}>
+      <path d="M6 10.5V7.2M6 1.5 2.8 6.2h6.4Z" />
+    </svg>
+  ),
+  insights: (
+    <svg width="11" height="11" viewBox="0 0 12 12" {...headerIconStroke}>
+      <path d="M6 1v1.6M6 9.4V11M2.6 6H1M11 6H9.4M3.4 3.4 2.2 2.2M9.8 9.8l-1.2-1.2M3.4 8.6 2.2 9.8M9.8 2.2 8.6 3.4" />
+      <circle cx="6" cy="6" r="1.8" />
+    </svg>
+  ),
   activity: (
     <svg width="11" height="11" viewBox="0 0 12 12" {...headerIconStroke}>
       <rect x="1.5" y="2.5" width="9" height="8" rx="1.2" />
@@ -179,6 +262,17 @@ const COLUMN_ICON: Record<SiteColumn["key"], ReactElement> = {
       <path d="M6 1v1.4M6 9.6V11M11 6H9.6M2.4 6H1M9.24 2.76l-1 1M3.76 8.24l-1 1M9.24 9.24l-1-1M3.76 3.76l-1-1" />
     </svg>
   ),
+  ndvi: (
+    <svg width="11" height="11" viewBox="0 0 12 12" {...headerIconStroke}>
+      <path d="M6 10.5c2.8-1 4-3 4-6.5-3.5 0-5.5 1.2-6.5 4C2.2 6.6 3.6 8 6 10.5Z" />
+    </svg>
+  ),
+  since: (
+    <svg width="11" height="11" viewBox="0 0 12 12" {...headerIconStroke}>
+      <rect x="1.5" y="2.5" width="9" height="8" rx="1.2" />
+      <path d="M1.5 5h9M4 1.2v2M8 1.2v2M4 7.2h1.4" />
+    </svg>
+  ),
   tier: <></>,
 };
 
@@ -187,6 +281,7 @@ const COLUMN_ICON: Record<SiteColumn["key"], ReactElement> = {
  * click a grip to reset, arrow keys to nudge it) rebuilt over this table's
  * CSS-grid layout instead of a `<table>`'s `<colgroup>`. */
 function AreaTableHeader({
+  columns,
   sort,
   onToggleSort,
   widths,
@@ -196,6 +291,8 @@ function AreaTableHeader({
   onResizeKey,
   columnsTemplate,
 }: {
+  /** The variant-filtered column list — see AreaTable's `visibleColumns`. */
+  columns: SiteColumn[];
   sort: { key: string; dir: SortDir };
   onToggleSort: (column: SiteColumn) => void;
   widths: Record<string, number>;
@@ -210,9 +307,9 @@ function AreaTableHeader({
       className="grid items-center gap-[12px] px-[14px] py-[12px] border-b border-[#dedee3]"
       style={{ gridTemplateColumns: columnsTemplate }}
     >
-      {SITE_COLUMNS.map((column) => {
+      {columns.map((column) => {
         const active = sort.key === column.key;
-        const resizable = RESIZABLE_COLUMNS.includes(column as (typeof RESIZABLE_COLUMNS)[number]);
+        const resizable = Boolean(column.defaultWidth);
         return (
           <div key={column.key} className={`relative ${column.key === "name" ? "" : "justify-self-end"}`}>
             <button
@@ -325,25 +422,69 @@ function ProjectGroupHeader({
   );
 }
 
+/** Thin proportional bar of the real per-condition breakdown behind the tree
+ * count — this table's echo of the reference's segmented "estimated trees"
+ * bar, built from actual counts (`SiteRowData.healthData`) rather than a
+ * decorative gradient. A zero-value condition contributes no segment at all,
+ * same reasoning as the estate donut in the Story tab's own metrics blocks. */
+function HealthDistributionBar({ data }: { data: CategoryDatum[] }) {
+  const total = data.reduce((sum, d) => sum + d.value, 0) || 1;
+  return (
+    <span className="flex h-[4px] w-full rounded-full overflow-hidden bg-[#ebece7]">
+      {data.map((d) =>
+        d.value > 0 ? <span key={d.name} style={{ width: `${(d.value / total) * 100}%`, background: d.color }} /> : null,
+      )}
+    </span>
+  );
+}
+
+/** "Estimated trees" cell: the latest count, its change since the prior
+ * period, and the real health-condition split beneath it — no min–max
+ * bracket, since this dataset has one count per month, not a confidence
+ * range around it (see the file header). */
+function TreeCountCell({
+  total,
+  change,
+  healthData,
+}: {
+  total: number;
+  change: number | null;
+  healthData: CategoryDatum[];
+}) {
+  return (
+    <span className="flex flex-col items-end gap-[4px] w-full">
+      <span className="flex items-baseline gap-[5px]">
+        <span className="text-[13px] font-semibold text-[#18181c] font-['Outfit',sans-serif] leading-[18px] tabular-nums">
+          {total.toLocaleString()}
+        </span>
+        {change !== null && change !== 0 && (
+          <span
+            className="text-[10px] font-['Outfit',sans-serif] tabular-nums whitespace-nowrap"
+            style={{ color: change > 0 ? "#0f7a44" : "#c05a17" }}
+          >
+            {change > 0 ? "+" : ""}
+            {change.toLocaleString()}
+          </span>
+        )}
+      </span>
+      <HealthDistributionBar data={healthData} />
+    </span>
+  );
+}
+
 /** One monitored site under its project group — the actual data row, indented
- * slightly under the group heading above it. */
+ * slightly under the group heading above it. Renders one cell per column in
+ * `columns`, the same variant-filtered list the header uses, so the two can
+ * never drift out of alignment. */
 function SiteRow({
-  name,
-  hectares,
-  lastActivityLabel,
-  healthScore,
-  trendPct,
+  site,
+  columns,
   delay,
   onClick,
   columnsTemplate,
 }: {
-  name: string;
-  hectares: string;
-  lastActivityLabel: string;
-  /** Same blended NDVI + tree-health score OverallHealthCard shows, so this
-   * table's health chip and the dashboard's own headline number agree. */
-  healthScore: number;
-  trendPct: number;
+  site: SiteRowData;
+  columns: SiteColumn[];
   delay: number;
   /** Opens this site's own dashboard. */
   onClick: () => void;
@@ -358,33 +499,100 @@ function SiteRow({
       className="u-press w-full grid items-center gap-[12px] px-[14px] py-[14px] text-left cursor-pointer hover:bg-[#fbfbfa] animate-fade-in-up"
       style={{ gridTemplateColumns: columnsTemplate, animationDelay: `${delay}ms` }}
     >
-      {/* Indent aligns the row under its project header's name rather than
-          its chevron -- 8px of nesting instead of the 20px that used to eat a
-          fifth of this column. */}
-      {/* The decorative pin that used to sit here is gone. It carried no
-          information (alt=""), it repeated identically down every row, and it
-          cost 28px of the one column that had none to spare — which is how
-          four sites came to render as "Al ...", "Hat...", "Sir ...", "Wa...". */}
-      <span className="flex items-center min-w-0 pl-[6px]">
-        {/* Two lines rather than an ellipsis: a truncated site name is not a
-            shorter label, it is a different one. */}
-        <span className="text-[14px] text-[#464650] font-['Outfit',sans-serif] leading-[19px] line-clamp-2">
-          {name}
-        </span>
-      </span>
-      <span className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right tabular-nums">
-        {hectares}
-      </span>
-      <span className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right whitespace-nowrap">
-        {lastActivityLabel}
-      </span>
-      <span className="flex items-center justify-end gap-[6px] flex-wrap">
-        <HealthIndicatorChip label="Health score" value={`${Math.round(healthScore)}%`} deltaPct={healthScore - 75} />
-        <HealthIndicatorChip label="Canopy cover" value={`${trendPct > 0 ? "+" : ""}${trendPct}%`} deltaPct={trendPct} />
-      </span>
-      <span className="flex justify-end">
-        <TierTag />
-      </span>
+      {columns.map((column) => {
+        switch (column.key) {
+          case "name":
+            return (
+              // Indent aligns the row under its project header's name rather
+              // than its chevron -- 8px of nesting instead of the 20px that
+              // used to eat a fifth of this column. The decorative pin that
+              // used to sit here is gone: it carried no information (alt=""),
+              // repeated identically down every row, and cost 28px of the one
+              // column that had none to spare.
+              <span key={column.key} className="flex items-center min-w-0 pl-[6px]">
+                {/* Two lines rather than an ellipsis: a truncated site name is
+                    not a shorter label, it is a different one. */}
+                <span className="text-[14px] text-[#464650] font-['Outfit',sans-serif] leading-[19px] line-clamp-2">
+                  {site.name}
+                </span>
+              </span>
+            );
+          case "hectares":
+            return (
+              <span
+                key={column.key}
+                className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right tabular-nums"
+              >
+                {site.hectares.toLocaleString()}
+              </span>
+            );
+          case "trees":
+            return (
+              <span key={column.key} className="flex justify-end">
+                <TreeCountCell total={site.totalTrees} change={site.totalTreesChange} healthData={site.healthData} />
+              </span>
+            );
+          case "insights":
+            return (
+              <span
+                key={column.key}
+                className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right tabular-nums"
+              >
+                {site.flaggedTrees > 0 ? site.flaggedTrees.toLocaleString() : "—"}
+              </span>
+            );
+          case "health":
+            return (
+              <span key={column.key} className="flex items-center justify-end gap-[6px] flex-wrap">
+                <HealthIndicatorChip
+                  label="Health score"
+                  value={`${Math.round(site.healthScore)}%`}
+                  deltaPct={site.healthScore - 75}
+                />
+                <HealthIndicatorChip
+                  label="Canopy cover"
+                  value={`${site.trendPct > 0 ? "+" : ""}${site.trendPct}%`}
+                  deltaPct={site.trendPct}
+                />
+              </span>
+            );
+          case "ndvi":
+            return (
+              <span
+                key={column.key}
+                className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right tabular-nums"
+              >
+                {site.avgNdvi.toFixed(2)}
+              </span>
+            );
+          case "activity":
+            return (
+              <span
+                key={column.key}
+                className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right whitespace-nowrap"
+              >
+                {site.lastActivityLabel}
+              </span>
+            );
+          case "since":
+            return (
+              <span
+                key={column.key}
+                className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right whitespace-nowrap"
+              >
+                {site.monitoredSinceLabel}
+              </span>
+            );
+          case "tier":
+            return (
+              <span key={column.key} className="flex justify-end">
+                <TierTag />
+              </span>
+            );
+          default:
+            return null;
+        }
+      })}
     </button>
   );
 }
@@ -392,10 +600,15 @@ function SiteRow({
 export default function AreaTable({
   rows,
   onSelectSite,
+  variant = "compact",
 }: {
   rows: SiteRowData[];
   /** Opens that site's own dashboard. */
   onSelectSite: (areaId: string) => void;
+  /** "compact" (default) is the sidebar's five columns; "full" adds the
+   * dataset-backed columns modelled on the Figma reference — see the file
+   * header. */
+  variant?: "compact" | "full";
 }) {
   // Same shape as TreeTable's own `sort`/`widths`/`resizingKey`, so the two
   // tables behave identically. Held per mount rather than lifted: the sidebar
@@ -407,6 +620,15 @@ export default function AreaTable({
   );
   const [resizingKey, setResizingKey] = useState<string | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+
+  const visibleColumns = useMemo(
+    () => SITE_COLUMNS.filter((c) => variant === "full" || !c.fullOnly),
+    [variant],
+  );
+  const visibleResizable = useMemo(
+    () => visibleColumns.filter((c): c is SiteColumn & { defaultWidth: number; minWidth: number } => Boolean(c.defaultWidth)),
+    [visibleColumns],
+  );
 
   const toggleSort = useCallback((column: SiteColumn) => {
     setSort((prev) =>
@@ -451,8 +673,8 @@ export default function AreaTable({
     // columns left over -- 94px on a 1280px window, which rendered every site
     // as "Al ...", "Hat...", "Sir ...". A grid track with a zero minimum is
     // not a flexible column, it is a column with no floor.
-    () => [`minmax(${NAME_MIN_WIDTH}px,1fr)`, ...RESIZABLE_COLUMNS.map((c) => `${widths[c.key]}px`)].join(" "),
-    [widths],
+    () => [`minmax(${NAME_MIN_WIDTH}px,1fr)`, ...visibleResizable.map((c) => `${widths[c.key]}px`)].join(" "),
+    [widths, visibleResizable],
   );
 
   // Grouped by project — each area already names the project it belongs to
@@ -486,6 +708,7 @@ export default function AreaTable({
   return (
     <div className="bg-white rounded-[12px] overflow-hidden divide-y divide-[#dedee3]">
       <AreaTableHeader
+        columns={visibleColumns}
         sort={sort}
         onToggleSort={toggleSort}
         widths={widths}
@@ -523,11 +746,8 @@ export default function AreaTable({
                 group.sites.map((site, siteIndex) => (
                   <SiteRow
                     key={site.id}
-                    name={site.name}
-                    hectares={site.hectares.toLocaleString()}
-                    lastActivityLabel={site.lastActivityLabel}
-                    healthScore={site.healthScore}
-                    trendPct={site.trendPct}
+                    site={site}
+                    columns={visibleColumns}
                     delay={160 + groupIndex * 60 + (siteIndex + 1) * 40}
                     onClick={() => onSelectSite(site.id)}
                     columnsTemplate={columnsTemplate}

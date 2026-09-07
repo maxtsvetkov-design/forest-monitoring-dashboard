@@ -13,7 +13,7 @@ const SEVERITY_COLOR = CONDITION_COLOR;
  * color. Sliced from the shared tree-photo sprite sheet (see
  * data/treePhotoSprite.ts) rather than its own <img>, so this list's photo
  * column costs zero extra requests beyond the one sprite the page already
- * loads for the Assets tab. */
+ * loads for the Areas tab. */
 function TreePreview({ color, eventId }: { color: string; eventId: string }) {
   return (
     <div

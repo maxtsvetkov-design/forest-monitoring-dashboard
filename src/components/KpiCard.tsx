@@ -24,8 +24,8 @@ export default function KpiCard({
   trend?: "up" | "down";
   hasInfo?: boolean;
   delay: number;
-  /** When given, the whole card becomes a button that opens Areas filtered to
-   * the trees behind this number — see App.tsx's drillIntoAreas. */
+  /** When given, the whole card becomes a button that opens Assets filtered to
+   * the trees behind this number — see App.tsx's drillIntoAssets. */
   onDrillDown?: () => void;
   /** What that drill-down lands on, for the card's title/aria text. Without
    * it a screen reader hears only the KPI label and no hint that activating

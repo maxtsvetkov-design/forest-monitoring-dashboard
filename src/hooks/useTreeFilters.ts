@@ -55,13 +55,13 @@ export interface TreeFilters {
 }
 
 /**
- * A filter handed to the Areas view from somewhere else — a dashboard widget
+ * A filter handed to the Assets view from somewhere else — a dashboard widget
  * that was clicked. One discriminated union rather than a prop pair per
  * dimension: seven widgets now hand filters over, and seven
  * `pendingXFilter` / `onPendingXFilterApplied` pairs threaded through App and
- * AreasView would be the same code written seven times.
+ * AssetsView would be the same code written seven times.
  */
-export type PendingAreaFilter =
+export type PendingAssetFilter =
   | { kind: "health"; values: string[] }
   | { kind: "crown"; value: string }
   | { kind: "diameter"; value: string }
@@ -71,7 +71,7 @@ export type PendingAreaFilter =
 /** Applies a handed-over filter to a live TreeFilters instance. Lives here,
  * next to the setters it dispatches to, so a new `kind` can't be added to the
  * union without this switch failing to compile. */
-export function applyPendingFilter(filters: TreeFilters, pending: PendingAreaFilter): void {
+export function applyPendingFilter(filters: TreeFilters, pending: PendingAssetFilter): void {
   switch (pending.kind) {
     case "health":
       filters.setHealthOnlyMany(pending.values);
@@ -99,7 +99,7 @@ function toggle(set: Set<string>, value: string): Set<string> {
 }
 
 /**
- * Filter state for the Areas view, held above both the table and the map.
+ * Filter state for the Assets view, held above both the table and the map.
  *
  * It lives here rather than inside TreeTable because the map has to honour the
  * same filters: ticking "Defoliated" should leave only defoliated trees on the

@@ -113,7 +113,7 @@ Consequences that are easy to trip over:
   disposing would tear down state the map is still using.
 - `frustumCulled = false` on every mesh. The projection matrix is not one three
   can reason about, so its own frustum test would cull the entire forest.
-- `setViewport` each frame, because a resized container (the Areas split pane)
+- `setViewport` each frame, because a resized container (the Assets split pane)
   changes the drawing buffer without telling three.
 - `setStyle` discards custom layers along with everything else, so the effect
   that adds this one depends on `styleVersion` — see `MapCanvas`.

@@ -8,7 +8,7 @@ const LATEST_MONTH_RANGE: DateRange = { startIndex: monthLabels.length - 1, endI
 
 /**
  * @param initial "full" (the default) opens on the entire history — what the
- * map timeline wants, since Maps/Areas/Story are about scrubbing through
+ * map timeline wants, since Maps/Assets/Story are about scrubbing through
  * time. "latest" opens on just the most recent month — what a calendar
  * picker wants, since a KPI dashboard reads as "how are things now" until the
  * viewer deliberately reaches back into history.

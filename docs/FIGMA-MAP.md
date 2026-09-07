@@ -21,7 +21,7 @@ the connector needs authorising in claude.ai connector settings first.
 | `271-24339` | `horizontal_line_graph` | `SeedingPerformanceChart.tsx` |
 | `271-24348` | `insightsSection` | `InsightCard` (local to `DashboardView.tsx`) |
 | `2915-47927` | `tableContainer` | `DashboardSiteTable.tsx` |
-| `3287-93156` | Areas view | `src/components/AreasView.tsx` |
+| `3287-93156` | Assets view | `src/components/AssetsView.tsx` |
 | `3287-93248` | (unspecified screen) | — referenced early, never pinned down |
 
 ## Design tokens as resolved from Figma
@@ -85,6 +85,6 @@ The mockup labels are kept; each points at the nearest real quantity.
 
 ## Screens still provisional
 
-`AreasView` was built before the connector was authorised, from a verbal
+`AssetsView` was built before the connector was authorised, from a verbal
 description ("half map from open street and table with list of trees"). It has
 not been checked against node `3287-93156`. Worth revisiting.

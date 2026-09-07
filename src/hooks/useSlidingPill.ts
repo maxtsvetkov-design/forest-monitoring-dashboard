@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
- * The top bar's Insights/Areas/Maps/Assets/Story tabs use one pill that
+ * The top bar's Insights/Assets/Maps/Areas/Story tabs use one pill that
  * slides and liquid-morphs between the active button rather than the active
  * colour jumping from one to another (see `.seg-track`/`.tab-pill` in
  * index.css). This is that same measurement-and-morph machinery, pulled out
- * of App.tsx so any other segmented control — the Areas view's Trees
+ * of App.tsx so any other segmented control — the Assets view's Trees
  * table/Recent events switch, say — reads as the same physical object
  * moving, not a second, subtly different animation that happens to look
  * similar.

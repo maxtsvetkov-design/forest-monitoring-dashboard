@@ -12,8 +12,8 @@ import {
 import AIAssistant from "./components/AIAssistant";
 import AnimatedDonutChart from "./components/AnimatedDonutChart";
 import AreaSwitcher from "./components/AreaSwitcher";
-import AreasView from "./components/AreasView";
 import AssetsView from "./components/AssetsView";
+import AreasView from "./components/AreasView";
 import CrownRadiusTreemap from "./components/CrownRadiusTreemap";
 import EcosystemConditionCard from "./components/EcosystemConditionCard";
 import HealthPerSpeciesChart from "./components/HealthPerSpeciesChart";
@@ -41,14 +41,14 @@ import AmbientBackground from "./components/AmbientBackground";
 import CalendarRangePicker from "./components/CalendarRangePicker";
 import { useSlidingPill } from "./hooks/useSlidingPill";
 import { useLayerTime } from "./hooks/useLayerTime";
-import type { PendingAreaFilter } from "./hooks/useTreeFilters";
+import type { PendingAssetFilter } from "./hooks/useTreeFilters";
 
 const TOTAL_AREA = "12 ha";
 // Condition labels split the way the KPI row talks about them, derived from
 // the taxonomy rather than retyped: "healthy" is the two unflagged bands (what
 // "Total healthy trees" counts), "flagged" the three that pull NDVI and the
 // condition score down. Both feed the health filter when their card is
-// clicked, so the Areas view lands on exactly the trees the number counted.
+// clicked, so the Assets view lands on exactly the trees the number counted.
 const HEALTHY_CONDITION_LABELS = CONDITIONS.filter((c) => !c.flagged).map((c) => c.label);
 const FLAGGED_CONDITION_LABELS = CONDITIONS.filter((c) => c.flagged).map((c) => c.label);
 const SIDEBAR_MIN_WIDTH = 240;
@@ -83,10 +83,13 @@ export default function App() {
   // it. Kept as local state (not a route) since this app has no router; a
   // real one would make this its own "/" entry instead of a boolean gate.
   const [showLanding, setShowLanding] = useState(true);
-  const [activeTab, setActiveTab] = useState("Insights");
+  // Assets, not Insights: crossing the landing gate without an explicit
+  // destination (a plain onEnter()) should land somewhere that already means
+  // "this site," since that's usually why the gate was crossed at all.
+  const [activeTab, setActiveTab] = useState("Assets");
   // A filter from a clicked Insights widget, waiting to be applied once
-  // AreasView mounts and consumed — see AreasView's pendingFilter effect.
-  const [pendingFilter, setPendingFilter] = useState<PendingAreaFilter | null>(null);
+  // AssetsView mounts and consumed — see AssetsView's pendingFilter effect.
+  const [pendingFilter, setPendingFilter] = useState<PendingAssetFilter | null>(null);
   // An event clicked in Recent Events, on its way to being shown on the map.
   // Two states rather than one: `pendingTreeFocus` drives the camera fly-to,
   // and the modal opens only once MapCanvas reports arrival (onFocusArrived)
@@ -135,14 +138,14 @@ export default function App() {
     setActiveTab("Maps");
   }
 
-  // Every widget that drills into Areas does the same three things: stash the
+  // Every widget that drills into Assets does the same three things: stash the
   // filter, drop any tree popover/fly-to left over from a previous visit
   // (which would otherwise reopen over an unrelated tree), and switch tab.
-  const drillIntoAreas = useCallback((filter: PendingAreaFilter) => {
+  const drillIntoAssets = useCallback((filter: PendingAssetFilter) => {
     setPendingFilter(filter);
     setOpenTreeEvent(null);
     setPendingTreeFocus(null);
-    setActiveTab("Areas");
+    setActiveTab("Assets");
   }, []);
   const [visible, setVisible] = useState(false);
   // Whether the timeline is currently stepping through months on its own —
@@ -152,7 +155,7 @@ export default function App() {
   // stays wired in case a future control drives it again.
   const [isTimelinePlaying] = useState(false);
   // Owned here, not inside MapCanvas, so a layer hidden or a basemap picked
-  // on one tab's map (Maps vs. Areas) stays that way on the other — each tab
+  // on one tab's map (Maps vs. Assets) stays that way on the other — each tab
   // mounts its own MapCanvas instance, so state living inside it would reset
   // on every tab switch.
   const [layerVisibility, setLayerVisibility] = useState<Record<ContentLayerId, boolean>>(DEFAULT_LAYER_VISIBILITY);
@@ -214,11 +217,11 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
 
-  const tabs = ["Insights", "Areas", "Maps", "Assets", "Story"];
+  const tabs = ["Insights", "Assets", "Maps", "Areas", "Story"];
 
   // The active-tab pill is one element that slides between tabs rather than
   // the colour jumping from one button to another — see useSlidingPill,
-  // shared with the Areas view's own Trees table/Recent events switch so
+  // shared with the Assets view's own Trees table/Recent events switch so
   // both read as the same physical pill, not two similar-looking animations.
   // `showLanding` is in the resize-dep list because it's what first mounts
   // this tab bar (it's behind an early `if (showLanding) return
@@ -239,7 +242,7 @@ export default function App() {
   // queuing a glow on a tab the user has already left.
   const [pillWelcoming, setPillWelcoming] = useState(false);
   useEffect(() => {
-    if (!pillReady || activeTab !== "Insights") return;
+    if (!pillReady || activeTab !== "Assets") return;
     setPillWelcoming(true);
     const t = setTimeout(() => setPillWelcoming(false), 1400);
     return () => clearTimeout(t);
@@ -252,7 +255,7 @@ export default function App() {
   const ndviChange = formatKpiChange(aggregated.ndvi.change, (n) => n.toFixed(2));
 
   // Each card's drill-down lands on the trees its own number is counting, so
-  // the filtered Areas view is a genuine "show me these" rather than a
+  // the filtered Assets view is a genuine "show me these" rather than a
   // loosely-related jump. The two canopy cards share a target because they
   // are the same underlying quantity (canopyCoverPct) shown two ways, and
   // neither has a per-tree equivalent beyond each tree's own canopy loss.
@@ -264,8 +267,8 @@ export default function App() {
       changeNote: "vs. prior period",
       trend: healthyTreesChange?.trend,
       hasInfo: true,
-      onDrillDown: () => drillIntoAreas({ kind: "health", values: HEALTHY_CONDITION_LABELS }),
-      drillDownLabel: "Show these trees in Areas",
+      onDrillDown: () => drillIntoAssets({ kind: "health", values: HEALTHY_CONDITION_LABELS }),
+      drillDownLabel: "Show these trees in Assets",
     },
     {
       label: "Image composition",
@@ -276,7 +279,7 @@ export default function App() {
       value: `${aggregated.canopyCoverPct.value.toFixed(1)}% trees`,
       secondaryValue: `${(100 - aggregated.canopyCoverPct.value).toFixed(1)}% ground`,
       hasInfo: true,
-      onDrillDown: () => drillIntoAreas({ kind: "canopyLoss" }),
+      onDrillDown: () => drillIntoAssets({ kind: "canopyLoss" }),
       drillDownLabel: "Show the trees losing the most canopy",
     },
     {
@@ -286,7 +289,7 @@ export default function App() {
       changeNote: "vs. prior period",
       trend: canopyChange?.trend,
       hasInfo: true,
-      onDrillDown: () => drillIntoAreas({ kind: "canopyLoss" }),
+      onDrillDown: () => drillIntoAssets({ kind: "canopyLoss" }),
       drillDownLabel: "Show the trees losing the most canopy",
     },
   ];
@@ -434,11 +437,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Calendar row — Insights/Assets only. Maps/Areas/Story used to show
+          {/* Calendar row — Insights/Areas only. Maps/Assets/Story used to show
               the big master timeline scrubber here instead; each layer's own
               coverage strip in the layer panel now carries that job, so the
               row just doesn't render for those tabs rather than sitting empty. */}
-          {activeTab !== "Maps" && activeTab !== "Areas" && activeTab !== "Story" && (
+          {activeTab !== "Maps" && activeTab !== "Assets" && activeTab !== "Story" && (
             <div className="flex items-center px-2 py-2 gap-3 animate-fade-in-up" style={{ animationDelay: "190ms" }}>
               <CalendarRangePicker months={calendar.months} range={calendar.range} onChange={calendar.setRange} />
             </div>
@@ -469,9 +472,9 @@ export default function App() {
               onBasemapIndexChange={setBasemapIndex}
             />
           </div>
-        ) : activeTab === "Areas" ? (
+        ) : activeTab === "Assets" ? (
           <div className="view-enter-soft">
-            <AreasView
+            <AssetsView
               area={activeArea}
               layerTime={layerTime}
               range={range}
@@ -499,10 +502,11 @@ export default function App() {
               onLayerOpacityChange={setLayerOpacity}
               basemapIndex={basemapIndex}
               onBasemapIndexChange={setBasemapIndex}
+              onClose={() => switchTab("Maps")}
             />
           </div>
-        ) : activeTab === "Assets" ? (
-          <AssetsView area={activeArea} range={calendar.range} />
+        ) : activeTab === "Areas" ? (
+          <AreasView area={activeArea} range={calendar.range} />
         ) : (
           <div className="view-enter flex gap-[16px] items-stretch px-5 pb-6">
             {/* Main column */}
@@ -542,13 +546,13 @@ export default function App() {
                     value={aggregated.ndvi.value}
                     change={ndviChange}
                     delay={CHROME_SEQUENCE_MS + 100}
-                    onDrillDown={() => drillIntoAreas({ kind: "health", values: FLAGGED_CONDITION_LABELS })}
+                    onDrillDown={() => drillIntoAssets({ kind: "health", values: FLAGGED_CONDITION_LABELS })}
                   />
                   <AnimatedDonutChart
                     data={aggregated.healthData}
                     title="Tree count - by health condition"
                     delay={CHROME_SEQUENCE_MS + 180}
-                    onSliceClick={(name) => drillIntoAreas({ kind: "health", values: [name] })}
+                    onSliceClick={(name) => drillIntoAssets({ kind: "health", values: [name] })}
                   />
                   <AnimatedDonutChart
                     data={aggregated.diameterData}
@@ -556,7 +560,7 @@ export default function App() {
                     delay={CHROME_SEQUENCE_MS + 260}
                     // The slice name IS the record's `diameter` string
                     // ("L (>5 m)") — see aggregate.ts's DIAMETER_META.
-                    onSliceClick={(name) => drillIntoAreas({ kind: "diameter", value: name })}
+                    onSliceClick={(name) => drillIntoAssets({ kind: "diameter", value: name })}
                   />
                   <AnimatedDonutChart
                     data={aggregated.heightData}
@@ -564,7 +568,7 @@ export default function App() {
                     delay={CHROME_SEQUENCE_MS + 340}
                     // HEIGHT_META labels its slices "1"/"2"/"3" for keys
                     // h1/h2/h3, so the key is the label with an `h` in front.
-                    onSliceClick={(name) => drillIntoAreas({ kind: "height", value: `h${name}` })}
+                    onSliceClick={(name) => drillIntoAssets({ kind: "height", value: `h${name}` })}
                   />
                 </div>
               </div>
@@ -582,7 +586,7 @@ export default function App() {
                     data={aggregated.crownData}
                     delay={CHROME_SEQUENCE_MS + 420}
                     trend={crownMatureChange}
-                    onSelectBucket={(i) => drillIntoAreas({ kind: "crown", value: `b${i + 1}` })}
+                    onSelectBucket={(i) => drillIntoAssets({ kind: "crown", value: `b${i + 1}` })}
                   />
                   <HealthPerSpeciesChart series={aggregated.scatterSeries} delay={CHROME_SEQUENCE_MS + 500} zMax={scatterZMax} />
                 </div>

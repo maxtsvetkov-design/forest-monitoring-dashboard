@@ -112,7 +112,7 @@ function toRecord(
 }
 
 /**
- * The whole population as observed in one month. This is what the Areas table
+ * The whole population as observed in one month. This is what the Assets table
  * and the map want: a standing inventory at a point in time, one row per tree.
  */
 export function generateTreeRecordsAt(

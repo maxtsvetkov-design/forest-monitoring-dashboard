@@ -18,7 +18,7 @@ import AmbientBackground from "./AmbientBackground";
 import { areas } from "../data/areas";
 import { aggregateRange } from "../data/aggregate";
 import { useDateRange } from "../hooks/useDateRange";
-import type { PendingAreaFilter } from "../hooks/useTreeFilters";
+import type { PendingAssetFilter } from "../hooks/useTreeFilters";
 import AIAssistant from "./AIAssistant";
 import AreaTable, { AREA_ROWS } from "./AreaTable";
 import AreaTableView from "./AreaTableView";
@@ -66,7 +66,7 @@ type TopTab = (typeof TOP_TABS)[number];
  * monitored site at full width. Only "Story" has no landing-screen form — it
  * is an in-app tab — so picking it crosses the gate.
  *
- * "Table" used to cross the gate too, landing on the workspace's Areas tab.
+ * "Table" used to cross the gate too, landing on the workspace's Assets tab.
  * That tab's table is per-TREE, though, which made the landing strip's "Table"
  * a link to a different subject entirely; it now shows this screen's own
  * subject — sites — and drilling into one from a row is what opens the
@@ -105,7 +105,7 @@ const SIDEBAR_MAX_WIDTH = 900;
 export default function LandingScreen({
   onEnter,
 }: {
-  onEnter: (areaId?: string, opts?: { tab?: string; filter?: PendingAreaFilter }) => void;
+  onEnter: (areaId?: string, opts?: { tab?: string; filter?: PendingAssetFilter }) => void;
 }) {
   const [activeTab, setActiveTab] = useState<TopTab>("All areas");
   const [scope, setScope] = useState<"monitored" | "custom">("monitored");
@@ -513,9 +513,9 @@ export default function LandingScreen({
               months={dashboardRange.months}
               onRangeChange={dashboardRange.setRange}
               // A KPI drill-down crosses the landing gate: it opens the
-              // workspace on Areas with the filter already applied, which is
+              // workspace on Assets with the filter already applied, which is
               // where the per-tree answer to "show me these" actually lives.
-              onDrillIntoAreas={(filter) => onEnter(dashboardAreaId, { tab: "Areas", filter })}
+              onDrillIntoAssets={(filter) => onEnter(dashboardAreaId, { tab: "Assets", filter })}
               // The site table re-scopes this preview in place — paging
               // through rows is "show me that area's numbers", not "leave
               // this screen".
