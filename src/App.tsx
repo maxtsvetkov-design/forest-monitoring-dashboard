@@ -31,15 +31,16 @@ import TreeHistoryModal, { TreeMiniPopover } from "./components/TreeHistoryModal
 import RecentEventsList from "./components/RecentEventsList";
 import PannableFrameStage from "./components/PannableFrameStage";
 import { HABITAT_FRAMES } from "./components/HabitatSnapshotCard";
+import { publicUrl } from "./lib/publicUrl";
 
 // The commissioned hi-res capture, appended after HABITAT_FRAMES once
 // `hiResDelivered` flips — see that state's own comment. Appended, not
 // swapped in wholesale: the 3 reference captures stay reachable on the same
 // timeline rather than being replaced by the one delivered pass.
-const HI_RES_HABITAT_FRAME = "/overlays/habitat_hi.jpg";
+const HI_RES_HABITAT_FRAME = publicUrl("/overlays/habitat_hi.jpg");
 // The real satellite basemap the habitat reference captures are draped over
 // — shown alone until a reader chooses to overlay one of them on top.
-const BASEMAP_SRC = "/overlays/basemap.png";
+const BASEMAP_SRC = publicUrl("/overlays/basemap.png");
 import HabitatLegend from "./components/HabitatLegend";
 import ToolbarBtn from "./components/ToolbarBtn";
 import TreeSurveyCard from "./components/TreeSurveyCard";
@@ -694,7 +695,7 @@ export default function App() {
                   hiResFrameIndex={hiResDelivered ? HABITAT_FRAMES.length : undefined}
                   compareSrc={habitatCompareIndex !== null ? HABITAT_FRAMES[habitatCompareIndex + 1] : undefined}
                   compareLabel={habitatCompareStats ? `Compared with ${habitatCompareStats.labelB}` : undefined}
-                  differenceSrc={habitatCompareIndex !== null ? "/overlays/difference.png" : undefined}
+                  differenceSrc={habitatCompareIndex !== null ? publicUrl("/overlays/difference.png") : undefined}
                 />
                 <HabitatLegend
                   resolutionLabel={

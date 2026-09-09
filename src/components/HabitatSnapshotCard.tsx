@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { smootherstep, underlayOpacity } from "../lib/crossfade";
+import { publicUrl } from "../lib/publicUrl";
 
 /**
  * A small floating habitat photo, layered over the Al Maha map rather than
@@ -17,7 +18,9 @@ import { smootherstep, underlayOpacity } from "../lib/crossfade";
 // (App.tsx) shows the same three frames, and a second hardcoded copy of this
 // list is exactly the kind of literal this app's own conventions ask not to
 // duplicate.
-export const HABITAT_FRAMES = ["/overlays/habitat_1.jpg", "/overlays/habitat_2.jpg", "/overlays/habitat_3.jpg"];
+export const HABITAT_FRAMES = ["/overlays/habitat_1.jpg", "/overlays/habitat_2.jpg", "/overlays/habitat_3.jpg"].map(
+  publicUrl,
+);
 const FADE_MS = 550;
 
 export default function HabitatSnapshotCard() {
