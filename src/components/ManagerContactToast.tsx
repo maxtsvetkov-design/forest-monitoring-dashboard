@@ -29,11 +29,19 @@ const EXIT_MS = 480;
  */
 export default function ManagerContactToast({
   detail,
+  title = "Our manager will contact you soon.",
   onDismiss,
 }: {
   /** The second line — what was actually requested, stated plainly rather
    * than a generic "we'll be in touch". */
   detail: string;
+  /** The headline. Defaults to the sales answer this was built for; the twin
+   * card's own actions ("send to the field team", "request analysis") are the
+   * same shape of acknowledgement but are not going to a salesperson, and a
+   * fourth near-identical toast component to say so would be worse than one
+   * prop. Keep any override in the same register: a promise about what happens
+   * next, never a claim that it already has. */
+  title?: string;
   onDismiss: () => void;
 }) {
   const [leaving, setLeaving] = useState(false);
@@ -79,7 +87,7 @@ export default function ManagerContactToast({
           </svg>
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[15px] font-semibold text-[#18181c]">Our manager will contact you soon.</p>
+          <p className="text-[15px] font-semibold text-[#18181c]">{title}</p>
           <p className="text-[13px] leading-[1.4] text-[#464650] mt-1">{detail}</p>
         </div>
         <button

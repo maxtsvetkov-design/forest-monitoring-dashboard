@@ -6,6 +6,10 @@ export interface Area {
   name: string;
   projectName: string;
   center: [number, number];
+  /** Overrides each workspace map view's own default zoom for this area only
+   *  (Maps: 12.5, Assets: 11.5, Story: 12.5) — for the rare area that wants a
+   *  different starting camera distance than every other area shares. */
+  zoom?: number;
   snapshots: MonthSnapshot[];
 }
 
@@ -14,7 +18,12 @@ export const areas: Area[] = [
     id: "al-maha",
     name: "Al Maha Forest",
     projectName: "Al Maha Forest (Pilot)",
-    center: [55.688, 24.766],
+    // 24°19'17.0"N 54°15'25.5"E, converted from DMS.
+    center: [54.2571, 24.3214],
+    // Pulled back to show the pilot plot against the whole Abu Dhabi emirate
+    // it sits in, rather than the tight plot-level framing every other area
+    // opens on.
+    zoom: 7,
     snapshots: generateMonthlySnapshots(1, "al-maha"),
   },
   {
@@ -42,5 +51,17 @@ export const areas: Area[] = [
     projectName: "Al Maha Forest (Pilot)",
     center: [56.2306, 25.4181],
     snapshots: generateMonthlySnapshots(0.4, "wadi-wurayah"),
+  },
+  {
+    // The one coastal site on the programme, and the only one carrying its own
+    // captures rather than Al Maha's re-georeferenced drone frame — five of
+    // them, which is why its imagery is registered separately in overlays.ts
+    // (see `areaTimelapseImages`) rather than falling back to the shared plate.
+    id: "abu-al-abyad",
+    name: "Abu Al Abyad",
+    projectName: "Al Maha Forest (Pilot)",
+    // The island's own position, west of Abu Dhabi.
+    center: [53.8272, 24.2069],
+    snapshots: generateMonthlySnapshots(1.1, "abu-al-abyad"),
   },
 ];

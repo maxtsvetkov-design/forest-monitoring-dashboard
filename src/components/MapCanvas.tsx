@@ -1,9 +1,17 @@
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { createPortal } from "react-dom";
 import type { DateRange } from "../data/aggregate";
-import { plotWidthMeters, pointInQuad, type MapOverlay } from "../data/overlays";
+import { areaHasOwnImagery, isInsideQuad, plotWidthMeters, pointInQuad, type MapOverlay } from "../data/overlays";
 import { loadCanopies, MAX_CROWN_RADIUS_M, type Canopy } from "../data/canopies";
 import TreeCanopyLayer from "../map/TreeCanopyLayer";
 import { generateTreePins, pinSeverityAt, SEVERITY_COLOR, type PinSeverity, type TreePin } from "../data/treePins";
@@ -24,9 +32,11 @@ import LayerPanel, {
 import { buildMapFilter, DEFAULT_MAP_CONTRAST, type MapColorMode } from "./mapColorModes";
 import type { StoryFrame, StoryMapView } from "../data/storyMap";
 import MapToolbar from "./MapToolbar";
+import HabitatLegend from "./HabitatLegend";
 import TreeHistoryModal from "./TreeHistoryModal";
 import TreeTwinCard from "./TreeTwinCard";
 import { CONDITION_KEYS, CONDITION_LABEL, type ConditionKey } from "../data/taxonomy";
+import { smootherstep, underlayOpacity } from "../lib/crossfade";
 
 // OpenStreetMap data served as vector tiles by OpenFreeMap: free, unlimited,
 // no API key, and intended for embedding in third-party apps (unlike raw
@@ -241,7 +251,7 @@ const OVERLAY_SOURCE_ID_A = "area-aerial-overlay-a";
 const OVERLAY_LAYER_ID_A = "area-aerial-overlay-layer-a";
 const OVERLAY_SOURCE_ID_B = "area-aerial-overlay-b";
 const OVERLAY_LAYER_ID_B = "area-aerial-overlay-layer-b";
-const OVERLAY_CROSSFADE_MS = 500;
+const OVERLAY_CROSSFADE_MS = 620;
 const GENERATIVE_SOURCE_ID = "area-generative-overlay";
 const GENERATIVE_LAYER_ID = "area-generative-overlay-layer";
 // The dying-trees trace shares the generative layer's footprint but sits flat
@@ -639,6 +649,7 @@ export default function MapCanvas({
   focusTree,
   inspectTree,
   onExitInspect,
+  onRasterHover,
   onFocusArrived,
   onFocusMove,
   onPinClick,
@@ -646,12 +657,18 @@ export default function MapCanvas({
   onOverlayQuadChange,
   storyView,
   chrome = true,
+  skipAutoFit = false,
 }: {
   center: [number, number];
   zoom?: number;
   className?: string;
   /** Inline sizing — the Assets split pane drives width as a percentage. */
   style?: CSSProperties;
+  /** Suppresses the on-load auto-fit-to-plot below, the same way an explicit
+   *  `focusTree` or `storyView` request already does — for a caller that
+   *  passed its own deliberate `center`/`zoom` and wants the camera to open
+   *  exactly there instead of snapping to the plot's footprint. */
+  skipAutoFit?: boolean;
   show3DToggle?: boolean;
   overlay?: MapOverlay;
   /** Decorative layer rendered above `overlay`, same footprint — see areaGenerativeOverlays. */
@@ -711,6 +728,17 @@ export default function MapCanvas({
   inspectTree?: TreeRecord | null;
   /** Closes the twin — the card's own button, or Escape. */
   onExitInspect?: () => void;
+  /**
+   * Fires as the pointer moves over the aerial imagery, with its position in
+   * this map's own viewport coordinates — and with `null` when it leaves.
+   *
+   * Lives here rather than in the caller because answering "is the pointer on
+   * the imagery" needs both the map (to turn a screen point into a ground
+   * position) and the overlay's footprint, and a caller has neither. See
+   * HabitatChangeView, which uses it to float the capture-stack button wherever
+   * the reader is looking at the plot.
+   */
+  onRasterHover?: (viewport: { x: number; y: number } | null) => void;
   /** Fires once the fly-to for `focusTree` settles, with that tree's current
    * viewport position — lets a caller (App.tsx) open something (a floating
    * popover) anchored to the pin exactly when the camera arrives, rather than
@@ -768,7 +796,9 @@ export default function MapCanvas({
   // instead of letting two crossfades collide and leave a stray layer behind.
   const activeOverlaySlotRef = useRef<"A" | "B">("A");
   const prevOverlayRef = useRef<MapOverlay | undefined>(undefined);
-  const overlayCrossfadeTimeoutRef = useRef<number | null>(null);
+  /** The running dissolve, if any. A frame loop rather than a timeout now that
+   *  the two layers' opacities are computed per frame — see underlayOpacity. */
+  const overlayFadeRafRef = useRef<number | null>(null);
   const [is3D, setIs3D] = useState(false);
   // A whole-map CSS filter (see index.css's .map-color-mode / mapColorModes.ts),
   // not a basemap swap or a WebGL shader -- each mode's recipe remaps the
@@ -1005,7 +1035,10 @@ export default function MapCanvas({
         prevOverlayRef.current = overlay;
       }
 
-      if (overlay && canopyImageUrl) {
+      // The canopy mask is Al Maha's own crown artwork, drawn in the shared
+      // drone frame's image space — see areaHasOwnImagery for why an area with
+      // its own captures must not have it draped over them.
+      if (overlay && canopyImageUrl && !areaHasOwnImagery(areaId ?? "")) {
         m.addSource(CANOPY_SOURCE_ID, { type: "image", url: canopyImageUrl, coordinates: overlay.coordinates });
         m.addLayer({
           id: CANOPY_LAYER_ID,
@@ -1230,6 +1263,39 @@ export default function MapCanvas({
     mapRef.current?.flyTo({ center, zoom, duration: 1200 });
   }, [center, zoom]);
 
+  // Reports the pointer's position while it is over the aerial imagery — see
+  // `onRasterHover`.
+  //
+  // Kept in a ref so the listeners below are attached once and never
+  // re-attached because a caller passed a fresh arrow function; MapLibre's
+  // `off` needs the identical reference, and a re-subscribing effect on every
+  // render would leak handlers.
+  const rasterHoverRef = useRef(onRasterHover);
+  rasterHoverRef.current = onRasterHover;
+  const overlayCornersKey = overlay ? JSON.stringify(overlay.coordinates) : "";
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !overlay) return;
+    const corners = overlay.coordinates;
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      const { lng, lat } = e.lngLat;
+      rasterHoverRef.current?.(isInsideQuad(corners, lng, lat) ? { x: e.point.x, y: e.point.y } : null);
+    };
+    const onOut = () => rasterHoverRef.current?.(null);
+    map.on("mousemove", onMove);
+    // `mouseout` fires when the pointer leaves the canvas; `dragstart` because
+    // a hover affordance has no business sitting under a pan in progress.
+    map.on("mouseout", onOut);
+    map.on("dragstart", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
+      map.off("dragstart", onOut);
+      rasterHoverRef.current?.(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, overlayCornersKey]);
+
   // Georeferenced aerial overlay: an `image` source pinned to four ground
   // corners, so it stays locked to the terrain while panning/zooming/tilting.
   //
@@ -1250,9 +1316,9 @@ export default function MapCanvas({
     const isHardSwitch = !prev || !overlay || JSON.stringify(prev.coordinates) !== JSON.stringify(overlay.coordinates);
 
     if (isHardSwitch) {
-      if (overlayCrossfadeTimeoutRef.current !== null) {
-        window.clearTimeout(overlayCrossfadeTimeoutRef.current);
-        overlayCrossfadeTimeoutRef.current = null;
+      if (overlayFadeRafRef.current !== null) {
+        cancelAnimationFrame(overlayFadeRafRef.current);
+        overlayFadeRafRef.current = null;
       }
       if (map.getLayer(OVERLAY_LAYER_ID_A)) map.removeLayer(OVERLAY_LAYER_ID_A);
       if (map.getSource(OVERLAY_SOURCE_ID_A)) map.removeSource(OVERLAY_SOURCE_ID_A);
@@ -1308,12 +1374,26 @@ export default function MapCanvas({
     const incomingSourceId = incomingSlot === "A" ? OVERLAY_SOURCE_ID_A : OVERLAY_SOURCE_ID_B;
     const incomingLayerId = incomingSlot === "A" ? OVERLAY_LAYER_ID_A : OVERLAY_LAYER_ID_B;
 
-    // A rapid second swap arriving before the previous crossfade's cleanup
-    // fired: finish that cleanup immediately rather than letting a third
-    // layer pile up on top of two already-fading ones.
-    if (overlayCrossfadeTimeoutRef.current !== null) {
-      window.clearTimeout(overlayCrossfadeTimeoutRef.current);
-      overlayCrossfadeTimeoutRef.current = null;
+    const targetOpacity = (overlay.opacity ?? 1) * layerOpacityRef.current.aerial;
+
+    // A second swap arriving while one is still dissolving — which is exactly
+    // what dragging the timeline across several buckets produces.
+    //
+    // This used to tear the in-flight incoming layer back out so its slot could
+    // be reused. That is the stutter: the picture drops back to the frame the
+    // reader has already moved past, then starts forward again. Instead the
+    // in-flight layer is PROMOTED — it is the top layer, so snapping it to full
+    // target changes no coverage at all, only finishes the dissolve it was
+    // already most of the way through — and the frame beneath it, now fully
+    // hidden, is dropped. The scrub then only ever moves forward through the
+    // frames, however fast it is dragged.
+    if (overlayFadeRafRef.current !== null) {
+      cancelAnimationFrame(overlayFadeRafRef.current);
+      overlayFadeRafRef.current = null;
+      if (map.getLayer(outgoingLayerId)) {
+        map.setPaintProperty(outgoingLayerId, "raster-opacity-transition", { duration: 0 });
+        map.setPaintProperty(outgoingLayerId, "raster-opacity", targetOpacity);
+      }
       if (map.getLayer(incomingLayerId)) map.removeLayer(incomingLayerId);
       if (map.getSource(incomingSourceId)) map.removeSource(incomingSourceId);
     }
@@ -1329,41 +1409,53 @@ export default function MapCanvas({
         id: incomingLayerId,
         type: "raster",
         source: incomingSourceId,
-        paint: {
-          "raster-opacity": 0,
-          "raster-opacity-transition": { duration: OVERLAY_CROSSFADE_MS },
-          "raster-fade-duration": 0,
-        },
+        // No transition of MapLibre's own: both opacities are written every
+        // frame below, and a built-in ease running underneath that would be a
+        // second animation fighting the first for the same property.
+        paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 0 }, "raster-fade-duration": 0 },
       });
+      // `addLayer` appends, so the incoming frame is above the outgoing one —
+      // which is what lets the pair be composed rather than merely blended.
       ensureGenerativeOnTop(m);
-
-      // MapLibre animates a *change* to raster-opacity, so the starting value
-      // has to be committed and actually rendered before the target is set --
-      // otherwise both values land inside the same style update and it paints
-      // at the target immediately, with no transition. A requestAnimationFrame
-      // here is too early (it runs before the map's own render), which showed
-      // up as a mid-fade screenshot pixel-identical to the settled one; waiting
-      // for the map to report a rendered frame is what actually works.
-      const beginFade = () => {
-        if (cancelled || !mapRef.current) return;
-        const m2 = mapRef.current;
-        if (m2.getLayer(incomingLayerId))
-          m2.setPaintProperty(incomingLayerId, "raster-opacity", (overlay.opacity ?? 1) * layerOpacityRef.current.aerial);
-        if (m2.getLayer(outgoingLayerId)) {
-          m2.setPaintProperty(outgoingLayerId, "raster-opacity-transition", { duration: OVERLAY_CROSSFADE_MS });
-          m2.setPaintProperty(outgoingLayerId, "raster-opacity", 0);
-        }
-      };
-      m.once("render", () => window.setTimeout(beginFade, 0));
-
       activeOverlaySlotRef.current = incomingSlot;
-      overlayCrossfadeTimeoutRef.current = window.setTimeout(() => {
-        overlayCrossfadeTimeoutRef.current = null;
-        const m3 = mapRef.current;
-        if (!m3) return;
-        if (m3.getLayer(outgoingLayerId)) m3.removeLayer(outgoingLayerId);
-        if (m3.getSource(outgoingSourceId)) m3.removeSource(outgoingSourceId);
-      }, OVERLAY_CROSSFADE_MS + 80);
+
+      // Driving both opacities per frame also retires an old piece of grief:
+      // MapLibre animates a *change* to raster-opacity, so the previous
+      // implementation had to commit the start value, wait for the map to
+      // report a rendered frame, and only then set the target — otherwise both
+      // landed in one style update and it painted at the target with no
+      // transition at all. Nothing to sequence when you write the value
+      // yourself.
+      const start = performance.now();
+      const step = (now: number) => {
+        const m2 = mapRef.current;
+        if (cancelled || !m2 || !m2.getLayer(incomingLayerId)) {
+          overlayFadeRafRef.current = null;
+          return;
+        }
+        // `now` can be EARLIER than `start`: rAF hands the callback the
+        // timestamp of the frame it belongs to, and that frame may have begun
+        // before the `performance.now()` taken when this fade was scheduled. A
+        // negative t through an unclamped smootherstep produces a small
+        // negative opacity, and MapLibre rejects the whole style — "raster-
+        // opacity: -0.000007 is less than the minimum value 0" — which takes
+        // the map down with it. `smootherstep` clamps its own input, and this
+        // keeps the intent visible at the call site.
+        const t = Math.min(1, Math.max(0, (now - start) / OVERLAY_CROSSFADE_MS));
+        const top = targetOpacity * smootherstep(t);
+        m2.setPaintProperty(incomingLayerId, "raster-opacity", top);
+        if (m2.getLayer(outgoingLayerId)) {
+          m2.setPaintProperty(outgoingLayerId, "raster-opacity", underlayOpacity(targetOpacity, top));
+        }
+        if (t < 1) {
+          overlayFadeRafRef.current = requestAnimationFrame(step);
+          return;
+        }
+        overlayFadeRafRef.current = null;
+        if (m2.getLayer(outgoingLayerId)) m2.removeLayer(outgoingLayerId);
+        if (m2.getSource(outgoingSourceId)) m2.removeSource(outgoingSourceId);
+      };
+      overlayFadeRafRef.current = requestAnimationFrame(step);
     };
     probe.onerror = () => {
       // The bucket's file is missing: stay on the currently-showing image
@@ -1708,7 +1800,7 @@ export default function MapCanvas({
 
     if (map.getLayer(CANOPY_LAYER_ID)) map.removeLayer(CANOPY_LAYER_ID);
     if (map.getSource(CANOPY_SOURCE_ID)) map.removeSource(CANOPY_SOURCE_ID);
-    if (!overlay || !canopyImageUrl) return;
+    if (!overlay || !canopyImageUrl || areaHasOwnImagery(areaId ?? "")) return;
 
     map.addSource(CANOPY_SOURCE_ID, { type: "image", url: canopyImageUrl, coordinates: overlay.coordinates });
     map.addLayer({
@@ -1855,6 +1947,36 @@ export default function MapCanvas({
    * the record's own coordinates lands *near* its tree rather than at it, and
    * a twin framing the gap between two trees is not a twin.
    */
+  /**
+   * Index into `canopies` of the modelled crown closest to a point, or -1 when
+   * there is no artwork to snap to.
+   *
+   * Its own function because two things need the same winner and must not
+   * disagree about it: the camera flight below stands beside that crown, and
+   * the twin's focus dissolve clears every *other* crown out of the scene (see
+   * TreeCanopyLayer.setFocusedTree). Picked separately they could differ by a
+   * tree, which would leave the camera framing a tree that had just vanished.
+   */
+  function nearestCrownIndex(near: [number, number]): number {
+    if (!generativeOverlay || canopies.length === 0) return -1;
+    let best = Infinity;
+    let bestIndex = -1;
+    for (let i = 0; i < canopies.length; i++) {
+      const canopy = canopies[i];
+      const [lng, lat] = pointInQuad(generativeOverlay.coordinates, canopy.u, canopy.v);
+      // Squared degrees, and only to rank: converting each candidate to
+      // metres would be 2,300 trig calls to pick the same winner.
+      const dLng = (lng - near[0]) * Math.cos((near[1] * Math.PI) / 180);
+      const dLat = lat - near[1];
+      const distance = dLng * dLng + dLat * dLat;
+      if (distance < best) {
+        best = distance;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
+  }
+
   function flyToNearestCrown(
     near: [number, number],
     fallbackRadiusM: number,
@@ -1870,21 +1992,11 @@ export default function MapCanvas({
 
     let center = near;
     let crownRadiusM = fallbackRadiusM;
-    if (generativeOverlay && canopies.length > 0) {
-      let best = Infinity;
-      for (const canopy of canopies) {
-        const [lng, lat] = pointInQuad(generativeOverlay.coordinates, canopy.u, canopy.v);
-        // Squared degrees, and only to rank: converting each candidate to
-        // metres would be 2,300 trig calls to pick the same winner.
-        const dLng = (lng - near[0]) * Math.cos((near[1] * Math.PI) / 180);
-        const dLat = lat - near[1];
-        const distance = dLng * dLng + dLat * dLat;
-        if (distance < best) {
-          best = distance;
-          center = [lng, lat];
-          crownRadiusM = Math.min(canopy.r * plotWidthMeters(areaId), MAX_CROWN_RADIUS_M);
-        }
-      }
+    const nearest = nearestCrownIndex(near);
+    if (nearest >= 0 && generativeOverlay) {
+      const canopy = canopies[nearest];
+      center = pointInQuad(generativeOverlay.coordinates, canopy.u, canopy.v);
+      crownRadiusM = Math.min(canopy.r * plotWidthMeters(areaId), MAX_CROWN_RADIUS_M);
     }
 
     // Zoom derived from that crown rather than fixed: crowns here run from
@@ -1944,6 +2056,48 @@ export default function MapCanvas({
     if (!map || !loaded) return;
     flyToNearestCrown([inspectTree.lng, inspectTree.lat], inspectTree.crownRadius);
   }, [inspectTree, loaded, generativeOverlay, canopies, areaId]);
+
+  // Entering isolation for a twin is this component's own doing (see the
+  // effect above), so leaving it has to be too. The twin card's own button
+  // pairs `setIsolatedId(null)` with `onExitInspect()` and gets this right by
+  // hand, but a twin closed by any other route — the table's twin button
+  // pressed a second time, a filter dropping the tree out of the visible set —
+  // only clears the caller's own state, and left the map isolated with a
+  // blacked-out basemap and no twin left to justify it.
+  //
+  // Only the isolation this component entered for a twin is cleared. A reader
+  // who isolated some other layer from the panel and never opened a twin must
+  // not have that reset out from under them, which is what the ref is for.
+  const enteredIsolationForTwinRef = useRef(false);
+  useEffect(() => {
+    if (inspectTree) {
+      enteredIsolationForTwinRef.current = true;
+      return;
+    }
+    if (!enteredIsolationForTwinRef.current) return;
+    enteredIsolationForTwinRef.current = false;
+    setIsolatedId((prev) => (prev === "trees3d" ? null : prev));
+  }, [inspectTree]);
+
+  // ...and clears the rest of the forest out of the shot, so the twin is one
+  // tree rather than one tree somewhere inside 2,296 others. Separate from the
+  // flight above because it has a different lifetime: the flight is a one-shot
+  // camera move, while this has to be undone on the way out — and it also has
+  // to survive the layer being re-created under it (a basemap swap discards
+  // custom layers), which is why it depends on the layer-adding effect's own
+  // inputs rather than just on `inspectTree`.
+  useEffect(() => {
+    const layer = treeLayerRef.current;
+    if (!layer) return;
+    const index = inspectTree ? nearestCrownIndex([inspectTree.lng, inspectTree.lat]) : -1;
+    layer.setFocusedTree(index >= 0 ? index : null);
+    return () => {
+      // Guarded on the ref rather than the captured `layer`: on a style swap
+      // the old layer is already gone and calling into it would resurrect
+      // state on an object the map has dropped.
+      treeLayerRef.current?.setFocusedTree(null);
+    };
+  }, [inspectTree, loaded, generativeOverlay, canopies, effectiveVisibility.trees3d, styleVersion]);
 
   // Leaving isolation by any route (Escape, the panel's "Show all") also
   // closes the twin: the card describes a tree the user can no longer see.
@@ -2100,7 +2254,7 @@ export default function MapCanvas({
   // landed second silently won. The story's first block is an explicit request
   // for a specific frame, so it takes precedence over the passive default.
   useEffect(() => {
-    if (!show3DToggle || !overlay || !overlayReady || focusTree || storyView) return;
+    if (!show3DToggle || !overlay || !overlayReady || focusTree || storyView || skipAutoFit) return;
 
     const map = mapRef.current;
     if (!map) return;
@@ -2148,7 +2302,7 @@ export default function MapCanvas({
     // user had just set. `coordinates` only actually changes when the area
     // itself does, which is the one case this auto-fit is meant to cover.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show3DToggle, overlay?.coordinates, overlayReady, focusTree, storyView]);
+  }, [show3DToggle, overlay?.coordinates, overlayReady, focusTree, storyView, skipAutoFit]);
 
   /**
    * Applies the Story panel's current block view — the one place the story and
@@ -2292,7 +2446,12 @@ export default function MapCanvas({
   // rebuilds the marker pool.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !loaded || !overlay || !overlayReady) {
+    // Positions come from the population's u/v inside the shared drone frame,
+    // so on an area carrying its own captures they describe nothing on the
+    // ground being shown — for a coastal frame, trees in open water. The
+    // area's tallies stay real; only the pretence of knowing where each tree
+    // stands is withheld.
+    if (!map || !loaded || !overlay || !overlayReady || areaHasOwnImagery(areaId ?? "")) {
       pinsRef.current = [];
       return;
     }
@@ -2759,6 +2918,7 @@ export default function MapCanvas({
         style={{ filter: buildMapFilter(colorMode, mapContrast) }}
       />
 
+
       {/* Flight is keyboard-only, so it needs saying — nothing on a black
           screen full of trees suggests pressing W. */}
       {flying && !error && (
@@ -2883,6 +3043,11 @@ export default function MapCanvas({
           bearing={bearing}
         />
       )}
+
+      {/* The marine/terrestrial habitat classification legend — Al Maha only,
+          per the reference it was supplied for. A reference key, not a claim
+          that this map's own layers are classified into these exact codes. */}
+      {chrome && loaded && !error && areaId === "al-maha" && <HabitatLegend />}
 
       {activePin &&
         (() => {

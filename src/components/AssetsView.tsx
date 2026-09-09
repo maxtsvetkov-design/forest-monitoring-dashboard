@@ -18,6 +18,9 @@ import { useSlidingPill } from "../hooks/useSlidingPill";
 import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
+import CrabPloverTable from "./CrabPloverTable";
+import AreaImageStage from "./AreaImageStage";
+import { getCrabPlovers, hasCrabPloverCensus } from "../data/crabPlovers";
 import TreeTable from "./TreeTable";
 import { CONTENT_HEIGHT_CLASS } from "../layout";
 
@@ -28,10 +31,16 @@ const AREAS_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
 
 type RightPanel = "table" | "events";
 
-const RIGHT_PANEL_OPTIONS: { key: RightPanel; label: string }[] = [
-  { key: "table", label: "Trees table" },
-  { key: "events", label: "Recent events" },
-];
+/** The switch's own labels. The first one names whatever the site is actually
+ *  surveyed for — "Trees table" on a planted plot, the species on a site with
+ *  its own census — because a tab reading "Trees" over a list of shorebirds is
+ *  the label lying about its contents. */
+function rightPanelOptions(tableLabel: string): { key: RightPanel; label: string }[] {
+  return [
+    { key: "table", label: tableLabel },
+    { key: "events", label: "Recent events" },
+  ];
+}
 
 /** Small segmented control — the right pane's own view switch, distinct
  * from the top-bar's Insights/Assets/Maps/Areas tabs one level up. Shares
@@ -39,8 +48,17 @@ const RIGHT_PANEL_OPTIONS: { key: RightPanel; label: string }[] = [
  * rather than approximating the same look with its own colour-swap: the
  * point is that switching a pane reads as the same *kind* of action as
  * switching a tab, not a coincidentally similar one. */
-function RightPanelSwitcher({ value, onChange }: { value: RightPanel; onChange: (v: RightPanel) => void }) {
+function RightPanelSwitcher({
+  value,
+  onChange,
+  tableLabel,
+}: {
+  value: RightPanel;
+  onChange: (v: RightPanel) => void;
+  tableLabel: string;
+}) {
   const { trackRef, setItemRef, pill, ready, morphing } = useSlidingPill(value);
+  const options = rightPanelOptions(tableLabel);
   return (
     <div ref={trackRef} className="seg-track relative shrink-0">
       <div
@@ -48,7 +66,7 @@ function RightPanelSwitcher({ value, onChange }: { value: RightPanel; onChange: 
         className={`tab-pill ${ready ? "" : "tab-pill--instant"} ${morphing ? "tab-pill--morphing" : ""}`}
         style={{ left: `${pill.left}px`, width: `${pill.width}px` }}
       />
-      {RIGHT_PANEL_OPTIONS.map((opt) => (
+      {options.map((opt) => (
         <button
           key={opt.key}
           ref={setItemRef(opt.key)}
@@ -225,6 +243,14 @@ export default function AssetsView({
     return found ? { id: found.id, lng: found.lng, lat: found.lat } : null;
   }, [filters.visible, flyToId]);
 
+  // The census census's own grouping — see AreaImageStage's split prompt.
+  // `censusCaptureIndex` mirrors that stage's internally-owned timeline
+  // (this view has no other way to know which capture it's showing), and
+  // `splitCensusGroups` is a one-way switch: once accepted, the table stays
+  // split even if the reader scrubs off the last capture and back.
+  const [censusCaptureIndex, setCensusCaptureIndex] = useState(0);
+  const [splitCensusGroups, setSplitCensusGroups] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT_PCT);
   const split = useDragResize({
@@ -242,12 +268,32 @@ export default function AssetsView({
       {/* Explicit height: the ancestor chain is `min-h-screen` (auto height), so a
           `flex-1` child has no definite height to resolve against and can collapse,
           leaving MapLibre with a 0px-tall canvas. */}
+      {/* The imagery in place of the map on a site with no georeferenced
+          anything — same substitution MapsView makes, same reason. Kept beside
+          the census rather than replacing the split, so a row and the bird it
+          names are still on screen together. */}
+      {hasCrabPloverCensus(area.id) && timelapseImages ? (
+        <AreaImageStage
+          frames={timelapseImages}
+          frameIndex={timelapseBucket}
+          areaId={area.id}
+          areaName={area.name}
+          monthLabels={area.snapshots.map((s) => s.label)}
+          monthCount={area.snapshots.length}
+          className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
+          style={{ width: `${splitPct}%` }}
+          selectedBirdId={selectedId}
+          onSelectBird={(b) => setSelectedId(b.id)}
+          onCaptureIndexChange={setCensusCaptureIndex}
+          onSplitGroups={() => setSplitCensusGroups(true)}
+        />
+      ) : (
       <MapCanvas
         layerTime={layerTime}
         pinsRange={layerTime.rangeFor.pins}
         generativeRange={layerTime.rangeFor.generative}
         center={area.center}
-        zoom={11.5}
+        zoom={area.zoom ?? 11.5}
         overlay={overlay}
         generativeOverlay={areaGenerativeOverlays[area.id]}
         dyingTreeOverlay={dyingTreeOverlay}
@@ -271,6 +317,7 @@ export default function AssetsView({
         className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
         style={{ width: `${splitPct}%` }}
       />
+      )}
 
       {/* MapCanvas already watches its container with a ResizeObserver and calls
           map.resize(), so dragging this divider needs no explicit resize call. */}
@@ -303,10 +350,27 @@ export default function AssetsView({
 
       <div className={`flex-1 min-w-0 ${AREAS_HEIGHT} mt-[10px] flex flex-col gap-[8px]`}>
         <div className="flex justify-center shrink-0">
-          <RightPanelSwitcher value={rightPanel} onChange={setRightPanel} />
+          <RightPanelSwitcher
+            value={rightPanel}
+            onChange={setRightPanel}
+            tableLabel={hasCrabPloverCensus(area.id) ? "Crab-plover census" : "Trees table"}
+          />
         </div>
         <div className="flex-1 min-h-0">
-          {rightPanel === "table" ? (
+          {rightPanel === "table" && hasCrabPloverCensus(area.id) ? (
+            // A coastal island is surveyed for shorebirds, not trees — see
+            // crabPlovers.ts. The tree list here would report individuals at
+            // positions that fall in open water.
+            <CrabPloverTable
+              birds={getCrabPlovers(area.id, area.snapshots.length)}
+              areaName={area.name}
+              monthLabels={area.snapshots.map((s) => s.label)}
+              splitGroups={splitCensusGroups}
+              captureIndex={censusCaptureIndex}
+              selectedId={selectedId}
+              onSelect={(b) => setSelectedId(b.id)}
+            />
+          ) : rightPanel === "table" ? (
             <TreeTable
               records={inRange}
               filters={filters}
@@ -324,7 +388,12 @@ export default function AssetsView({
                 layerVisibility.trees3d
                   ? (t) => {
                       setSelectedId(t.id);
-                      setInspectId(t.id);
+                      // A toggle, which is what the button's own `aria-pressed`
+                      // has always advertised: pressing the twin already open
+                      // closes it and hands the map back, rather than
+                      // re-issuing the same flight and leaving the only way out
+                      // on the card or the Escape key.
+                      setInspectId((prev) => (prev === t.id ? null : t.id));
                     }
                   : undefined
               }

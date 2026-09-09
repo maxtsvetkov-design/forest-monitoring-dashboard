@@ -422,6 +422,45 @@ function ProjectGroupHeader({
   );
 }
 
+/** An AI-flagged advisory row under each project group — not a site, so it
+ * carries no per-column values (same reasoning as ProjectGroupHeader above)
+ * and ignores the table's own columnsTemplate. Opens the habitat change
+ * detection screen (see HabitatChangeView), which is where the interval, the
+ * detections and the operational workflow all live — this row is the entry
+ * point to that analysis, not a place to read it. */
+function HabitatChangeRow({ delay, onOpen }: { delay: number; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="u-press w-full grid items-center gap-[12px] px-[14px] py-[14px] text-left cursor-pointer hover:bg-[#fbfbfa] animate-fade-in-up"
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <span className="flex items-center gap-[10px] min-w-0">
+        <span className="shrink-0 w-[28px] h-[28px] rounded-[8px] bg-[#e7f4f2] text-[#0f7a6a] flex items-center justify-center">
+          <svg width="15" height="15" viewBox="0 0 16 16" {...headerIconStroke} strokeWidth={1.6}>
+            <path d="M8 14.5c3-1.8 4.8-4.3 4.8-7.3A4.8 4.8 0 0 0 8 2.4a4.8 4.8 0 0 0-4.8 4.8c0 3 1.8 5.5 4.8 7.3Z" />
+            <path d="M8 14.5V8.2" />
+            <path d="M8 4.5 5.5 7" />
+            <path d="M8 8.2 10.8 6" />
+          </svg>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13px] font-medium text-[#18181c] font-['Outfit',sans-serif] leading-[18px]">
+            Habitat change detection
+          </span>
+          <span className="block text-[11px] text-[#8a8a94] font-['Outfit',sans-serif] leading-[15px]">
+            AI-flagged · refreshes every month · open on the map
+          </span>
+        </span>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 text-[#5b5b66]">
+          <path d="M3.5 2 6.5 5 3.5 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
 /** Thin proportional bar of the real per-condition breakdown behind the tree
  * count — this table's echo of the reference's segmented "estimated trees"
  * bar, built from actual counts (`SiteRowData.healthData`) rather than a
@@ -600,11 +639,17 @@ function SiteRow({
 export default function AreaTable({
   rows,
   onSelectSite,
+  onOpenHabitatChange,
   variant = "compact",
 }: {
   rows: SiteRowData[];
   /** Opens that site's own dashboard. */
   onSelectSite: (areaId: string) => void;
+  /** Opens the habitat change detection screen for a project, scoped to the
+   * area whose imagery it analyses. Omit and the advisory row doesn't render
+   * at all — the cramped sidebar variant has no room for it, and no screen to
+   * open it into. */
+  onOpenHabitatChange?: (areaId: string, projectName: string) => void;
   /** "compact" (default) is the sidebar's five columns; "full" adds the
    * dataset-backed columns modelled on the Figma reference — see the file
    * header. */
@@ -742,17 +787,26 @@ export default function AreaTable({
                 onToggle={() => toggleProject(group.projectName)}
                 delay={160 + groupIndex * 60}
               />
-              {!collapsed &&
-                group.sites.map((site, siteIndex) => (
-                  <SiteRow
-                    key={site.id}
-                    site={site}
-                    columns={visibleColumns}
-                    delay={160 + groupIndex * 60 + (siteIndex + 1) * 40}
-                    onClick={() => onSelectSite(site.id)}
-                    columnsTemplate={columnsTemplate}
-                  />
-                ))}
+              {!collapsed && (
+                <>
+                  {group.sites.map((site, siteIndex) => (
+                    <SiteRow
+                      key={site.id}
+                      site={site}
+                      columns={visibleColumns}
+                      delay={160 + groupIndex * 60 + (siteIndex + 1) * 40}
+                      onClick={() => onSelectSite(site.id)}
+                      columnsTemplate={columnsTemplate}
+                    />
+                  ))}
+                  {onOpenHabitatChange && (
+                    <HabitatChangeRow
+                      delay={160 + groupIndex * 60 + (group.sites.length + 1) * 40}
+                      onOpen={() => onOpenHabitatChange(group.sites[0].id, group.projectName)}
+                    />
+                  )}
+                </>
+              )}
             </div>
           );
         })

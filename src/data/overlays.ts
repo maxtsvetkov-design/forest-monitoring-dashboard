@@ -70,6 +70,31 @@ export function pointInQuad(
   return [topLng + (bottomLng - topLng) * v, topLat + (bottomLat - topLat) * v];
 }
 
+/**
+ * Whether a ground position falls on an overlay's own footprint.
+ *
+ * The companion to `pointInQuad`, which goes the other way. Needed because
+ * MapLibre cannot hit-test a `raster` layer — `queryRenderedFeatures` returns
+ * nothing for one, since a raster has no features — so "is the pointer over the
+ * imagery" has to be answered geometrically.
+ *
+ * Ray casting over the four corners rather than an axis-aligned box test: the
+ * corners are a general quad (`boxAround` happens to produce a rectangle, but a
+ * true georeference need not) and a bounding box would report `true` for ground
+ * outside a rotated footprint.
+ */
+export function isInsideQuad(coordinates: MapOverlay["coordinates"], lng: number, lat: number): boolean {
+  let inside = false;
+  for (let i = 0, j = coordinates.length - 1; i < coordinates.length; j = i++) {
+    const [xi, yi] = coordinates[i];
+    const [xj, yj] = coordinates[j];
+    if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 // Source image is 2752 × 1536 px.
 const AERIAL_ASPECT = 2752 / 1536;
 
@@ -91,17 +116,61 @@ const PLOT_WIDTH_M: Record<string, number> = {
   hatta: 1200,
   "sir-bani-yas": 1800,
   "wadi-wurayah": 900,
+  // A coastal island rather than a fenced plot, and the captures behind it are
+  // whole-coastline satellite frames — so its footprint is an order of
+  // magnitude wider than the drone plots above.
+  "abu-al-abyad": 14_000,
 };
 
+/**
+ * Areas whose imagery is NOT the shared drone plate.
+ *
+ * The four plots above are all the same 2752 × 1536 frame re-georeferenced, so
+ * one aspect and one file covered them. Abu Al Abyad carries its own captures
+ * at 5865 × 3220, and draping those on a box cut for the drone frame's aspect
+ * would stretch them about 1.7% vertically — small, and exactly the kind of
+ * quiet mis-registration the rest of this file refuses. So the aspect travels
+ * with the image rather than being assumed.
+ */
+const AREA_BASE_IMAGE: Record<string, { url: string; aspect: number }> = {
+  "abu-al-abyad": { url: "/overlays/map1.jpg", aspect: 5865 / 3220 },
+};
+
+/**
+ * Whether this area's imagery is its OWN ground rather than the shared drone
+ * plate — and therefore whether anything traced in that plate's image space
+ * applies to it.
+ *
+ * Three things in this app are drawn in the shared frame's normalised u/v
+ * coordinates: the canopy-health mask, the generative crown artwork, and every
+ * tree in `treePopulation.ts`. On the plots that reuse the drone frame those
+ * land exactly where the imagery says they should, which is what makes
+ * re-georeferencing one photograph across four sites defensible. On an area
+ * with its own captures they land nowhere in particular — for Abu Al Abyad, a
+ * 14 km coastal frame, the canopy mask paints crowns across open water and the
+ * population pins trees into the sea.
+ *
+ * So this is the gate: the generative and dying-tree traces are already absent
+ * for such an area (they are per-area registries below, with no entry), and
+ * MapCanvas asks this before drawing the two that are generated globally. What
+ * remains is the area's own captures and its own tallies, which are real.
+ */
+export function areaHasOwnImagery(areaId: string): boolean {
+  return areaId in AREA_BASE_IMAGE;
+}
+
 export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
-  areas.map((area) => [
-    area.id,
-    {
-      url: publicUrl("/overlays/al-maha-aerial.png"),
-      coordinates: boxAround(area.center, PLOT_WIDTH_M[area.id] ?? 1200, AERIAL_ASPECT),
-      opacity: 1,
-    } satisfies MapOverlay,
-  ]),
+  areas.map((area) => {
+    const own = AREA_BASE_IMAGE[area.id];
+    return [
+      area.id,
+      {
+        url: publicUrl(own?.url ?? "/overlays/al-maha-aerial.png"),
+        coordinates: boxAround(area.center, PLOT_WIDTH_M[area.id] ?? 1200, own?.aspect ?? AERIAL_ASPECT),
+        opacity: 1,
+      } satisfies MapOverlay,
+    ];
+  }),
 );
 
 /**
@@ -134,14 +203,56 @@ export function areaHectares(areaId: string): number {
  * "different look per stretch of the timeline" set rather than a dated
  * before/after sequence — see `overlayForRange`.
  */
+/**
+ * The individual frames, named rather than spelled inline, so that
+ * `areaExtentPairs` below can pin a traced extent to the *specific* capture it
+ * was drawn on without a second copy of the path. A trace belongs to one frame
+ * — pairing it with "whatever is last in the list" would silently mis-attribute
+ * it the moment a new capture is added.
+ */
+const AL_MAHA_FRAMES = {
+  f1: "/overlays/al-maha-aerial1.jpg",
+  f2: "/overlays/al-maha-aerial2.jpg",
+  f3: "/overlays/al-maha-aerial3.jpg",
+  f6: "/overlays/al-maha-aerial6.jpg",
+  f7: "/overlays/al-maha-aerial7.jpg",
+} as const;
+
+/** Capture order — the only sequence signal the filenames give. Everything that
+ *  needs "which frame is this, of how many" reads it from here. */
+const AL_MAHA_FRAME_ORDER: readonly string[] = [
+  AL_MAHA_FRAMES.f1,
+  AL_MAHA_FRAMES.f2,
+  AL_MAHA_FRAMES.f3,
+  AL_MAHA_FRAMES.f6,
+  AL_MAHA_FRAMES.f7,
+];
+
+/**
+ * Abu Al Abyad's own five captures.
+ *
+ * The gaps in the numbering (1, 5, 8, 12, 16) are the delivery's, not a
+ * selection made here — they are the frames that exist. As with the Al Maha
+ * set, no capture date is claimed for any of them, so the timeline buckets
+ * these the same way it buckets that one, dating each by the stretch of
+ * months its position stands for rather than a survey date it doesn't carry.
+ *
+ * map1.jpg is placed LAST rather than first (ascending suffix order would put
+ * it at the front) so it lands in the timeline's most recent window instead
+ * of its oldest — a deliberate override of the filename ordering, not an
+ * oversight.
+ */
+const ABU_AL_ABYAD_FRAME_ORDER: readonly string[] = [
+  "/overlays/map5.jpg",
+  "/overlays/map8.jpg",
+  "/overlays/map12.jpg",
+  "/overlays/map16.jpg",
+  "/overlays/map1.jpg",
+];
+
 export const areaTimelapseImages: Record<string, string[]> = {
-  "al-maha": [
-    "/overlays/al-maha-aerial1.jpg",
-    "/overlays/al-maha-aerial2.jpg",
-    "/overlays/al-maha-aerial3.jpg",
-    "/overlays/al-maha-aerial6.jpg",
-    "/overlays/al-maha-aerial7.jpg",
-  ].map(publicUrl),
+  "al-maha": AL_MAHA_FRAME_ORDER.map(publicUrl),
+  "abu-al-abyad": ABU_AL_ABYAD_FRAME_ORDER.map(publicUrl),
 };
 
 /**
@@ -276,3 +387,146 @@ export function dyingTreeOverlayForRange(
   const index = Math.max(0, Math.min(sequence.length - 1, monthsIntoWindow));
   return { ...base, url: sequence[index] };
 }
+
+/**
+ * A hand-delineated vegetation extent — the boundary an analyst drew around the
+ * shelterbelt corridor on one specific capture.
+ *
+ * These are *not* generated from the tree data the rest of the app computes
+ * from; they arrived as delivered traces, and they register pixel-for-pixel on
+ * their own frame (verified against the imagery: the line sits on the mature
+ * tree row that runs across the lower third of the plot, v ≈ 0.71–0.86).
+ *
+ * `color` is the literal stroke colour sampled out of the PNG, not a palette
+ * choice, so a legend built from this data cannot disagree with the pixels the
+ * reader is looking at.
+ */
+export interface ExtentTrace {
+  url: string;
+  /** Sampled from the file — every opaque pixel in these PNGs is this one colour. */
+  color: string;
+}
+
+/**
+ * One capture and the extent traced on it: the unit the habitat screen's stack
+ * view draws two of, stacking capture → trace → capture → trace.
+ */
+export interface CaptureExtentPair {
+  id: string;
+  capture: string;
+  /** 1-based position in the plot's own capture set, and its size — see
+   *  AL_MAHA_FRAME_ORDER. The set carries no survey dates, so this ordinal is
+   *  the whole of what is known about when a frame was taken. */
+  frameNumber: number;
+  frameCount: number;
+  trace: ExtentTrace;
+}
+
+function alMahaPair(id: string, capturePath: string, tracePath: string, color: string): CaptureExtentPair {
+  const index = AL_MAHA_FRAME_ORDER.indexOf(capturePath);
+  if (index < 0) {
+    // A trace pinned to a frame that is no longer in the capture set would
+    // render over imagery it was never drawn on. Better to fail loudly here
+    // than to publish a mis-registered comparison.
+    throw new Error(`Extent trace "${id}" references ${capturePath}, which is not in the capture set`);
+  }
+  return {
+    id,
+    capture: publicUrl(capturePath),
+    frameNumber: index + 1,
+    frameCount: AL_MAHA_FRAME_ORDER.length,
+    trace: { url: publicUrl(tracePath), color },
+  };
+}
+
+/**
+ * The two epochs the stack view compares, earliest-frame first.
+ *
+ * Only Al Maha has delivered traces. Unlike `areaOverlays`, this is *not*
+ * back-filled for the other pilot plots: re-georeferencing a shared aerial to
+ * another plot's centre is an honest demo compromise, but presenting a
+ * delineation somebody drew on Al Maha's shelterbelt as another site's
+ * vegetation boundary is a claim about that site. Callers key into this and
+ * hide the affordance when there is nothing to show.
+ */
+export const areaExtentPairs: Record<string, CaptureExtentPair[]> = {
+  "al-maha": [
+    alMahaPair("extent-early", AL_MAHA_FRAMES.f1, "/overlays/maha_22.png", "#12D2FF"),
+    alMahaPair("extent-late", AL_MAHA_FRAMES.f7, "/overlays/maha_55.png", "#D200FF"),
+  ],
+};
+
+/**
+ * Which months of the plot's timeline a given capture frame stands for.
+ *
+ * The inverse of `timelapseBucketIndex`, and the only honest way to put a date
+ * on these frames. The files carry no survey date — see `areaTimelapseImages` —
+ * but the app already treats their filename order as a time order everywhere
+ * else: the timeline splits its months into one bucket per frame and shows
+ * whichever frame the selected range falls into. So a frame does have a
+ * position in time *within this app's own model*, and this reports it.
+ *
+ * Derived rather than tabulated so it cannot disagree with the function that
+ * actually chooses the imagery: `timelapseBucketIndex` sends a midpoint `m` to
+ * `floor(m / total * count)`, so frame `i` owns the midpoints in
+ * `[i * total / count, (i + 1) * total / count)`.
+ */
+export function frameMonthWindow(
+  frameIndex: number,
+  frameCount: number,
+  totalMonths: number,
+): { startIndex: number; endIndex: number } {
+  if (frameCount <= 0 || totalMonths <= 0) return { startIndex: 0, endIndex: 0 };
+  const start = Math.ceil((frameIndex * totalMonths) / frameCount);
+  const end = Math.ceil(((frameIndex + 1) * totalMonths) / frameCount) - 1;
+  const last = totalMonths - 1;
+  return {
+    startIndex: Math.min(last, Math.max(0, start)),
+    endIndex: Math.min(last, Math.max(0, Math.max(start, end))),
+  };
+}
+
+/**
+ * Where the two delineations disagree, as delivered raster masks.
+ *
+ * These are the change itself rather than another pair of boundaries: each
+ * fills the ground that one pass claimed and the other did not. Their
+ * provenance is the two traces in `areaExtentPairs`, and that was verified
+ * rather than assumed — flood-filling both traces and intersecting gives
+ * 67% / 75% IoU against the matching one-sided difference and 0.0% against the
+ * opposite one, so the pairing below is not a guess.
+ *
+ * Two warnings for anyone editing this. The filenames are misleading:
+ * `contrast_blue_outside` is the region inside the BLUE boundary and outside
+ * the magenta one, and it is drawn in RED, not blue. And the fills are
+ * translucent (alpha 0.45 and 0.27) single colours, so `color` here is the
+ * literal pixel value and cannot be restyled without lying about the raster.
+ */
+export interface ExtentDifference {
+  id: string;
+  url: string;
+  /** Sampled from the file. */
+  color: string;
+  label: string;
+  /** Which way the ground moved. */
+  direction: "lost" | "gained";
+}
+
+export const areaExtentDifferences: Record<string, ExtentDifference[]> = {
+  "al-maha": [
+    {
+      id: "diff-lost",
+      url: publicUrl("/overlays/contrast_blue_outside.png"),
+      color: "#FF0000",
+      label: "Only in the earlier pass",
+      direction: "lost",
+    },
+    {
+      id: "diff-gained",
+      url: publicUrl("/overlays/contrast_magenta_outside.png"),
+      color: "#0CFF00",
+      label: "Only in the later pass",
+      direction: "gained",
+    },
+  ],
+};

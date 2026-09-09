@@ -126,6 +126,14 @@ export const CONDITION_COLOR: Record<ConditionKey, string> = Object.fromEntries(
   CONDITIONS.map((c) => [c.key, c.color]),
 ) as Record<ConditionKey, string>;
 
+/** Severity rank, worst = 0 — read off CONDITIONS' own worst-first order
+ * rather than restated, so "did this tree get better or worse?" can never
+ * disagree with the band thresholds that decided its condition in the first
+ * place. Subtracting two ranks gives the signed number of bands moved. */
+export const CONDITION_RANK: Record<ConditionKey, number> = Object.fromEntries(
+  CONDITIONS.map((c, i) => [c.key, i]),
+) as Record<ConditionKey, number>;
+
 /** Turns a continuous 0–1 vigour score into its condition band. Walks from the
  * best band down, so the first threshold the score clears wins. */
 export function conditionForVigour(vigour: number): ConditionKey {

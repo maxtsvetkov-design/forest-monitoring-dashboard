@@ -1,5 +1,8 @@
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { CONDITION_COLOR, CONDITION_LABEL, CONDITIONS } from "../data/taxonomy";
 import type { TreeRecord } from "../data/trees";
+import ManagerContactToast from "./ManagerContactToast";
 
 /**
  * Everything known about one tree, shown beside its own modelled twin.
@@ -18,6 +21,53 @@ const stroke = {
   strokeLinecap: "round" as const,
   strokeLinejoin: "round" as const,
 };
+
+/**
+ * The two things a reader can actually do about the tree they are standing in
+ * front of. Phrased and acknowledged as *requests*, not completions — there is
+ * no field-scheduling or analysis backend behind either, and the honest answer
+ * to a click is "logged, here is what happens next" rather than a fabricated
+ * "done" (the same reasoning ManagerContactToast carries in its own header).
+ *
+ * `detail` takes the tree so the confirmation names what was actually sent,
+ * which is the difference between an acknowledgement and a decoration.
+ */
+const TWIN_ACTIONS: {
+  key: string;
+  label: string;
+  primary?: boolean;
+  title: string;
+  detail: (tree: TreeRecord) => string;
+  icon: React.ReactElement;
+}[] = [
+  {
+    key: "team",
+    label: "Send to team",
+    primary: true,
+    title: "Sent to the field team.",
+    detail: (tree) =>
+      `We've logged ${tree.species} ${tree.id} for a field visit — expect the team to confirm a window within one business day.`,
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <path d="M14 2 7.2 8.8" />
+        <path d="M14 2l-4.6 12-2.2-5.2L2 6.6 14 2Z" />
+      </svg>
+    ),
+  },
+  {
+    key: "analysis",
+    label: "Request analysis",
+    title: "Analysis requested.",
+    detail: (tree) =>
+      `We've logged a closer look at ${tree.id}'s canopy history — expect findings within one business day.`,
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <circle cx="7" cy="7" r="4.5" />
+        <path d="M10.4 10.4 14 14" />
+      </svg>
+    ),
+  },
+];
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -68,6 +118,12 @@ export default function TreeTwinCard({
   months: string[];
   onExit: () => void;
 }) {
+  // Which action's acknowledgement is showing, by key — not a boolean, since
+  // the two actions promise different things and a shared "requested" toast
+  // would tell the reader nothing about which one they pressed.
+  const [firedAction, setFiredAction] = useState<string | null>(null);
+  const fired = TWIN_ACTIONS.find((a) => a.key === firedAction) ?? null;
+
   const condition = CONDITIONS.find((c) => c.key === tree.condition);
   const first = tree.conditionHistory[0];
   const now = tree.conditionHistory[tree.conditionHistory.length - 1] ?? tree.condition;
@@ -148,6 +204,43 @@ export default function TreeTwinCard({
           />
         </div>
       </div>
+
+      {/* Actions, pinned below the scrolling record rather than inside it: the
+          reader should not have to reach the bottom of a long readout to find
+          out that anything can be done about the tree. `shrink-0` keeps them
+          out of the flex-1 scroller above. */}
+      <div className="shrink-0 flex items-center gap-[7px] px-[14px] py-[11px] border-t border-white/12">
+        {TWIN_ACTIONS.map((action) => (
+          <button
+            key={action.key}
+            type="button"
+            onClick={() => setFiredAction(action.key)}
+            title={`${action.label} — ${tree.id}`}
+            className={`u-press flex-1 min-w-0 inline-flex items-center justify-center gap-[5px] h-[30px] px-[8px] rounded-[9px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
+              action.primary
+                ? "bg-white text-[#18181c] hover:bg-white/88"
+                : "border border-white/25 text-white/85 hover:bg-white/12"
+            }`}
+          >
+            {action.icon}
+            {action.label}
+          </button>
+        ))}
+      </div>
+
+      {fired &&
+        // Portalled, like every other caller of this toast: the card sits
+        // inside the map container, which sits under a `view-enter-soft`
+        // transform — and a transform on any ancestor gives a `fixed` toast a
+        // containing block that is not the viewport.
+        createPortal(
+          <ManagerContactToast
+            title={fired.title}
+            detail={fired.detail(tree)}
+            onDismiss={() => setFiredAction(null)}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

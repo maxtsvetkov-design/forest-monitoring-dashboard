@@ -12,6 +12,9 @@ import {
 import type { ContentLayerId } from "./LayerPanel";
 import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
+import AreaImageStage from "./AreaImageStage";
+import HabitatSnapshotCard from "./HabitatSnapshotCard";
+import { hasCrabPloverCensus } from "../data/crabPlovers";
 import { CONTENT_HEIGHT_CLASS } from "../layout";
 
 // Explicit viewport-relative height: the ancestor chain uses `min-h-screen`
@@ -82,34 +85,62 @@ export default function MapsView({
     [area.id, area.snapshots.length, dyingRange.endIndex],
   );
 
+  // A site with its own captures and no georeferenced anything gets the
+  // imagery itself instead of a map. See AreaImageStage: a MapLibre canvas
+  // here would be an empty basemap under one photograph, with a layer panel
+  // full of controls that change nothing on it.
+  if (hasCrabPloverCensus(area.id) && timelapseImages) {
+    return (
+      <div className="flex flex-col px-4 pb-6">
+        <AreaImageStage
+          frames={timelapseImages}
+          frameIndex={timelapseBucket}
+          areaId={area.id}
+          areaName={area.name}
+          monthLabels={area.snapshots.map((s) => s.label)}
+          monthCount={area.snapshots.length}
+          className={`${MAP_HEIGHT} mt-[10px]`}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col px-4 pb-6">
-      <MapCanvas
-        layerTime={layerTime}
-        pinsRange={layerTime.rangeFor.pins}
-        generativeRange={layerTime.rangeFor.generative}
-        center={area.center}
-        zoom={12.5}
-        show3DToggle
-        overlay={overlay}
-        generativeOverlay={areaGenerativeOverlays[area.id]}
-        dyingTreeOverlay={dyingTreeOverlay}
-        areaId={area.id}
-        areaName={area.name}
-        snapshots={area.snapshots}
-        range={range}
-        isTimelinePlaying={isTimelinePlaying}
-        focusTree={focusTree}
-        onFocusArrived={onFocusArrived}
-        onFocusMove={onFocusMove}
-        layerVisibility={layerVisibility}
-        onLayerVisibilityChange={onLayerVisibilityChange}
-        layerOpacity={layerOpacity}
-        onLayerOpacityChange={onLayerOpacityChange}
-        basemapIndex={basemapIndex}
-        onBasemapIndexChange={onBasemapIndexChange}
-        className={`${MAP_HEIGHT} mt-[10px]`}
-      />
+      <div className="relative">
+        <MapCanvas
+          layerTime={layerTime}
+          pinsRange={layerTime.rangeFor.pins}
+          generativeRange={layerTime.rangeFor.generative}
+          center={area.center}
+          zoom={area.zoom ?? 12.5}
+          skipAutoFit={area.zoom !== undefined}
+          show3DToggle
+          overlay={overlay}
+          generativeOverlay={areaGenerativeOverlays[area.id]}
+          dyingTreeOverlay={dyingTreeOverlay}
+          areaId={area.id}
+          areaName={area.name}
+          snapshots={area.snapshots}
+          range={range}
+          isTimelinePlaying={isTimelinePlaying}
+          focusTree={focusTree}
+          onFocusArrived={onFocusArrived}
+          onFocusMove={onFocusMove}
+          layerVisibility={layerVisibility}
+          onLayerVisibilityChange={onLayerVisibilityChange}
+          layerOpacity={layerOpacity}
+          onLayerOpacityChange={onLayerOpacityChange}
+          basemapIndex={basemapIndex}
+          onBasemapIndexChange={onBasemapIndexChange}
+          className={`${MAP_HEIGHT} mt-[10px]`}
+        />
+        {/* A reference photo layered over the map, not a replacement for it —
+            Al Maha's own three delivered habitat captures, with a tiny
+            three-dot timeline of their own. The main map keeps its full layer
+            panel, 3D canopy and timeline scrubber underneath. */}
+        {area.id === "al-maha" && <HabitatSnapshotCard />}
+      </div>
     </div>
   );
 }

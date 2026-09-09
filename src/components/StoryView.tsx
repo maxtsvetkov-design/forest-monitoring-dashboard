@@ -134,7 +134,8 @@ export default function StoryView({
           pinsRange={layerTime.rangeFor.pins}
           generativeRange={layerTime.rangeFor.generative}
           center={area.center}
-          zoom={12.5}
+          zoom={area.zoom ?? 12.5}
+          skipAutoFit={area.zoom !== undefined}
           show3DToggle
           overlay={overlay}
           generativeOverlay={areaGenerativeOverlays[area.id]}

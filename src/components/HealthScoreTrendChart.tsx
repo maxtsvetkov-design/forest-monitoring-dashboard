@@ -22,9 +22,15 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export default function HealthScoreTrendChart({
   data,
   delay,
+  minHeight = 170,
 }: {
   data: { label: string; score: number }[];
   delay: number;
+  /** Overridable for a tighter context (EventDetailPanel's "Plot-wide
+   *  context", which stacks this beneath a donut in a scrollable panel and
+   *  has no room to spare) — every other caller keeps the original 170px
+   *  the design was sized for. */
+  minHeight?: number;
 }) {
   const [mounted, setMounted] = useState(false);
 
@@ -51,7 +57,14 @@ export default function HealthScoreTrendChart({
         </div>
       </div>
 
-      <div className="flex-1 min-h-[170px]">
+      {/* An explicit `height` on a plain block box, not `flex-1` — in this
+          column flex card, `flex-1` sets `flex-basis: 0%`, and flex-basis
+          overrides an explicit `height` on the main-axis size entirely (per
+          spec), collapsing this to 0 regardless of the height set alongside
+          it. recharts' ResponsiveContainer then measures a genuine 0px via
+          ResizeObserver and never renders anything. Dropping `flex-1` here
+          lets the plain `height` actually govern the box's size. */}
+      <div style={{ height: `${minHeight}px` }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={mounted ? data : []} margin={{ top: 4, right: 16, bottom: 4, left: -16 }}>
             <CartesianGrid stroke="#dedee3" strokeDasharray="3 3" vertical={false} />

@@ -22,7 +22,10 @@ import type { PendingAssetFilter } from "../hooks/useTreeFilters";
 import AIAssistant from "./AIAssistant";
 import AreaTable, { AREA_ROWS } from "./AreaTable";
 import AreaTableView from "./AreaTableView";
+import CompareAreasTable from "./CompareAreasTable";
+import PermitsList from "./PermitsList";
 import DashboardView from "./DashboardView";
+import HabitatChangeView from "./HabitatChangeView";
 import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./LayerPanel";
 import {
   areaDyingTreeOverlays,
@@ -34,6 +37,9 @@ import {
 } from "../data/overlays";
 import IconBtn from "./IconBtn";
 import MapCanvas from "./MapCanvas";
+import RecentEventsList from "./RecentEventsList";
+import { generateEvents, type TreeEvent } from "../data/events";
+import { CONDITIONS } from "../data/taxonomy";
 import DenseCoverageModal from "./DenseCoverageModal";
 import TierComparisonModal from "./TierComparisonModal";
 import SlotScore from "./SlotScore";
@@ -54,7 +60,7 @@ import { useDragResize } from "../hooks/useDragResize";
 
 /** Tabs across the top. Only "All areas" is this screen; the rest hand off to
  * the dashboard, which owns its own equivalents of these views. */
-const TOP_TABS = ["Dashboard", "All areas", "Table", "Story"] as const;
+const TOP_TABS = ["Dashboard", "All areas", "Table", "Alert", "Compare", "Permits", "Story"] as const;
 
 type TopTab = (typeof TOP_TABS)[number];
 
@@ -76,12 +82,34 @@ const TAB_DESTINATION: Record<TopTab, string | null> = {
   Dashboard: null,
   "All areas": null,
   Table: null,
+  Alert: null,
+  Compare: null,
+  Permits: null,
   Story: "Story",
 };
 
 /** Satellite basemap — BASEMAPS[1] in MapCanvas. The design's backdrop is
  * imagery, not the vector street map index 0 would give. */
 const SATELLITE_BASEMAP_INDEX = 1;
+
+/**
+ * How long ago the pipeline last ran, for the small "Mapping updated" status
+ * pill below.
+ *
+ * A marketing figure, not a measurement — this dataset's captures are
+ * monthly (see `MONTHS_BACK`/`generateMonthlySnapshots`), so nothing here
+ * actually has hour-level freshness to report. This exists for the same
+ * reason `PROMO_PLANNED_CAPTURES` does (see overlays.ts): to make the pitch's
+ * "continuously updated" claim read convincingly in a demo, kept as one named
+ * constant so it can't drift into looking like a real reading somewhere else.
+ */
+const DEMO_LAST_SYNC_HOURS_AGO = 2;
+
+/** The events bar mirrors the project sidebar on the opposite edge, so it
+ *  takes a fixed width where that one is resizable — there is nothing on this
+ *  side to trade space with, and the event rows have a natural width. Matches
+ *  the analysis panel on the habitat-change screen. */
+const EVENTS_BAR_WIDTH = 372;
 
 function SidebarButton({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {
   return (
@@ -105,10 +133,25 @@ const SIDEBAR_MAX_WIDTH = 900;
 export default function LandingScreen({
   onEnter,
 }: {
-  onEnter: (areaId?: string, opts?: { tab?: string; filter?: PendingAssetFilter }) => void;
+  onEnter: (
+    areaId?: string,
+    opts?: {
+      tab?: string;
+      filter?: PendingAssetFilter;
+      /** An event picked before entering the app — App flies the map to its
+       *  tree, the same thing clicking the row inside the app does. */
+      treeEvent?: TreeEvent;
+    },
+  ) => void;
 }) {
   const [activeTab, setActiveTab] = useState<TopTab>("All areas");
   const [scope, setScope] = useState<"monitored" | "custom">("monitored");
+
+  // The habitat change detection drill-down, opened from a row in the Table
+  // tab. Held as the thing being analysed rather than a boolean, so the screen
+  // knows which area's imagery and which project's name to carry — and closing
+  // it returns to the table underneath with its own state untouched.
+  const [habitatChange, setHabitatChange] = useState<{ areaId: string; projectName: string } | null>(null);
 
   // The map behind this screen is the pilot plot's own imagery; the sidebar
   // lists every area the project covers.
@@ -149,6 +192,51 @@ export default function LandingScreen({
   const [futureOpen, setFutureOpen] = useState(false);
   const [tierModalOpen, setTierModalOpen] = useState(false);
   const heroPreviewImages = useMemo(() => getTimelapseImages(heroArea.id), [heroArea]);
+
+  /**
+   * The events feed for the plot this screen's map is showing.
+   *
+   * The whole window, not a slice of it: `eventsInRange` exists for the
+   * workspace, where a calendar range is the thing the reader is holding, and
+   * this screen has no range control to narrow it with. Filtering to an
+   * arbitrary window here would silently hide events with nothing on screen
+   * explaining their absence. The list is already sorted most recent first
+   * (see `generateEvents`) and scrolls internally, so "recent" is the reading
+   * order rather than a filter.
+   *
+   * Scoped to `heroArea` because that is the plot under the map — the same
+   * ground the sidebar's own hero card and the bottom capture strip describe.
+   */
+  const heroEvents = useMemo(
+    () => generateEvents(areaOverlays[heroArea.id], heroArea.snapshots, heroArea.id),
+    [heroArea],
+  );
+
+  /**
+   * The standing notice at the head of the feed.
+   *
+   * Its figure is counted, not written down: the trees in a flagged condition
+   * band across every monitored area as of each area's latest month. "Flagged"
+   * is read off `CONDITIONS` rather than listed here, so it stays the same
+   * three bands that earn a map pin and drive the change detector — if that
+   * threshold ever moves, this number moves with it instead of quietly
+   * describing the old rule.
+   */
+  const monitoringNotice = useMemo(() => {
+    const flaggedKeys = CONDITIONS.filter((c) => c.flagged).map((c) => c.key);
+    const flagged = areas.reduce((total, area) => {
+      const latest = area.snapshots[area.snapshots.length - 1];
+      return total + flaggedKeys.reduce((sum, key) => sum + latest.healthCounts[key], 0);
+    }, 0);
+    return {
+      title: "Monitoring areas to identify dying trees",
+      detail: `Running across all ${areas.length} monitored areas. ${flagged.toLocaleString()} trees sit in a flagged condition band right now, re-checked against every new capture.`,
+      // Straight into the screen that answers the question the notice raises.
+      // Same state the site table's own row sets, so both routes open the same
+      // drill-down on the same plot rather than two similar-looking paths.
+      onSelect: () => setHabitatChange({ areaId: heroArea.id, projectName: heroArea.projectName }),
+    };
+  }, [heroArea]);
 
   // The two time-travel buttons appear only when the cursor is actually near
   // the plot's own boundary (the aerial overlay's real ground footprint,
@@ -463,6 +551,27 @@ export default function LandingScreen({
           child: `fadeInDown` animates `transform`, which would otherwise
           override `-translate-x-1/2` and slide the bar off centre. Same
           split on the tool strip and the metadata bar below. */}
+      {/* Live-pipeline status — persistent across every tab (not gated by
+          activeTab, unlike the tab-specific sections below), reinforcing that
+          the mapping behind this screen is continuously refreshed rather than
+          a one-time export. Sits left of the icon rail's own width so it
+          never collides with the tab strip centred over it. Above the
+          dashboard overlay's z-[25] for the same reason that strip is, so it
+          stays visible while any tab's own section is showing. */}
+      <div
+        className="absolute top-[54px] left-[60px] z-[28] flex items-center gap-[7px] px-[10px] h-[34px] rounded-full bg-white shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-left"
+        style={{ animationDelay: "40ms" }}
+      >
+        <span className="relative flex w-[7px] h-[7px] shrink-0">
+          <span className="absolute inset-0 rounded-full bg-[#0a7761] opacity-70 animate-ping" />
+          <span className="relative w-[7px] h-[7px] rounded-full bg-[#0a7761]" />
+        </span>
+        <span className="text-[12px] font-medium text-[#464650] font-['Outfit',sans-serif] whitespace-nowrap">
+          Mapping updated:{" "}
+          <span className="font-semibold text-[#18181c]">{DEMO_LAST_SYNC_HOURS_AGO} hours ago</span>
+        </span>
+      </div>
+
       {/* Above the dashboard overlay's own z-[25], so the strip stays usable
           while the Dashboard tab is showing and can switch back out of it. */}
       <div className="absolute top-[8px] left-1/2 -translate-x-1/2 z-[28]">
@@ -536,9 +645,68 @@ export default function LandingScreen({
       {activeTab === "Table" && (
         <div className="absolute inset-0 z-[25] bg-[#ebece7] overflow-y-auto scroll-slim">
           <div className="pt-[64px]">
-            <AreaTableView onSelectSite={onEnter} />
+            <AreaTableView
+              onSelectSite={onEnter}
+              onOpenHabitatChange={(areaId, projectName) => setHabitatChange({ areaId, projectName })}
+            />
           </div>
         </div>
+      )}
+
+      {/* Alert — the same critical-events feed the "All areas" sidebar shows
+          (heroArea's own, per that feed's own scoping comment above), given
+          the whole page and opened already switched to "Important only" since
+          that is this tab's entire reason to exist. */}
+      {activeTab === "Alert" && (
+        <div className="absolute inset-0 z-[25] bg-[#ebece7] overflow-y-auto scroll-slim">
+          <div className="pt-[64px] px-6 pb-6 max-w-[560px] mx-auto">
+            <RecentEventsList
+              events={heroEvents}
+              delay={0}
+              defaultImportantOnly
+              onSelectEvent={(event) => onEnter(heroArea.id, { tab: "Maps", treeEvent: event })}
+              notice={monitoringNotice}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Compare — every monitored site's own real aggregate, side by side,
+          off the exact same AREA_ROWS the Table tab's rows are built from
+          (see AreaTable.tsx), so nothing here can disagree with what that
+          tab, or the workspace dashboard one click later, reports for the
+          same site. */}
+      {activeTab === "Compare" && (
+        <div className="absolute inset-0 z-[25] bg-[#ebece7] overflow-y-auto scroll-slim">
+          <div className="pt-[64px] px-6 pb-6">
+            <CompareAreasTable />
+          </div>
+        </div>
+      )}
+
+      {/* Permits — see PermitsList's own comment: the design system's
+          mockup content, since no permitting system is actually wired up
+          here. A real integration would replace `data/permits.ts` with
+          actual rows once one is connected. */}
+      {activeTab === "Permits" && (
+        <div className="absolute inset-0 z-[25] bg-[#ebece7] overflow-y-auto scroll-slim">
+          <div className="pt-[64px] px-6 pb-6 max-w-[560px] mx-auto">
+            <PermitsList />
+          </div>
+        </div>
+      )}
+
+      {/* The habitat change detection screen — above the top tab strip's own
+          z-[28], unlike the Dashboard and Table sections below it: those are
+          views of this screen that the strip switches between, while this is a
+          drill-down out of one of them and carries its own way back. Still
+          under AIAssistant's z-30, so Alma keeps floating over everything. */}
+      {habitatChange && (
+        <HabitatChangeView
+          area={areas.find((a) => a.id === habitatChange.areaId) ?? heroArea}
+          projectName={habitatChange.projectName}
+          onClose={() => setHabitatChange(null)}
+        />
       )}
 
       {/* Project sidebar — width is user-resizable, see the grip on its right
@@ -680,8 +848,45 @@ export default function LandingScreen({
       {/* AOI label over the plot the map is centred on. */}
 
 
-      {/* Right tool strip + 3D compass badge */}
-      <div className="absolute right-[12px] top-1/2 -translate-y-1/2 z-20">
+      {/* Recent events — the same feed and the same list component the
+          workspace dashboard carries in its own right sidebar, mirrored onto
+          the opposite edge from the project sidebar.
+
+          Only on the overview map. "Dashboard" and "Table" are full-bleed
+          sections at z-[25] that would cover this anyway, and both already
+          reach the events feed by their own route; rendering it underneath
+          them would only cost the list its entrance animation on every tab
+          switch.
+
+          Wrapped in the same floating panel as the project sidebar rather than
+          dropped bare onto the imagery, which also gives RecentEventsList the
+          #ebece7 ground it is drawn against on the dashboard — its cards read
+          as white on grey there and would read as glare on a satellite photo. */}
+      {activeTab === "All areas" && (
+        <div
+          className="absolute right-[12px] top-[8px] z-20 bg-[#ebece7] rounded-[16px] p-[12px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-right"
+          style={{ width: EVENTS_BAR_WIDTH }}
+        >
+          <RecentEventsList
+            events={heroEvents}
+            delay={220}
+            // Clicking a row here means what it means inside the app: go and
+            // look at that tree. It crosses the landing gate on the way, so
+            // the destination is handed over rather than acted on — see
+            // App.tsx's onEnter.
+            onSelectEvent={(event) => onEnter(heroArea.id, { tab: "Maps", treeEvent: event })}
+            notice={monitoringNotice}
+          />
+        </div>
+      )}
+
+      {/* Right tool strip + 3D compass badge.
+          Steps left of the events bar when that is showing — both were pinned
+          to the same edge, and the strip is the smaller of the two. */}
+      <div
+        className="absolute top-1/2 -translate-y-1/2 z-20"
+        style={{ right: activeTab === "All areas" ? EVENTS_BAR_WIDTH + 24 : 12 }}
+      >
         <div
           className="flex flex-col items-center gap-[8px] animate-fade-in-right"
           style={{ animationDelay: "200ms" }}
@@ -722,7 +927,13 @@ export default function LandingScreen({
           makes it a stacking context that a z-30 sibling could never rise
           above. Inside it, the assistant's z-30 clears this screen's panels
           (z-20), the dashboard overlay (z-25) and the tab strip (z-28). */}
-      <AIAssistant />
+      {/* No promo card here. This screen is a map the reader is orienting on,
+          and the tip is triggered by the first map interaction — which on the
+          landing screen is the reader's very first gesture in the product,
+          answered with a full-bleed advert. It still runs inside the
+          workspace, where a first map interaction means they have arrived
+          somewhere and the offer has something to attach to. */}
+      <AIAssistant proactiveTip={false} />
     </div>
   );
 }

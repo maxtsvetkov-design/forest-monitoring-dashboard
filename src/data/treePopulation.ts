@@ -76,8 +76,17 @@ const DECLINE_ZONES: { uMin: number; uMax: number; vMin: number; vMax: number; s
  * Sparse/Defoliated rather than merely dimming a shade. */
 const DECLINE_DEPTH = 0.78;
 
-/** Returns the decline severity at a point, 0 outside every zone. */
-function declineSeverityAt(u: number, v: number): number {
+/**
+ * Returns the decline severity at a point, 0 outside every zone.
+ *
+ * Exported because the 3D canopy layer needs the same answer for ground it
+ * reaches by a different route: its trees come from the artwork's traced
+ * crowns rather than from this population (see docs/3D-CANOPY.md §1), but both
+ * are positioned in the same overlay image space, so the failing ground is one
+ * shared fact and not two. A modelled crown reddens exactly where the pins and
+ * the table already report dieback.
+ */
+export function declineSeverityAt(u: number, v: number): number {
   let worst = 0;
   for (const zone of DECLINE_ZONES) {
     if (u >= zone.uMin && u <= zone.uMax && v >= zone.vMin && v <= zone.vMax) {

@@ -32,7 +32,14 @@ function matchesQuery(row: SiteRowData, query: string): boolean {
   return true;
 }
 
-export default function AreaTableView({ onSelectSite }: { onSelectSite: (areaId: string) => void }) {
+export default function AreaTableView({
+  onSelectSite,
+  onOpenHabitatChange,
+}: {
+  onSelectSite: (areaId: string) => void;
+  /** Opens the habitat change detection screen — see AreaTable's own prop. */
+  onOpenHabitatChange: (areaId: string, projectName: string) => void;
+}) {
   const [query, setQuery] = useState("");
 
   const visible = useMemo(() => AREA_ROWS.filter((row) => matchesQuery(row, query)), [query]);
@@ -91,7 +98,12 @@ export default function AreaTableView({ onSelectSite }: { onSelectSite: (areaId:
         </div>
       </div>
 
-      <AreaTable rows={visible} onSelectSite={onSelectSite} variant="full" />
+      <AreaTable
+        rows={visible}
+        onSelectSite={onSelectSite}
+        onOpenHabitatChange={onOpenHabitatChange}
+        variant="full"
+      />
     </div>
   );
 }

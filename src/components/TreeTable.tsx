@@ -478,8 +478,20 @@ export default function TreeTable({
                           e.stopPropagation();
                           onInspect(t);
                         }}
-                        title={`Open ${t.id}'s digital twin`}
-                        aria-label={`Open ${t.id}'s digital twin`}
+                        // Names what the next press will do, since this is a
+                        // toggle: a pressed button still offering to "Open"
+                        // the thing it already opened reads as broken, and to
+                        // a screen reader it is simply wrong.
+                        title={
+                          inspectingId === t.id
+                            ? `Close ${t.id}'s digital twin`
+                            : `Open ${t.id}'s digital twin`
+                        }
+                        aria-label={
+                          inspectingId === t.id
+                            ? `Close ${t.id}'s digital twin`
+                            : `Open ${t.id}'s digital twin`
+                        }
                         aria-pressed={inspectingId === t.id}
                         className={`u-press w-[28px] h-[24px] inline-flex items-center justify-center rounded-[7px] border transition-colors duration-100 cursor-pointer ${
                           inspectingId === t.id

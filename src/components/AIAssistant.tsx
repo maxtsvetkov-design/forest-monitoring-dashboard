@@ -2,6 +2,15 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { WHAT_IT_CHANGES } from "../data/story";
 import { MAP_INTERACT_EVENT } from "./MapCanvas";
 
+/**
+ * Dispatched by a screen that carries its own Alma surface, to stop this
+ * global one from talking over it. A plain window event for the same reason
+ * MAP_INTERACT_EVENT is one: the sender (a drill-down mounted deep inside
+ * LandingScreen) and this receiver (mounted twice, in App and in
+ * LandingScreen) have no shared ancestor worth threading a prop through.
+ */
+export const ASSISTANT_STAND_DOWN_EVENT = "nabat:assistant-stand-down";
+
 const DEFAULT_WIDTH = 360;
 const DEFAULT_HEIGHT = 480;
 const MIN_WIDTH = 300;
@@ -102,11 +111,7 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
-const SUGGESTION_CHIPS = [
-  "Which areas need attention right now?",
-  "Show me the healthiest zone.",
-  "What's the outlook for next season?",
-];
+const SUGGESTION_CHIPS = ["Show hi-res", "Show me the healthiest zone.", "What's the outlook for next season?"];
 
 /** How long each of the four WHAT_IT_CHANGES headlines sits before the
  * banner cross-fades to the next one. */
@@ -215,7 +220,31 @@ function ProactiveTip({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: ()
   );
 }
 
-export default function AIAssistant() {
+export default function AIAssistant({
+  proactiveTip = true,
+  onShowHiRes,
+}: {
+  /**
+   * Whether this instance may raise the one-time promo card.
+   *
+   * A prop rather than an ASSISTANT_STAND_DOWN_EVENT dispatch, which is the
+   * other way a surface silences the tip: stand-down marks it as *already
+   * shown*, permanently, and the landing screen is the first thing that mounts
+   * — silencing it from there would retire the tip for the whole session
+   * before the reader has seen a single workspace screen. This instance and the
+   * workspace's are separate mounts, so a plain prop turns it off exactly where
+   * it is unwanted and nowhere else.
+   */
+  proactiveTip?: boolean;
+  /** Fired instead of sending a chat message when the "Show hi-res" chip is
+   *  clicked — jumps straight to the habitat stage's hi-res segment rather
+   *  than answering in-chat, since that's an actual place in the workspace,
+   *  not a question Alma has a canned reply for. Optional: where this
+   *  instance has nowhere to navigate to (the landing screen's own mount),
+   *  the chip falls back to the ordinary send-as-chat behaviour every other
+   *  chip uses. */
+  onShowHiRes?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -229,14 +258,31 @@ export default function AIAssistant() {
   const [showProactiveTip, setShowProactiveTip] = useState(false);
   const shownProactiveTipRef = useRef(false);
   useEffect(() => {
+    // Gated here rather than at the render: with no listener there is no state
+    // to leave stale, and the stand-down channel stays unused so nothing
+    // silences the workspace's own instance by side effect.
+    if (!proactiveTip) return;
     function handleFirstMapInteraction() {
       if (shownProactiveTipRef.current) return;
       shownProactiveTipRef.current = true;
       setShowProactiveTip(true);
     }
+    // A screen that has its own Alma surface asks this one to be quiet — the
+    // habitat change detection screen is already speaking in Alma's voice
+    // about that specific plot, and a second, general banner arriving beside
+    // it makes both read as noise. Marked as shown rather than merely hidden,
+    // so it does not reappear the moment the reader touches the map again.
+    function handleStandDown() {
+      shownProactiveTipRef.current = true;
+      setShowProactiveTip(false);
+    }
     window.addEventListener(MAP_INTERACT_EVENT, handleFirstMapInteraction);
-    return () => window.removeEventListener(MAP_INTERACT_EVENT, handleFirstMapInteraction);
-  }, []);
+    window.addEventListener(ASSISTANT_STAND_DOWN_EVENT, handleStandDown);
+    return () => {
+      window.removeEventListener(MAP_INTERACT_EVENT, handleFirstMapInteraction);
+      window.removeEventListener(ASSISTANT_STAND_DOWN_EVENT, handleStandDown);
+    };
+  }, [proactiveTip]);
   // Index (into `messages`) of the first message in the most recent
   // round-trip — draws the "New Message" divider right above it, mirroring
   // the reference design, without needing a separate parallel array.
@@ -427,7 +473,7 @@ export default function AIAssistant() {
                   <button
                     key={chip}
                     type="button"
-                    onClick={() => sendMessage(chip)}
+                    onClick={() => (chip === "Show hi-res" && onShowHiRes ? onShowHiRes() : sendMessage(chip))}
                     className="u-press bg-[#85e3b9] hover:bg-[#6fd9a8] text-[#096151] text-[13px] font-['Outfit',sans-serif] px-3 py-1.5 rounded-full cursor-pointer whitespace-nowrap"
                   >
                     {chip}

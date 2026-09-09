@@ -136,7 +136,14 @@ function avgNdviFor(months: MonthSnapshot[]): number {
 // plot one line instead of five separate category counts. A fully defoliated
 // canopy scores 0 and a vigorous one 100, with the middle bands spaced evenly
 // across the range the five-step scale describes.
-const HEALTH_SCORE_WEIGHT: Record<HealthKey, number> = {
+//
+// Exported because it is also the PER-TREE score: healthScoreFor below is a
+// weighted mean over the band counts, which is arithmetically the mean of these
+// weights across the individual trees. The spatial health grid in
+// habitatHealth.ts scores each tree with this same table and averages within a
+// cell, so a cell's figure and the plot-wide line are one statistic read at two
+// scales rather than two definitions that have to be kept in agreement.
+export const HEALTH_SCORE_WEIGHT: Record<HealthKey, number> = {
   defoliated: 0,
   sparse: 25,
   moderate: 50,

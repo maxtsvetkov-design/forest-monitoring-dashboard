@@ -47,6 +47,8 @@ import type * as THREE from "three";
 import type { MapOverlay } from "../data/overlays";
 import { pointInQuad } from "../data/overlays";
 import { MAX_CROWN_RADIUS_M, treeRng, treeVariation, type Canopy } from "../data/canopies";
+import { CONDITION_COLOR } from "../data/taxonomy";
+import { declineSeverityAt } from "../data/treePopulation";
 
 /** Distinct crown silhouettes. Every tree also gets its own spin, lean, tint
  * and proportions, but three base shapes stop the eye from locking onto one
@@ -59,6 +61,45 @@ const FOLIAGE_VARIANTS = 3;
 const FOLIAGE_DRY: [number, number, number] = [0.55, 0.62, 0.38];
 const FOLIAGE_LUSH: [number, number, number] = [0.13, 0.38, 0.24];
 const TRUNK_COLOR = 0x6b5540;
+
+/** A hex swatch as a plain 0..1 triple, to match the FOLIAGE_* constants above.
+ * Not `new THREE.Color("#rrggbb")`: three takes a numeric constructor as
+ * already being in the working colour space but runs an sRGB conversion on a
+ * hex string, so mixing the two forms in one lerp shifts the hue. */
+function swatchTriple(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/**
+ * Crown colour for a tree standing on failing ground.
+ *
+ * Read off the taxonomy's own Sparse swatch rather than picked by eye, for the
+ * reason every other colour in this app is: the same tree's map pin, its row in
+ * the table and its slice of the condition donut are already this colour, and a
+ * 3D crown inventing its own would be a fourth opinion about one fact.
+ */
+const FOLIAGE_SCORCHED = swatchTriple(CONDITION_COLOR.sparse);
+
+/** How far a severity-1 crown travels toward the scorched red. Short of 1 on
+ * purpose: a crown that lands exactly on the pin's flat orange stops reading as
+ * foliage at all, and the point is a sick tree, not a marker. */
+const DIEBACK_TINT = 0.92;
+
+/** ...and then how much that crown is darkened, in proportion to the same
+ * severity, so the worst ground reads as brick-dead rather than as a cheerful
+ * autumn orange.
+ *
+ * A multiply, not a blend toward the Defoliated grey, which was the obvious
+ * thing to reach for and is wrong twice over. That swatch is *lighter* than the
+ * red in green and blue, so mixing it desaturates a dying crown to tan instead
+ * of deadening it — measured, `#b67152` rather than anything you would call
+ * red. And switching target past a severity threshold turned the two worst
+ * blocks on this plot grey (both are severity 1) while leaving only the milder
+ * ones looking red, which is backwards. Scaling brightness keeps the hue and
+ * spends it on the thing severity should actually buy: green `#57804f` at rest,
+ * `#9c5b33` on the 0.7 blocks, rust `#b24e29` at 1. */
+const DIEBACK_DARKEN = 0.18;
 
 /**
  * Sun direction in *scene local* axes — `+X` east, `+Y` up, `+Z` south — as a
@@ -121,10 +162,30 @@ const GROW_SWEEP_MS = 1400;
 const SWAY_RADIANS_AT_10M = 0.035;
 const SWAY_PERIOD_MS = 4200;
 
+/**
+ * Clearing the stage for one tree: how long a single tree takes to dissolve,
+ * and how much longer the far side of the plot takes to start than the
+ * subject's own neighbours.
+ *
+ * The stagger runs *outside-in* — the horizon empties first and the trees
+ * standing next to the subject are the last to go — so the shot resolves
+ * toward the one tree rather than a hole opening around it.
+ */
+const DISSOLVE_MS = 520;
+const DISSOLVE_SWEEP_MS = 420;
+
 function easeOutBack(t: number): number {
   const c = 1.70158;
   const u = t - 1;
   return 1 + (c + 1) * u * u * u + c * u * u;
+}
+
+/** Symmetric ease for the focus dissolve. Deliberately not `easeOutBack`: the
+ * grow-in's overshoot is a tree springing up, while a tree being cleared out of
+ * shot should not bounce on its way out — or, on the way back, overshoot past
+ * full size next to the one tree the reader was just studying. */
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 /**
@@ -224,6 +285,22 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
 
   private growStartedAt = 0;
   private removed = false;
+
+  /**
+   * Which single tree the scene is currently cleared for, or null for the whole
+   * forest — see `setFocusedTree`.
+   *
+   * The three arrays below are the dissolve's state. `dissolveValue` is
+   * per-tree presence (1 standing, 0 gone) carried between frames;
+   * `dissolveFrom` snapshots it whenever the focus changes, so reversing
+   * mid-animation eases out of where each tree actually was rather than
+   * snapping to full size first; `dissolveDelay` is the outside-in stagger.
+   */
+  private focusIndex: number | null = null;
+  private focusChangedAt = 0;
+  private dissolveValue: Float32Array | null = null;
+  private dissolveFrom: Float32Array | null = null;
+  private dissolveDelay: Float32Array | null = null;
   /** Terrain elevations are sampled once DEM tiles have actually arrived;
    * before that `queryTerrainElevation` returns null and every tree would be
    * pinned to sea level. */
@@ -303,6 +380,92 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
     this.options = { ...this.options, opacity };
     this.applyOpacity();
     this.map?.triggerRepaint();
+  }
+
+  /**
+   * Clears every other tree out of the scene so one of them can be read on its
+   * own — what opening a digital twin from the table asks for, since the camera
+   * lands at eye level *inside* the canopy and the 2,296 trees between it and
+   * the horizon are all in the way of the one being inspected.
+   *
+   * `index` is a crown index into `options.canopies`, not a tree id from the
+   * population table: these trees come from the artwork's traced canopies (see
+   * docs/3D-CANOPY.md §1), so the caller has to snap a record's position to the
+   * nearest crown first — which `MapCanvas.flyToNearestCrown` already does to
+   * decide where to stand. Pass null to bring the forest back.
+   *
+   * A dissolve, not an alpha fade, and deliberately so: `InstancedMesh` has no
+   * per-instance opacity — `instanceColor` is RGB only and `material.opacity`
+   * would take the subject down with everything else — so a real fade means
+   * patching the material's shader and paying for a sorted transparent pass
+   * over every tree. Shrinking each tree away instead rides the `grow` factor
+   * the instance loop already multiplies through, which is the same mechanism
+   * the grow-in wave uses to hide a tree that has not arrived yet, and it takes
+   * each tree's trunk, crown and contact shadow with it for free.
+   */
+  setFocusedTree(index: number | null) {
+    if (this.focusIndex === index) return;
+    this.focusIndex = index;
+    this.rebuildDissolve();
+    this.map?.triggerRepaint();
+  }
+
+  /**
+   * (Re)computes the dissolve's per-tree state for the current focus.
+   *
+   * Split out of `setFocusedTree` because it has two callers with different
+   * timings. A twin can be opened before this layer's own three.js import has
+   * resolved and `placeTrees` has run, so there may be no field to measure
+   * distances against yet — in that case the focus is simply remembered and
+   * `placeTrees` re-applies it on the way out. `setCoordinates` reaches the
+   * same path: the trees have physically moved, so the stagger has to be
+   * measured again against their new positions.
+   */
+  private rebuildDissolve() {
+    const field = this.field;
+    // Nothing to build if the forest has never been focused and isn't being
+    // focused now — leaving the arrays null is what keeps the dissolve out of
+    // the instance loop entirely on the ordinary path.
+    if (!field || (this.focusIndex === null && !this.dissolveValue)) return;
+
+    const count = field.count;
+    if (!this.dissolveValue || this.dissolveValue.length !== count) {
+      this.dissolveValue = new Float32Array(count).fill(1);
+      this.dissolveFrom = new Float32Array(count).fill(1);
+      this.dissolveDelay = new Float32Array(count);
+    }
+    // Snapshot where every tree is *now* so a reversal (or a jump straight from
+    // one subject to another) eases out of the current state instead of
+    // restarting from full size and popping.
+    this.dissolveFrom!.set(this.dissolveValue);
+    this.focusChangedAt = performance.now() - this.growStartedAt;
+
+    // Stagger by distance from the subject, normalised against the farthest
+    // tree so the sweep takes the same time on any plot. Reversed for the
+    // subject's own sake: see DISSOLVE_SWEEP_MS.
+    const delay = this.dissolveDelay!;
+    const focus = this.focusIndex;
+    if (focus === null) {
+      delay.fill(0);
+    } else {
+      const cx = field.x[focus];
+      const cz = field.z[focus];
+      let farthest = 1;
+      for (let i = 0; i < count; i++) {
+        const dx = field.x[i] - cx;
+        const dz = field.z[i] - cz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > farthest) farthest = d2;
+      }
+      for (let i = 0; i < count; i++) {
+        const dx = field.x[i] - cx;
+        const dz = field.z[i] - cz;
+        // 1 next to the subject, 0 at the horizon — so the near trees wait
+        // and the far ones leave first.
+        const nearness = 1 - Math.sqrt((dx * dx + dz * dz) / farthest);
+        delay[i] = nearness * DISSOLVE_SWEEP_MS;
+      }
+    }
   }
 
   /**
@@ -636,12 +799,30 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
       const t = variation.tint;
       const mesh = this.foliageMeshes[v];
       if (mesh) {
-        const colour = new three.Color(
-          FOLIAGE_DRY[0] + (FOLIAGE_LUSH[0] - FOLIAGE_DRY[0]) * t,
-          FOLIAGE_DRY[1] + (FOLIAGE_LUSH[1] - FOLIAGE_DRY[1]) * t,
-          FOLIAGE_DRY[2] + (FOLIAGE_LUSH[2] - FOLIAGE_DRY[2]) * t,
-        );
-        mesh.setColorAt(field.slot[i], colour);
+        let r = FOLIAGE_DRY[0] + (FOLIAGE_LUSH[0] - FOLIAGE_DRY[0]) * t;
+        let g = FOLIAGE_DRY[1] + (FOLIAGE_LUSH[1] - FOLIAGE_DRY[1]) * t;
+        let bl = FOLIAGE_DRY[2] + (FOLIAGE_LUSH[2] - FOLIAGE_DRY[2]) * t;
+
+        // Trees on failing ground redden. The severity comes from the same
+        // zone rectangles the population's own decline is derived from, read
+        // in the same image space these crowns were traced in — so a crown
+        // goes red exactly where the pins under it are already flagged, rather
+        // than on a second, decorative idea of where the trouble is.
+        const severity = declineSeverityAt(canopy.u, canopy.v);
+        if (severity > 0) {
+          const k = severity * DIEBACK_TINT;
+          r += (FOLIAGE_SCORCHED[0] - r) * k;
+          g += (FOLIAGE_SCORCHED[1] - g) * k;
+          bl += (FOLIAGE_SCORCHED[2] - bl) * k;
+          // Then darkened by the same severity — see DIEBACK_DARKEN for why
+          // this is a multiply and not a blend toward the Defoliated swatch.
+          const dark = 1 - severity * DIEBACK_DARKEN;
+          r *= dark;
+          g *= dark;
+          bl *= dark;
+        }
+
+        mesh.setColorAt(field.slot[i], new three.Color(r, g, bl));
       }
     }
 
@@ -650,6 +831,11 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
     }
 
     this.field = field;
+    // The field is what the dissolve measures its stagger against, so it has
+    // to be (re)derived here: a focus set before this ran had nothing to
+    // measure, and one set before a `setCoordinates` was measured against
+    // positions these trees no longer stand at.
+    this.rebuildDissolve();
   }
 
   /**
@@ -698,6 +884,10 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
     const reduced = this.options.reducedMotion === true;
 
     const growing = !reduced && elapsed < GROW_SWEEP_MS + GROW_MS + 200;
+    // No separate "dissolving" term in the repaint guard below: the dissolve
+    // only animates when motion is allowed, and whenever it is, the sway is
+    // already asking for every frame anyway. Under reduced motion the dissolve
+    // is applied in one step, so there is nothing to keep alive.
     this.writeInstanceMatrices(field, elapsed, reduced);
 
     // MapLibre hands us world→clip in Mercator space. This composes the
@@ -766,6 +956,9 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
     const euler = this.scratchEuler!;
     const trunk = this.trunkMesh!;
     const shadow = this.shadowMesh;
+    const dissolveValue = this.dissolveValue;
+    const dissolveFrom = this.dissolveFrom;
+    const dissolveDelay = this.dissolveDelay;
 
     const swayT = (elapsed / SWAY_PERIOD_MS) * Math.PI * 2;
 
@@ -780,6 +973,23 @@ export default class TreeCanopyLayer implements maplibregl.CustomLayerInterface 
         const t = (elapsed - field.delay[i]) / GROW_MS;
         grow = t <= 0 ? 0 : t >= 1 ? 1 : easeOutBack(t);
       }
+
+      // Dissolve, folded into the same factor: a tree cleared out of the way
+      // for the focused one is scaled to nothing exactly as a tree that has
+      // not grown in yet is, so the early-out below covers both and the
+      // trunk, crown and shadow all follow without a second code path.
+      if (dissolveValue) {
+        const target = this.focusIndex === null || this.focusIndex === i ? 1 : 0;
+        let value = target;
+        if (!reduced) {
+          const t = (elapsed - this.focusChangedAt - dissolveDelay![i]) / DISSOLVE_MS;
+          const from = dissolveFrom![i];
+          value = t <= 0 ? from : t >= 1 ? target : from + (target - from) * easeInOutCubic(t);
+        }
+        dissolveValue[i] = value;
+        grow *= value;
+      }
+
       if (grow <= 0) {
         // A zero-scale matrix is the cheapest way to hide an instance — there
         // is no per-instance visibility flag in InstancedMesh.

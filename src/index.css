@@ -2265,6 +2265,542 @@ html {
   }
 }
 
+/* --- Habitat advisor ------------------------------------------------------ */
+/* The assistant docked into the habitat change screen. Its motion is the one
+   place in this app that is deliberately showy: an unsolicited alert has to
+   earn the interruption, so it arrives out of focus and settles, then keeps a
+   slow idle drift so it reads as hovering over the map rather than nailed to
+   it. Everything is transform/opacity/filter — no layout property is animated,
+   so none of this costs a reflow while MapLibre is drawing underneath. */
+
+/* Arrival: the message swells out of the chat launcher it came from.
+ *
+ * The card rests directly above Alma's orb (`fixed bottom-[84px] right-5`
+ * against the orb's `bottom-5 right-5`, 48px), and unfolds from it: at
+ * `scale(0.12)` a 352px card is 42px across, near enough the orb's own 48px
+ * that the first frame reads as the button rather than as a small card.
+ *
+ * `transform-origin: bottom right` collapses it onto its own lower-right
+ * corner, and the 62px of Y is what carries that corner down onto the orb —
+ * the card's bottom sits 84px off the viewport floor, the orb's centre 44px,
+ * and half of the shrunken box makes up the rest. Both are anchored to the
+ * same corner of the viewport, so this needs no viewport units and holds at
+ * any window size.
+ *
+ * `--ease-spring` here, where the cross-screen version this replaced needed
+ * `--ease-out`: over 60px the overshoot lands as a card that pops and settles,
+ * which is the right register for a notification. (That earlier long-distance
+ * flight is also why the timing is now 620ms rather than 980 — there is a
+ * twentieth of the distance to cover.) The blur clears early so the headline
+ * is readable while the scale is still resolving. */
+@keyframes advisorAlertLaunch {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 62px, 0) scale(0.12);
+    filter: blur(10px);
+  }
+  25% {
+    opacity: 1;
+  }
+  55% {
+    filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Idle levitation. Two axes at coprime-ish periods so the path never repeats
+   into an obvious loop, and small enough (6px) to register peripherally
+   without pulling the eye off the map. */
+@keyframes advisorFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  33% {
+    transform: translate3d(-3px, -6px, 0);
+  }
+  66% {
+    transform: translate3d(3px, -2px, 0);
+  }
+}
+
+/* The unfold, then the idle drift — the float is delayed by exactly the
+   unfold's own duration so the two never fight over `transform`. Bottom-right
+   origin, so the 0.12 scale collapses the card onto the corner nearest the
+   orb rather than onto its own middle. */
+.advisor-alert {
+  transform-origin: bottom right;
+  animation:
+    advisorAlertLaunch 620ms var(--ease-spring) backwards,
+    advisorFloat 7.5s var(--ease-soft) 620ms infinite;
+}
+
+/* The alert's own colour field: two soft blobs drifting behind the copy, the
+   coral/teal pair from the reference. Sits under the text at a low opacity —
+   this is a ground, not a graphic. */
+@keyframes advisorBlobDrift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(6%, -8%, 0) scale(1.12);
+  }
+}
+
+.advisor-blob {
+  animation: advisorBlobDrift 14s var(--ease-soft) infinite;
+}
+
+.advisor-blob--slow {
+  animation-duration: 19s;
+  animation-direction: reverse;
+}
+
+/* Each chat message and each statistic row arrives on its own beat. `--i` is
+   set inline by the component, the same index-as-custom-property pattern the
+   story blocks and tier rows already use. */
+@keyframes advisorMsgIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+.advisor-msg {
+  animation: advisorMsgIn var(--dur-5) var(--ease-lux) backwards;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+
+/* Statistic bars grow from their own baseline rather than fading in: a bar
+   that appears at full length has already told you the answer, and the point
+   of drawing it is watching the comparison resolve. */
+@keyframes advisorBarGrow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.advisor-bar {
+  transform-origin: left center;
+  animation: advisorBarGrow var(--dur-5) var(--ease-lux) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms + 120ms);
+}
+
+@keyframes advisorColumnGrow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.advisor-column {
+  transform-origin: bottom center;
+  animation: advisorColumnGrow var(--dur-5) var(--ease-spring) backwards;
+  animation-delay: calc(var(--i, 0) * 80ms + 140ms);
+}
+
+/* The typing beat before an answer lands. Three dots, staggered — the only
+   honest way to show that a reply is composing rather than instant. */
+@keyframes advisorDot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translate3d(0, 0, 0);
+  }
+  30% {
+    opacity: 1;
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+.advisor-dot {
+  animation: advisorDot 1.15s var(--ease-soft) infinite;
+}
+
+/* --- Hi-res confirmation -------------------------------------------------- */
+/* The one acknowledgement in this app that gets a full card instead of the
+   cream toast: a commissioned hi-res capture is the largest thing a reader can
+   set in motion here, and it should land like a receipt rather than a
+   notification that slides away on a timer. Styled after the reference the
+   copy came with — white card on lavender, very heavy black headline, and a
+   marker swipe under the part that answers the question ("within 2 days").
+   The type sizes are deliberately near the reference's own, which is why they
+   dwarf everything else in this file. */
+
+/* The highlighter. A pseudo-element rather than a `linear-gradient`
+   background, because the gradient version cannot be animated without
+   re-rasterising the text on every frame — this way the bar is its own layer
+   and rides a transform. Sits *behind* the glyphs (`z-index: -1`) so descenders
+   stay legible through it, at 38% height so it reads as a marker pass along
+   the baseline rather than as a filled box. */
+.hires-marker {
+  position: relative;
+  display: inline;
+  isolation: isolate;
+}
+
+.hires-marker::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: -0.06em;
+  right: -0.06em;
+  bottom: 0.02em;
+  height: 0.38em;
+  background: #fbf56a;
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: hiresMarkerSwipe 520ms var(--ease-lux) 420ms forwards;
+}
+
+/* Drawn left to right, once, after the headline has arrived — a marker is a
+   gesture someone makes over text that is already there. */
+@keyframes hiresMarkerSwipe {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* --- Capture stack (isometric) -------------------------------------------- */
+/* Four georeferenced planes — two captures, each with the extent traced on it
+   — separated along the stack's own normal so the reader can see that the
+   comparison is layered rather than blended. A CSS 3D scene rather than a
+   three.js one on purpose: these are four textured quads with no lighting, no
+   depth-sorting and no picking, which is exactly what `preserve-3d` already
+   does natively, and MapCanvas's WebGL context is busy carrying 2,300 trees.
+
+   The deck's rotation and each plane's `translateZ` are written as inline
+   styles from React state (drag-to-orbit and the spread slider), so nothing
+   here may set `transform` — see .cstack-plane. */
+.cstack-stage {
+  /* Deliberately very long — near-orthographic, which is what "isometric"
+     actually means. Two reasons beyond the drawing convention: a strong
+     perspective makes the plates taper, so a stack of identical footprints
+     stops looking identical; and it makes the projection depend on where the
+     scene sits relative to `perspective-origin`, which means the deck's
+     projected height and centre both shift as it fans (measured: 591 → 626 px
+     for the same four plates, moved 190 px). At this distance the plane
+     offsets can simply be centred on the middle of the stack and the framing
+     is right by construction, with no correction to re-solve per frame. */
+  perspective: 6000px;
+  /* The stage is a drag surface; without this, a touch drag scrolls the modal. */
+  touch-action: none;
+}
+
+.cstack-deck {
+  transform-style: preserve-3d;
+  /* Not transitioned. Orbit tracks the pointer 1:1, and easing a value that is
+     already being driven frame-by-frame only adds lag. */
+}
+
+.cstack-plane {
+  position: absolute;
+  transform-style: preserve-3d;
+  /* `transform` is owned by the inline style. This transition is what animates
+     BOTH the opening fan-out and every later drag of the spread slider — one
+     mechanism, so the deck cannot open one way and rearrange another. The
+     component swaps the duration/delay per phase. */
+  transition: transform var(--dur-3) var(--ease-out), opacity var(--dur-2) var(--ease-soft);
+  /* Opacity only. A keyframe that touched `transform` would overwrite the
+     stack offset the instant it landed on its `to` frame. */
+  animation: cstackPlaneIn var(--dur-4) var(--ease-soft) backwards;
+}
+
+@keyframes cstackPlaneIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The sheet itself. Each plane is a physical plate with an edge, because the
+   whole point of the view is that there are four of them. */
+/* Tuned for the GRAPHITE stage. This has been through both extremes: on
+   near-black the plates needed a heavy shadow and a white inset edge to
+   separate at all, and on near-white those read as grime. On a dark neutral the
+   photographs are the brightest thing on screen, so separation comes from a
+   light hairline (a dark one is invisible against a dark ground) plus a deep,
+   soft shadow that reads as height rather than dirt. */
+/* Lengths here are in PLATE UNITS, not screen pixels: the deck is laid out
+   `--ss` times larger than it is drawn (see CaptureStackView's SUPERSAMPLE) and
+   then scaled back down, so anything written as a flat `px` would arrive on
+   screen at 1/--ss of its intended size. The fallback of 1 keeps these rules
+   correct for any plate rendered outside that deck. */
+.cstack-plate {
+  border-radius: calc(12px * var(--ss, 1));
+  overflow: hidden;
+  box-shadow: 0 calc(22px * var(--ss, 1)) calc(48px * var(--ss, 1)) calc(-18px * var(--ss, 1)) rgba(0, 0, 0, 0.65),
+    0 calc(3px * var(--ss, 1)) calc(10px * var(--ss, 1)) calc(-3px * var(--ss, 1)) rgba(0, 0, 0, 0.4);
+}
+
+.cstack-plate--capture {
+  border: calc(1px * var(--ss, 1)) solid rgba(255, 255, 255, 0.16);
+}
+
+/* A trace has no ground of its own: it reads as a glass sheet carrying a line,
+   tinted by that line's own colour so the plate and its content are obviously
+   the same layer. The tint has to stay very light — these strokes are neon, and
+   on a pale ground a heavier fill turns the sheet into a colour wash that
+   competes with the photograph it is meant to be read against. */
+.cstack-plate--trace {
+  border: calc(1px * var(--ss, 1)) solid color-mix(in srgb, var(--trace) 70%, transparent);
+  background: color-mix(in srgb, var(--trace) 5%, transparent);
+  box-shadow: 0 calc(14px * var(--ss, 1)) calc(34px * var(--ss, 1)) calc(-16px * var(--ss, 1))
+    color-mix(in srgb, var(--trace) 55%, transparent);
+}
+
+/* A capture clipped to one of the disagreement masks, so only the ground that
+   changed shows and everything else falls away to reveal the layer beneath.
+
+   The mask is repeated and composited because these rasters are TRANSLUCENT
+   fills — alpha 0.27 and 0.45 — and a CSS mask reads exactly that alpha, so a
+   single copy would show the imagery through at a quarter strength and read as
+   a wash rather than as a window. Each `add` pass is a source-over of the mask
+   on itself (a → a + a(1−a)), which converges on opaque: five passes take 0.27
+   to ~0.85 and 0.45 to ~0.95. Boosting the raster itself was the alternative,
+   and it would mean shipping a second doctored copy of a delivered artefact.
+
+   Shadow and border go with it. Both are painted outside the masked area — a
+   box-shadow is not clipped by a mask — so a masked plate would otherwise sit
+   inside a full rectangle of border and shadow with nothing in it. */
+.cstack-plate--masked {
+  mask-image: var(--clip), var(--clip), var(--clip), var(--clip), var(--clip);
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+  mask-composite: add;
+  box-shadow: none;
+  border-color: transparent;
+}
+
+/* The traces are 1px strokes on a 2752px-wide canvas. Displayed at plane size
+   that is roughly a quarter of a pixel, which antialiases down to nearly
+   nothing — the line would simply not be there. Repeated zero-offset
+   drop-shadows in the stroke's OWN colour dilate it back to something a screen
+   can draw (each pass spreads the alpha outward), and the last, wider pass is
+   the glow that makes it read as drawn-on-glass. Cheaper and sharper than
+   re-rasterising the asset, and it stays correct if the source is replaced.
+
+   Radii in plate units, like everything else here. Supersampling cuts both ways
+   for these strokes: the filter's own offscreen buffer gains resolution, so the
+   dilated line has more texels to be drawn with — but the source stroke is also
+   a larger share of nothing, so the radii still have to grow with the layout or
+   the line thins back out of sight. */
+.cstack-trace-img {
+  filter: drop-shadow(0 0 calc(0.7px * var(--ss, 1)) var(--trace))
+    drop-shadow(0 0 calc(0.7px * var(--ss, 1)) var(--trace)) drop-shadow(0 0 calc(0.7px * var(--ss, 1)) var(--trace))
+    drop-shadow(0 0 calc(1.4px * var(--ss, 1)) var(--trace))
+    drop-shadow(0 0 calc(7px * var(--ss, 1)) color-mix(in srgb, var(--trace) 70%, transparent));
+}
+
+/* The capture-stack button, standing on the failing ground rather than in the
+   chrome (see HabitatChangeView's groundAnchor). Two things it needs that a
+   toolbar button does not: to be findable against a busy aerial photograph, and
+   to read as pinned to a spot rather than floating over one.
+
+   The halo does the first — a slow, low-contrast pulse that catches the eye
+   without competing with the red dieback overlay it sits on. The stem does the
+   second, tying the pill to the ground point MapLibre is actually tracking. */
+/* --- The live monitoring notice, at the head of the events feed ------------ */
+/* Reads as an alarm that is currently sounding rather than a record of one
+   that did: it is the only row in the feed describing something happening
+   right now, and everything below it is already in the past. The motion is
+   what carries that — a still red card is just another critical event.
+
+   Three layers, each doing a different job. The rings say a sweep is going out.
+   The sheen says the surface is live. The lift on hover says it is a way in.
+   All three animate `transform` and `opacity` only, so the compositor carries
+   them and the map underneath keeps its frame budget. */
+.feed-notice {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #f3c9c7;
+  background: linear-gradient(135deg, #fff6f5 0%, #fdeae8 100%);
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+}
+
+.feed-notice:hover {
+  transform: translateY(-1px);
+  border-color: #e88b87;
+  box-shadow: 0 12px 26px -14px rgba(229, 72, 77, 0.7);
+}
+
+/* The sheen. Held off-card for most of the cycle and crossing quickly, because
+   a sweep that is always mid-crossing stops reading as a sweep and starts
+   reading as a gradient that will not sit still. */
+.feed-notice::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(104deg, transparent 38%, rgba(255, 255, 255, 0.72) 50%, transparent 62%);
+  transform: translateX(-130%);
+  animation: feedNoticeSheen 5.5s var(--ease-soft) infinite;
+}
+
+@keyframes feedNoticeSheen {
+  0%,
+  62% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+/* Two rings, half a cycle apart, so there is always one leaving as the next
+   one starts — a single ring reads as a stutter. */
+.feed-notice-pulse::before,
+.feed-notice-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid rgba(229, 72, 77, 0.55);
+  animation: feedNoticePing 2.6s var(--ease-soft) infinite;
+  pointer-events: none;
+}
+
+.feed-notice-pulse::after {
+  animation-delay: 1.3s;
+}
+
+@keyframes feedNoticePing {
+  0% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  70% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+/* The sweep arm inside the dish. Linear, not eased: a radar turns at a constant
+   rate, and an eased rotation reads as a thing being nudged round by hand. */
+.feed-notice-sweep {
+  transform-origin: 10px 10px;
+  animation: feedNoticeSweep 3.4s linear infinite;
+}
+
+@keyframes feedNoticeSweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The dot in the status pill — the smallest possible "still on". */
+.feed-notice-dot {
+  animation: feedNoticeBlink 2.6s var(--ease-soft) infinite;
+}
+
+@keyframes feedNoticeBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ── Crab-plover markers ──────────────────────────────────────────────────
+   A flat white dot read as a placeholder, not as "a bird was counted here".
+   This gives each one a lit glass core, a soft breathing glow, and a ring
+   that ripples outward — the same "alive" language `.feed-notice-pulse`
+   gives the dying-trees notice, but calm rather than alarmed: teal, not red,
+   and slow enough to sit unattended on a map instead of demanding a click. */
+.plover-marker {
+  position: relative;
+  background: radial-gradient(circle at 35% 30%, #eafff8 0%, #7fe7c4 45%, #1f8f74 100%);
+  box-shadow:
+    0 0 0 1px rgba(6, 30, 24, 0.55),
+    0 0 6px 1px rgba(127, 231, 196, 0.65),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  animation: ploverBreathe 3.2s var(--ease-soft) infinite;
+  /* Staggered per marker via an inline custom property so a field of a
+     hundred dots breathes as a scattered flock, not one synchronized blink. */
+  animation-delay: var(--sway-delay, 0s);
+}
+
+.plover-marker.is-selected {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, #ffe3e0 45%, #e5484d 100%);
+  box-shadow:
+    0 0 0 2.5px #e5484d,
+    0 0 10px 2px rgba(229, 72, 77, 0.7),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+  animation: none;
+}
+
+.plover-marker.is-hovered:not(.is-selected) {
+  box-shadow:
+    0 0 0 1px rgba(6, 30, 24, 0.55),
+    0 0 10px 3px rgba(127, 231, 196, 0.9),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes ploverBreathe {
+  0%,
+  100% {
+    filter: brightness(1);
+    transform: scale(1);
+  }
+  50% {
+    filter: brightness(1.18);
+    transform: scale(1.12);
+  }
+}
+
+/* The ripple ring, one per marker, expanding out of the glow and fading —
+   distinct from `.feed-notice-pulse`'s double ring because a hundred of these
+   at once only reads as texture if each one is a single soft pulse, not a
+   pair chasing itself. */
+.plover-marker::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(127, 231, 196, 0.85);
+  animation: ploverRipple 3.2s var(--ease-soft) infinite;
+  animation-delay: var(--sway-delay, 0s);
+  pointer-events: none;
+}
+
+.plover-marker.is-selected::after {
+  border-color: rgba(229, 72, 77, 0.85);
+}
+
+@keyframes ploverRipple {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
 /* --- Reduced motion ------------------------------------------------------- */
 /* Everything above collapses. Vestibular disorders make parallax and travel
    genuinely unpleasant, and a dashboard is not the place to insist on it —
@@ -2313,9 +2849,36 @@ html {
   .u-stagger > *,
   .story-block,
   .story-inner,
-  .modal-panel {
+  .modal-panel,
+  .advisor-alert,
+  .advisor-msg {
     filter: none !important;
   }
+
+  /* The advisor's idle drift is the one animation here with no end state to
+     snap to — zeroing its duration would leave it frozen at whatever keyframe
+     it happened to be on, a few pixels off true. */
+  .advisor-alert,
+  .advisor-blob,
+  .advisor-dot {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  /* The marker has to end up drawn, not skipped: its `from` state is
+     `scaleX(0)`, so zeroing the duration on a `forwards` animation would leave
+     the highlight invisible and quietly delete the emphasis. */
+  .hires-marker::after {
+    animation: none !important;
+    transform: scaleX(1) !important;
+  }
+
+  /* The capture stack needs no entry here, and deliberately gets none. The
+     blanket duration rule above already collapses its fan-out into an instant
+     arrival, which is the correct outcome — and its two remaining effects are
+     load-bearing rather than decorative: the isometric `transform` IS the
+     view, and `.cstack-trace-img`'s filter chain is the only reason a 1px
+     stroke is visible at all. Zeroing either would delete the content. */
 
   /* Ambient loops have no interaction to justify them. */
   .story-hero::after,

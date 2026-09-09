@@ -29,19 +29,33 @@ import NdviCard from "./components/NdviCard";
 import OverallHealthCard from "./components/OverallHealthCard";
 import TreeHistoryModal, { TreeMiniPopover } from "./components/TreeHistoryModal";
 import RecentEventsList from "./components/RecentEventsList";
+import PannableFrameStage from "./components/PannableFrameStage";
+import { HABITAT_FRAMES } from "./components/HabitatSnapshotCard";
+
+// The commissioned hi-res capture, appended after HABITAT_FRAMES once
+// `hiResDelivered` flips — see that state's own comment. Appended, not
+// swapped in wholesale: the 3 reference captures stay reachable on the same
+// timeline rather than being replaced by the one delivered pass.
+const HI_RES_HABITAT_FRAME = "/overlays/habitat_hi.jpg";
+// The real satellite basemap the habitat reference captures are draped over
+// — shown alone until a reader chooses to overlay one of them on top.
+const BASEMAP_SRC = "/overlays/basemap.png";
+import HabitatLegend from "./components/HabitatLegend";
 import ToolbarBtn from "./components/ToolbarBtn";
 import TreeSurveyCard from "./components/TreeSurveyCard";
 import { areas } from "./data/areas";
 import { eventsInRange, generateEvents, type TreeEvent } from "./data/events";
-import { areaOverlays } from "./data/overlays";
-import { healthScoreSeries, maxScatterCount } from "./data/aggregate";
+import { areaHectares, areaOverlays, frameMonthWindow } from "./data/overlays";
+import { aggregateRange, healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
+import { PERMIT_SECTIONS } from "./data/permits";
 import { useDateRange } from "./hooks/useDateRange";
 import AmbientBackground from "./components/AmbientBackground";
-import CalendarRangePicker from "./components/CalendarRangePicker";
+import TimelineRow from "./components/TimelineRow";
 import { useSlidingPill } from "./hooks/useSlidingPill";
 import { useLayerTime } from "./hooks/useLayerTime";
 import type { PendingAssetFilter } from "./hooks/useTreeFilters";
+import { CONTENT_HEIGHT_CLASS } from "./layout";
 
 const TOTAL_AREA = "12 ha";
 // Condition labels split the way the KPI row talks about them, derived from
@@ -87,6 +101,79 @@ export default function App() {
   // destination (a plain onEnter()) should land somewhere that already means
   // "this site," since that's usually why the gate was crossed at all.
   const [activeTab, setActiveTab] = useState("Assets");
+  // Which of Al Maha's 3 habitat reference photos the Recent Events tab's
+  // stage is on — lifted up here (rather than left inside PannableFrameStage)
+  // so the tick row that replaces the calendar picker on this tab, below, can
+  // move the same stage its own in-image dots already move.
+  // Null means "no habitat capture overlaid yet" — the stage starts showing
+  // only the real basemap, and the reader has to actively choose to overlay
+  // a reference capture on top of it.
+  const [habitatFrameIndex, setHabitatFrameIndex] = useState<number | null>(null);
+  // Bumped on every event row click on the Recent Events tab, to trigger the
+  // habitat stage's "look closer" zoom reaction (see PannableFrameStage's own
+  // `focusSignal` prop) — a plain counter rather than a boolean so clicking
+  // the *same* event twice in a row still visibly reacts the second time.
+  const [habitatFocusSignal, setHabitatFocusSignal] = useState(0);
+  // Whichever habitat event last triggered the zoom above — its id seeds
+  // PannableFrameStage's `focusKey` so the same event always zooms to (and
+  // pins) the same spot on the photo, and the whole event is passed through
+  // so the pin's hover card can show that sighting's own species stats
+  // rather than a second lookup by id.
+  const [habitatFocusEvent, setHabitatFocusEvent] = useState<TreeEvent | null>(null);
+  // Flipped once a reader dismisses the hi-res receipt (EventDetailPanel's
+  // "Get high-resolution analysis" → HiResConfirmation's "Back to the plot")
+  // — swaps the habitat stage over to the actual higher-resolution capture
+  // and updates the legend's resolution caption to match. Session-only: this
+  // is a demo stand-in for a capture that would really take the receipt's
+  // own "within 2 days" to land, not a persisted delivery record.
+  const [hiResDelivered, setHiResDelivered] = useState(false);
+  // Which reference capture is the base of an active side-by-side compare,
+  // paired with the very next one (index+1) — null when no compare is
+  // active. Toggling it also moves the stage to that capture, so the base
+  // frame shown always matches which pair is being compared.
+  const [habitatCompareIndex, setHabitatCompareIndex] = useState<number | null>(null);
+  function toggleHabitatCompare(index: number) {
+    // A true on/off switch: turning compare ON moves the stage to that
+    // capture (same as before); turning the same one OFF drops the stage
+    // back to just the basemap instead of leaving it stuck showing that
+    // capture with compare mode silently gone.
+    const turningOn = habitatCompareIndex !== index;
+    setHabitatCompareIndex(turningOn ? index : null);
+    setHabitatFrameIndex(turningOn ? index : null);
+  }
+  // Clicking an already-active capture (or hi-res) button un-selects it —
+  // the stage falls back to showing just the basemap, same as before any
+  // capture was ever picked, rather than staying stuck on the last one.
+  // Which permit's claimed area is highlighted on the habitat stage — set
+  // from the Permits panel's own row click (see PermitsList), null when
+  // nothing's picked. Clicking the same permit again clears it.
+  const [focusedPermitId, setFocusedPermitId] = useState<string | null>(null);
+  // Which of RecentEventsList's own panels is showing right now — gates
+  // whether permit areas draw on the habitat stage (see the `permitAreas`
+  // prop below): only while a reader is actually looking at the Permits
+  // panel, not on every other view.
+  const [eventsPanel, setEventsPanel] = useState<"list" | "detail" | "permits" | "compare">("list");
+  function togglePermitFocus(id: string) {
+    setFocusedPermitId((prev) => (prev === id ? null : id));
+  }
+  // Every permit section now gets a claimed area drawn on the stage — not
+  // just Rejected/Incoming — since a reader comparing permits wants to see
+  // where the settled, approved ones sit too, not only the disputed ones.
+  const permitAreas = useMemo(
+    () =>
+      PERMIT_SECTIONS.flatMap((s) =>
+        s.entries.map((entry) => ({ id: entry.id, label: entry.title, selected: entry.id === focusedPermitId })),
+      ),
+    [focusedPermitId],
+  );
+  // NOT a toggle: PannableFrameStage echoes every frame change back through
+  // this same callback (to report its own internal dot clicks), so wrapping
+  // it in "click active index again -> null" logic here would immediately
+  // undo any change the moment its own effect echoes the new index back —
+  // clicking "1" would set 0, then instantly toggle back to null. The
+  // "click the active one again to un-overlay" behaviour lives at the
+  // actual click site instead (HabitatMonthTimeline's own button handlers),
+  // which already knows whether this exact click is the toggle-off case.
   // A filter from a clicked Insights widget, waiting to be applied once
   // AssetsView mounts and consumed — see AssetsView's pendingFilter effect.
   const [pendingFilter, setPendingFilter] = useState<PendingAssetFilter | null>(null);
@@ -136,6 +223,17 @@ export default function App() {
     setPendingTreeFocus(event);
     setFocusNonce((n) => n + 1);
     setActiveTab("Maps");
+  }
+
+  // The Recent Events tab's own version of clicking a row: unlike
+  // `selectTreeEvent`, this deliberately does NOT navigate to Maps — the
+  // reader asked to switch to that row's own Detail panel in place, not leave
+  // the tab. `RecentEventsList` handles the panel switch itself once
+  // `detailContext` is passed; this only owns the visual "zoom in" reaction
+  // on the habitat stage beside it.
+  function focusEventInPlace(event: TreeEvent) {
+    setHabitatFocusSignal((n) => n + 1);
+    setHabitatFocusEvent(event);
   }
 
   // Every widget that drills into Assets does the same three things: stash the
@@ -193,7 +291,7 @@ export default function App() {
   // don't sync: moving between tabs never drags one scope's selection into the
   // other. `calendar` feeds the KPIs, charts and events; `range` is the map
   // master that the per-layer strips detach from.
-  const calendar = useDateRange(activeArea.snapshots, "latest");
+  const calendar = useDateRange(activeArea.snapshots, "full");
   const { months, range, setRange } = useDateRange(activeArea.snapshots);
   const aggregated = calendar.aggregated;
   const layerTime = useLayerTime(activeArea.id, range);
@@ -211,13 +309,40 @@ export default function App() {
     () => eventsInRange(areaEvents, calendar.range),
     [areaEvents, calendar.range],
   );
-
+  // The real, already-computed difference between the two month-windows a
+  // "Compare" toggle pairs — same `aggregateRange`/`frameMonthWindow` every
+  // other range-scoped figure in this app is built from, not a second
+  // statistic invented for this one card. `null` outside an active compare.
+  const habitatCompareStats = useMemo(() => {
+    if (habitatCompareIndex === null) return null;
+    const frameCount = HABITAT_FRAMES.length;
+    const totalMonths = activeArea.snapshots.length;
+    const winA = frameMonthWindow(habitatCompareIndex, frameCount, totalMonths);
+    const winB = frameMonthWindow(habitatCompareIndex + 1, frameCount, totalMonths);
+    const rangeA = { startIndex: winA.startIndex, endIndex: winA.endIndex };
+    const rangeB = { startIndex: winB.startIndex, endIndex: winB.endIndex };
+    const labelFor = (w: { startIndex: number; endIndex: number }) => {
+      const from = activeArea.snapshots[w.startIndex]?.label ?? "";
+      const to = activeArea.snapshots[w.endIndex]?.label ?? "";
+      return from === to ? from : `${from} – ${to}`;
+    };
+    const habitatCountFor = (r: { startIndex: number; endIndex: number }) =>
+      areaEvents.filter((e) => e.habitat && e.monthIndex >= r.startIndex && e.monthIndex <= r.endIndex).length;
+    return {
+      labelA: labelFor(rangeA),
+      labelB: labelFor(rangeB),
+      aggA: aggregateRange(activeArea.snapshots, rangeA),
+      aggB: aggregateRange(activeArea.snapshots, rangeB),
+      habitatEventsA: habitatCountFor(rangeA),
+      habitatEventsB: habitatCountFor(rangeB),
+    };
+  }, [habitatCompareIndex, activeArea, areaEvents]);
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 50);
     return () => clearTimeout(t);
   }, []);
 
-  const tabs = ["Insights", "Assets", "Maps", "Areas", "Story"];
+  const tabs = ["Insights", "Recent events", "Assets", "Maps", "Areas", "Story"];
 
   // The active-tab pill is one element that slides between tabs rather than
   // the colour jumping from one button to another — see useSlidingPill,
@@ -308,6 +433,14 @@ export default function App() {
           // the way. Both are optional: a plain onEnter() still lands on
           // whichever tab was last open, as it always did.
           if (opts?.filter) setPendingFilter(opts.filter);
+          // An event picked on the landing screen's own events bar. Routed
+          // through the same pendingTreeFocus/focusNonce pair selectTreeEvent
+          // uses, so a row clicked before entering and a row clicked after it
+          // land on identical behaviour rather than two near-copies that drift.
+          if (opts?.treeEvent) {
+            setPendingTreeFocus(opts.treeEvent);
+            setFocusNonce((n) => n + 1);
+          }
           if (opts?.tab) setActiveTab(opts.tab);
           setShowLanding(false);
         }}
@@ -402,7 +535,7 @@ export default function App() {
             className="fixed top-2 left-[64px] right-4 z-20 surface-card flex items-center px-2 py-1 min-h-[56px] animate-fade-in-down"
             style={{ animationDelay: "90ms" }}
           >
-            <AreaSwitcher areas={areas} activeAreaId={activeAreaId} onNavigateHome={() => setShowLanding(true)} />
+            <AreaSwitcher onNavigateHome={() => setShowLanding(true)} />
 
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
               <div ref={tabBarRef} className="seg-track relative">
@@ -421,7 +554,7 @@ export default function App() {
                       activeTab === tab ? "text-[#ebece7]" : "text-[#464650] hover:text-[#18181c]"
                     }`}
                   >
-                    {tab}
+                    {tab === "Recent events" && activeArea.id === "al-maha" ? "Events EAD" : tab}
                   </button>
                 ))}
               </div>
@@ -440,11 +573,33 @@ export default function App() {
           {/* Calendar row — Insights/Areas only. Maps/Assets/Story used to show
               the big master timeline scrubber here instead; each layer's own
               coverage strip in the layer panel now carries that job, so the
-              row just doesn't render for those tabs rather than sitting empty. */}
+              row just doesn't render for those tabs rather than sitting empty.
+              Al Maha's Recent Events tab keeps the picker AND gets the habitat
+              stage's own 3-frame timeline beside it: `visibleEvents` below is
+              filtered by this same `calendar.range` regardless of tab, so
+              dropping the picker here would have frozen this tab on whatever
+              single month `calendar` last defaulted to (its own initial
+              value is "latest" — one month), with no way to see further back.
+              That's exactly the bug an earlier pass introduced by swapping
+              the picker out instead of adding beside it. */}
           {activeTab !== "Maps" && activeTab !== "Assets" && activeTab !== "Story" && (
-            <div className="flex items-center px-2 py-2 gap-3 animate-fade-in-up" style={{ animationDelay: "190ms" }}>
-              <CalendarRangePicker months={calendar.months} range={calendar.range} onChange={calendar.setRange} />
-            </div>
+            <TimelineRow
+              months={calendar.months}
+              range={calendar.range}
+              onRangeChange={calendar.setRange}
+              habitat={
+                activeTab === "Recent events" && activeArea.id === "al-maha"
+                  ? {
+                      frameCount: HABITAT_FRAMES.length,
+                      frameIndex: habitatFrameIndex,
+                      onFrameIndexChange: setHabitatFrameIndex,
+                      hiResFrameIndex: hiResDelivered ? HABITAT_FRAMES.length : undefined,
+                      compareIndex: habitatCompareIndex,
+                      onCompareToggle: toggleHabitatCompare,
+                    }
+                  : undefined
+              }
+            />
           )}
         </div>
 
@@ -504,6 +659,78 @@ export default function App() {
               onBasemapIndexChange={setBasemapIndex}
               onClose={() => switchTab("Maps")}
             />
+          </div>
+        ) : activeTab === "Recent events" ? (
+          // The same feed and selection handler the Insights sidebar's copy
+          // uses (`visibleEvents`/`selectTreeEvent`, computed once above) —
+          // this tab is that feed given the whole page instead of a
+          // 320px-wide sidebar squeezed beside the KPI cards.
+          //
+          // Al Maha additionally gets a pannable/zoomable habitat photo beside
+          // the list, standing in for a basemap the way Abu Al Abyad's own
+          // captures do on its Maps/Assets tabs — this tab has no MapCanvas of
+          // its own, so there was nothing else for a background image to sit
+          // "instead of".
+          <div className="view-enter px-4 pb-6 flex gap-[16px] items-stretch">
+            {activeArea.id === "al-maha" && (
+              <div className={`relative ${CONTENT_HEIGHT_CLASS} min-h-[400px] flex-1 min-w-0`}>
+                <PannableFrameStage
+                  frames={hiResDelivered ? [...HABITAT_FRAMES, HI_RES_HABITAT_FRAME] : HABITAT_FRAMES}
+                  baseSrc={BASEMAP_SRC}
+                  label={
+                    hiResDelivered && habitatFrameIndex === HABITAT_FRAMES.length
+                      ? "Habitat capture — hi-res"
+                      : "Habitat reference capture"
+                  }
+                  className="w-full h-full"
+                  permitAreas={eventsPanel === "permits" ? permitAreas : []}
+                  notificationEvents={visibleEvents.filter((e) => e.habitat)}
+                  onSelectNotification={focusEventInPlace}
+                  frameIndex={habitatFrameIndex}
+                  onFrameIndexChange={setHabitatFrameIndex}
+                  focusSignal={habitatFocusSignal}
+                  focusKey={habitatFocusEvent?.id}
+                  focusEvent={habitatFocusEvent ?? undefined}
+                  hiResFrameIndex={hiResDelivered ? HABITAT_FRAMES.length : undefined}
+                  compareSrc={habitatCompareIndex !== null ? HABITAT_FRAMES[habitatCompareIndex + 1] : undefined}
+                  compareLabel={habitatCompareStats ? `Compared with ${habitatCompareStats.labelB}` : undefined}
+                  differenceSrc={habitatCompareIndex !== null ? "/overlays/difference.png" : undefined}
+                />
+                <HabitatLegend
+                  resolutionLabel={
+                    hiResDelivered && habitatFrameIndex === HABITAT_FRAMES.length ? "0.5 × 0.5 m" : "10 × 10 m"
+                  }
+                />
+              </div>
+            )}
+            <div className={`max-w-[480px] w-full shrink-0 ${activeArea.id === "al-maha" ? "" : "flex-1"}`}>
+              {/* Filtered to habitat events only — the migration/species/
+                  ground-condition read, not the ordinary per-tree survey and
+                  decline events every area's Insights sidebar already shows.
+                  See `TreeEvent.habitat`'s own comment in events.ts for
+                  exactly which events that flags. */}
+              <RecentEventsList
+                events={visibleEvents.filter((e) => e.habitat)}
+                delay={CHROME_SEQUENCE_MS}
+                onSelectEvent={focusEventInPlace}
+                detailContext={{
+                  projectName: activeArea.projectName,
+                  monthLabels: activeArea.snapshots.map((s) => s.label),
+                  healthData: aggregated.healthData,
+                  healthScoreTrend,
+                  speciesData: aggregated.speciesData,
+                  onHiResDelivered: () => {
+                    setHiResDelivered(true);
+                    setHabitatFrameIndex(HABITAT_FRAMES.length);
+                  },
+                  areaHa: areaHectares(activeArea.id),
+                }}
+                compareContext={habitatCompareStats}
+                selectedPermitId={focusedPermitId}
+                onSelectPermit={togglePermitFocus}
+                onPanelChange={setEventsPanel}
+              />
+            </div>
           </div>
         ) : activeTab === "Areas" ? (
           <AreasView area={activeArea} range={calendar.range} />
@@ -659,7 +886,12 @@ export default function App() {
         )}
       </div>
 
-      <AIAssistant />
+      <AIAssistant
+        onShowHiRes={() => {
+          switchTab("Recent events");
+          if (hiResDelivered) setHabitatFrameIndex(HABITAT_FRAMES.length);
+        }}
+      />
 
       {openTreeEvent &&
         modalAnchor &&
