@@ -28,9 +28,17 @@ import type { TreeEvent } from "./events";
  */
 
 /** The three codes this breakdown tracks, from the reference key's own
- *  marine table — labels and swatch colours come from there, never restated
- *  here (see `habitatLegend.ts`). */
-const TRACKED_CODES = ["11210", "12000", "13000"] as const;
+ *  terrestrial table — labels and swatch colours come from there, never
+ *  restated here (see `habitatLegend.ts`).
+ *
+ *  Chosen as one coherent transition, not three unrelated classes: 1030
+ *  Saltmarsh is the habitat this event's own `habitatImpact.habitat` names,
+ *  1020 is the degraded tidal-flat state a saltmarsh reduces to as it thins,
+ *  and 3100 is the hypersaline sabkha it borders and can be overtaken by on
+ *  Abu Al Abyad's real coastline — so a "reduction" reads as saltmarsh giving
+ *  ground to exactly the two neighbours it would, ecologically, give ground
+ *  to, rather than to classes with no spatial relationship to it. */
+const TRACKED_CODES = ["1030", "1020", "3100"] as const;
 
 export interface HabitatClassChange {
   code: string;
@@ -50,7 +58,14 @@ export interface HabitatClassChange {
   /** Classifier confidence for this class over this window, 0–100 — the one
    *  figure here with no counterpart anywhere else in the app. */
   confidencePct: number;
-  /** Six points from `beforeHa` to `afterHa`, for the per-class sparkline. */
+  /** ± uncertainty on `beforeHa`/`afterHa`, in hectares, derived from
+   *  `confidencePct` — a lower-confidence class gets a wider interval. Drawn
+   *  as error-bar whiskers on the before/after chart and as a shaded band
+   *  around the trend line, so the chart shows a modelled class the same way
+   *  a real accuracy-assessed classification would: a range, not a point
+   *  estimate. */
+  marginHa: number;
+  /** Six points from `beforeHa` to `afterHa`, for the per-class trend chart. */
   trend: number[];
 }
 
@@ -117,6 +132,11 @@ export function habitatClassChangeFor(event: TreeEvent): HabitatClassChangeRepor
       const jitter = t === 0 || t === 5 ? 0 : (rand() - 0.5) * Math.abs(deltaHa) * 0.3;
       return round1(Math.max(0, at + jitter));
     });
+    const confidencePct = Math.round(74 + rand() * 22);
+    // Lower confidence widens the interval: at 74% confidence the margin is
+    // ~15% of the class's after-extent; at 96% it shrinks to ~2%.
+    const marginHa = round1(afterHa * (1 - confidencePct / 100) * 0.58);
+
     return {
       code,
       label: entry.label,
@@ -126,7 +146,8 @@ export function habitatClassChangeFor(event: TreeEvent): HabitatClassChangeRepor
       deltaHa,
       deltaPct: round1((deltaHa / beforeHa) * 100),
       sharePct: round1(shares[i] * 100),
-      confidencePct: Math.round(74 + rand() * 22),
+      confidencePct,
+      marginHa,
       trend,
     };
   });
