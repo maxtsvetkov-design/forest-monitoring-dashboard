@@ -7,6 +7,7 @@ import type { CategoryDatum } from "../data/types";
 import HiResConfirmation from "./HiResConfirmation";
 import HabitatChangeCard from "./HabitatChangeCard";
 import HabitatClassChangeBreakdown from "./HabitatClassChangeBreakdown";
+import TerrestrialHabitatContextChart from "./TerrestrialHabitatContextChart";
 import HealthScoreTrendChart from "./HealthScoreTrendChart";
 import EventActionButtons from "./EventActionButtons";
 
@@ -197,6 +198,12 @@ export default function EventDetailPanel({
           already has. Also renders itself away for any event with no
           hectare figure to apportion. */}
       {event.habitatImpact && hiResRequested && <HabitatClassChangeBreakdown event={event} />}
+
+      {/* The wider landscape that change sits inside — ten neighbouring
+          terrestrial classes across the surveyed coastline, not just the
+          three the card above tracks. Same hi-res gate as that card, for the
+          same reason. */}
+      {event.habitatImpact && hiResRequested && <TerrestrialHabitatContextChart event={event} />}
 
       {/* Baseline — which month, or which record, this reading is measured
           against. Absent rather than guessed for events with no real one. */}
