@@ -56,6 +56,8 @@ import TimelineRow from "./components/TimelineRow";
 import { useSlidingPill } from "./hooks/useSlidingPill";
 import { useLayerTime } from "./hooks/useLayerTime";
 import type { PendingAssetFilter } from "./hooks/useTreeFilters";
+import { useHashRoute } from "./hooks/useHashRoute";
+import { parseHash, type AppRoute } from "./routes";
 import { CONTENT_HEIGHT_CLASS } from "./layout";
 
 const TOTAL_AREA = "12 ha";
@@ -97,11 +99,28 @@ export default function App() {
   // The front door — everything else in this component is one click behind
   // it. Kept as local state (not a route) since this app has no router; a
   // real one would make this its own "/" entry instead of a boolean gate.
-  const [showLanding, setShowLanding] = useState(true);
+  // Read once, lazily, from the URL the page was opened with. Lazy rather than
+  // in an effect so a shared link never paints the landing screen first and
+  // then jumps — the app's first render is already the one the link asked for.
+  const initialRoute = useState(() => parseHash(window.location.hash))[0];
+  const [showLanding, setShowLanding] = useState(initialRoute.areaId === null);
   // Assets, not Insights: crossing the landing gate without an explicit
   // destination (a plain onEnter()) should land somewhere that already means
   // "this site," since that's usually why the gate was crossed at all.
-  const [activeTab, setActiveTab] = useState("Assets");
+  const [activeTab, setActiveTab] = useState(initialRoute.areaId ? initialRoute.tab : "Assets");
+  // Two halves of the story's position, deliberately not one variable.
+  //
+  // `storyBlockId` is what the panel REPORTS — it moves on every click, and
+  // it is what the URL is written from. `storyNavBlockId` is what navigation
+  // REQUESTS — it moves only when the reader edits the URL (Back, Forward, a
+  // pasted link), and it is what the panel is told to jump to.
+  //
+  // Collapsing them into one would close a loop: the panel's own step would
+  // be written to the URL, read back as a request, and handed to the panel as
+  // an instruction to jump where it already is. Keeping the two directions on
+  // separate wires is what makes the URL a mirror rather than a leash.
+  const [storyBlockId, setStoryBlockId] = useState<string | undefined>(initialRoute.blockId);
+  const [storyNavBlockId, setStoryNavBlockId] = useState<string | undefined>(initialRoute.blockId);
   // Which of Al Maha's 3 habitat reference photos the Recent Events tab's
   // stage is on — lifted up here (rather than left inside PannableFrameStage)
   // so the tick row that replaces the calendar picker on this tab, below, can
@@ -285,8 +304,44 @@ export default function App() {
       document.removeEventListener("pointerup", handleUp);
     };
   }, [resizingSidebar]);
-  const [activeAreaId, setActiveAreaId] = useState(areas[0].id);
+  const [activeAreaId, setActiveAreaId] = useState(initialRoute.areaId ?? areas[0].id);
   const activeArea = areas.find((a) => a.id === activeAreaId) ?? areas[0];
+
+  // --- Shareable URLs ------------------------------------------------------
+  // The navigation state above, expressed as something that can be pasted into
+  // a message. This is not a router (see docs/ARCHITECTURE.md §1) — App still
+  // owns navigation as plain state; `useHashRoute` only mirrors it into the
+  // address bar and reports back when the reader edits it.
+  const route: AppRoute = {
+    areaId: showLanding ? null : activeArea.id,
+    tab: activeTab,
+    // Only the Story tab has anything finer than a tab to name.
+    blockId: activeTab === "Story" ? storyBlockId : undefined,
+  };
+  const handleNavigate = useCallback((next: AppRoute) => {
+    // Back/Forward, or a link pasted into this same tab. Ordering matters:
+    // `setShowLanding` last, so the workspace it reveals is already pointed at
+    // the right area and tab rather than flashing the previous one.
+    if (next.areaId) setActiveAreaId(next.areaId);
+    setActiveTab(next.tab);
+    setStoryBlockId(next.blockId);
+    setStoryNavBlockId(next.blockId);
+    setShowLanding(next.areaId === null);
+  }, []);
+  useHashRoute(route, handleNavigate);
+
+  // Leaving the Story tab unmounts the panel, losing its scroll position. Park
+  // the block actually being read as the next navigation request, so clicking
+  // back into Story resumes there rather than snapping to whatever block the
+  // link that opened this session happened to name — which, for a reader who
+  // arrived on a deep link and then browsed on, would otherwise be a block
+  // they left behind twenty minutes ago.
+  //
+  // Only fires off-Story, so it can never feed the panel's own live steps back
+  // to it while it is mounted — the loop `storyNavBlockId` exists to avoid.
+  useEffect(() => {
+    if (activeTab !== "Story") setStoryNavBlockId(storyBlockId);
+  }, [activeTab, storyBlockId]);
   // Two independent time scopes. The dashboard's analytical window and the
   // map's playback position answer different questions, so they deliberately
   // don't sync: moving between tabs never drags one scope's selection into the
@@ -658,6 +713,8 @@ export default function App() {
               onLayerOpacityChange={setLayerOpacity}
               basemapIndex={basemapIndex}
               onBasemapIndexChange={setBasemapIndex}
+              requestedBlockId={storyNavBlockId}
+              onActiveBlockChange={setStoryBlockId}
               onClose={() => switchTab("Maps")}
             />
           </div>

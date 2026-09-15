@@ -8,13 +8,46 @@ config file) live in `AGENTS.md`. This document is about the app's own shape.
 
 ---
 
-## 1. There is no router
+## 1. There is no router — but there are URLs
 
-`App.tsx` owns two pieces of navigation state and nothing else routes:
+`App.tsx` owns the navigation state and nothing else routes:
 
 - `showLanding` — a boolean gate. `true` early-returns `<LandingScreen />`
   before any of the workspace chrome renders.
-- `activeTab` — one of `Insights | Assets | Maps | Areas | Story`.
+- `activeTab` — one of `Insights | Recent events | Assets | Maps | Areas | Story`.
+- `activeAreaId` — which site is open.
+
+### That state is mirrored into the URL
+
+`src/routes.ts` + `src/hooks/useHashRoute.ts` translate the above to and from a
+shareable string, so a link can be sent to someone:
+
+```
+#/                          landing screen
+#/al-maha/story             a site's Story tab
+#/al-maha/story/summary     that story, opened on one block
+#/abu-al-abyad/maps         any other tab
+```
+
+This is a **mirror, not a router**. Nothing renders off the URL; `App` still
+holds the state, and the hook only writes it out and reports the reader's own
+edits (Back/Forward/paste) back in. Four things to know before changing it:
+
+- **Hash-based, and it has to be.** The app is served from a GitHub Pages
+  *project* subpath with no rewrite rule, so `/al-maha/story` would 404 on a
+  cold load. Nothing after `#` reaches the server. Same constraint that
+  produced `publicUrl.ts`.
+- **Push vs. replace is deliberate.** Changing area/tab pushes a history
+  entry; moving between story blocks replaces one. Stepping through a 32-block
+  story would otherwise make Back mean "back one paragraph" and bury whatever
+  the reader was doing before. See `isSamePage`.
+- **The two directions are separate wires.** App holds `storyBlockId` (what
+  the panel *reports*, which the URL is written from) and `storyNavBlockId`
+  (what navigation *requests*, which the panel is told to jump to). One
+  variable would close a loop: the reader's own step would return to them as
+  an instruction to jump where they already are.
+- **Initial state is read lazily, not in an effect**, so a shared link's first
+  paint is already the right screen instead of a landing-screen flash.
 
 Consequences worth knowing before you change anything:
 
@@ -128,7 +161,16 @@ shown under the block explaining why that view suits its numbers. `StoryPanel`
 reports the active block up to `StoryView`, which passes that block's view to
 `MapCanvas` as `storyView`.
 
-Three things worth knowing before changing it:
+**Scrolling the panel does not change the active block.** It used to: a
+debounced scrollspy settled onto whichever block the scroll came to rest on.
+That made reading move the map — skimming back to re-read a paragraph flew the
+camera away from the view being read about. Selection is now an explicit verb
+(clicking a card, the transport, a chip, the outline, a link, autoplay) and
+scroll only drives the header's collapse. The cards advertise this: an "Open"
+cue on hover, a "Reading" badge on the active one, and pointer-origin ink on
+click.
+
+Three more things worth knowing before changing it:
 
 - **It is a view override, not a mutation.** `layerVisibility` and
   `basemapIndex` live in App.tsx and are shared by every tab; writing to them

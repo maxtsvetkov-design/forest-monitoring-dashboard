@@ -52,6 +52,8 @@ export default function StoryView({
   onLayerOpacityChange,
   basemapIndex,
   onBasemapIndexChange,
+  requestedBlockId,
+  onActiveBlockChange,
   onClose,
 }: {
   area: Area;
@@ -64,6 +66,14 @@ export default function StoryView({
   onLayerOpacityChange: Dispatch<SetStateAction<Record<ContentLayerId, number>>>;
   basemapIndex: number;
   onBasemapIndexChange: Dispatch<SetStateAction<number>>;
+  /** Which block navigation has asked for — a shared link on first load, or
+   * Back/Forward afterwards. Passed straight through to the panel. */
+  requestedBlockId?: string;
+  /** Which block is being read, by id, so the URL can name it. Separate from
+   * the internal `activeBlock` state below, which carries the whole block
+   * because the map needs its view — the caller only needs something it can
+   * put in a link. */
+  onActiveBlockChange?: (blockId: string | undefined) => void;
   /** Leaves the story and returns to the plain Maps tab. Optional so other
    * callers of StoryView aren't forced to supply a way out. */
   onClose?: () => void;
@@ -109,7 +119,13 @@ export default function StoryView({
   // object and the map stays where it is. Only actually moving to a block with
   // a different view is a camera change.
   const [activeBlock, setActiveBlock] = useState<StoryBlock | undefined>(undefined);
-  const handleActiveBlockChange = useCallback((block: StoryBlock | undefined) => setActiveBlock(block), []);
+  const handleActiveBlockChange = useCallback(
+    (block: StoryBlock | undefined) => {
+      setActiveBlock(block);
+      onActiveBlockChange?.(block?.id);
+    },
+    [onActiveBlockChange],
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT_PCT);
@@ -190,6 +206,7 @@ export default function StoryView({
         <StoryPanel
           header={header}
           blocks={blocks}
+          requestedBlockId={requestedBlockId}
           onActiveBlockChange={handleActiveBlockChange}
           onClose={onClose}
         />

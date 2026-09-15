@@ -2,16 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const SHRINK_PX = 180;
 const PLAY_STEP_MS = 3200;
-/** How long a free scroll has to sit still before it's allowed to change
- * `active` — long enough that flicking past a dozen blocks to get somewhere
- * only settles on the block actually landed on, not each one passed over
- * (which would otherwise fire a map camera transition per block). */
-const SCROLL_SETTLE_MS = 140;
-/** Read the block whose top has scrolled past this far below the scrollport's
- * own top edge as "the one being read" — a small margin rather than 0 so a
- * block that has *just* started entering at the very top doesn't flip active
- * a frame before its heading is actually legible. */
-const ACTIVE_THRESHOLD_PX = 24;
 
 function easeOutExpo(p: number): number {
   return p >= 1 ? 1 : 1 - Math.pow(2, -10 * p);
@@ -20,16 +10,22 @@ function easeOutExpo(p: number): number {
 /**
  * Scrolling for the Story panel.
  *
- * The panel scrolls freely — the wheel is never hijacked. Active changes two
- * ways: an explicit action (clicking a block, the transport buttons, a
- * section chip, an outline entry, or autoplay) animates the scroll position
- * itself (see `goTo`), the same eased step regardless of which one
- * triggered it; a free scroll instead settles onto whichever block its own
- * position rests on once scrolling actually stops (see `SCROLL_SETTLE_MS`),
- * so the section chips, the liquid pill and the map beside the panel all
- * track a plain scroll the same way they track a click — without re-flying
- * the camera for every block a fast scroll merely passes over on the way
- * somewhere else.
+ * The panel scrolls freely — the wheel is never hijacked — and **scrolling
+ * does not change which block is active.** Selection is an explicit act:
+ * clicking a block, the transport buttons, a section chip, an outline entry,
+ * a deep link, or autoplay. Each animates the scroll position itself (see
+ * `goTo`), the same eased step regardless of which one triggered it.
+ *
+ * This used to be a scrollspy — free scrolling settled onto whichever block
+ * it came to rest on. That coupling is what made reading the panel move the
+ * map: every block passed over on the way somewhere was a camera change, and
+ * a reader skimming back to re-read a paragraph would fly the map away from
+ * the view they were skimming *about*. Debouncing the settle made it less
+ * frequent without making it intentional. Now the two are separate verbs:
+ * scroll to read, click to go.
+ *
+ * Scroll still drives `k` (the header's collapse), which is purely visual and
+ * has no reader-facing consequence beyond the panel's own chrome.
  */
 export function useStoryScroll(blockCount: number) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -59,24 +55,6 @@ export function useStoryScroll(blockCount: number) {
     if (!scroll) return 0;
     return el.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop - 12;
   }, []);
-
-  /** The last block whose own top has scrolled past the read line — same
-   * "last one crossed, not nearest one" rule most scrollspy implementations
-   * use, since a heading that has scrolled just barely above the top is what
-   * the reader is actually looking at, not the one below it that hasn't
-   * arrived yet. */
-  const activeFromScroll = useCallback(() => {
-    const scroll = scrollRef.current;
-    if (!scroll) return activeRef.current;
-    const line = scroll.scrollTop + ACTIVE_THRESHOLD_PX;
-    let result = 0;
-    for (let i = 0; i < blockRefs.current.length; i++) {
-      const el = blockRefs.current[i];
-      if (!el || topOf(el) > line) break;
-      result = i;
-    }
-    return result;
-  }, [topOf]);
 
   const syncShrink = useCallback(() => {
     const scroll = scrollRef.current;
@@ -124,28 +102,34 @@ export function useStoryScroll(blockCount: number) {
   );
 
   const goTo = useCallback(
-    (index: number) => {
+    (index: number, opts?: { immediate?: boolean }) => {
       const i = Math.max(0, Math.min(blockCount - 1, index));
       const el = blockRefs.current[i];
       if (!el) return;
       setActive(i);
+      // `immediate` is for arriving at a block rather than travelling to one
+      // — a deep link opens *at* its block, and animating there from the top
+      // would play the reader a journey they didn't take.
+      if (opts?.immediate) {
+        const scroll = scrollRef.current;
+        if (scroll) {
+          cancelAnim();
+          scroll.scrollTop = topOf(el);
+          syncShrink();
+        }
+        return;
+      }
       animateTo(topOf(el));
     },
-    [animateTo, blockCount, topOf],
+    [animateTo, blockCount, cancelAnim, syncShrink, topOf],
   );
 
   const step = useCallback((delta: number) => goTo(activeRef.current + delta), [goTo]);
 
   const stopPlay = useCallback(() => setPlaying(false), []);
 
-  // Scroll drives the header's shrink on every frame (cheap, purely visual),
-  // and — once scrolling actually settles — which block is "active" (see
-  // activeFromScroll). The settle debounce is what keeps a fast scroll from
-  // re-triggering the map's camera transition once per block passed over: an
-  // in-flight `goTo`/autoplay animation fires this same listener repeatedly
-  // too, but each restart just pushes the timer back, so it never fires
-  // before the animation's own final position is the one being read.
-  const settleTimeoutRef = useRef<number | null>(null);
+  // Scroll drives the header's shrink, and nothing else — see this hook's own
+  // comment for why selection is no longer read off scroll position.
   useEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll) return;
@@ -157,19 +141,10 @@ export function useStoryScroll(blockCount: number) {
         ticking = false;
         syncShrink();
       });
-      if (settleTimeoutRef.current !== null) window.clearTimeout(settleTimeoutRef.current);
-      settleTimeoutRef.current = window.setTimeout(() => {
-        settleTimeoutRef.current = null;
-        const next = activeFromScroll();
-        if (next !== activeRef.current) setActive(next);
-      }, SCROLL_SETTLE_MS);
     };
     scroll.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      scroll.removeEventListener("scroll", onScroll);
-      if (settleTimeoutRef.current !== null) window.clearTimeout(settleTimeoutRef.current);
-    };
-  }, [syncShrink, activeFromScroll]);
+    return () => scroll.removeEventListener("scroll", onScroll);
+  }, [syncShrink]);
 
   // Autoplay. The advance is scheduled off the same clock that paints the
   // progress ring (see StoryPanel's `progress`), so the two cannot drift.

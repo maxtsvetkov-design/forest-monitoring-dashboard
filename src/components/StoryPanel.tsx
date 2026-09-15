@@ -145,6 +145,61 @@ function DownloadReportChip({ header, blocks }: { header: StoryHeader; blocks: S
   );
 }
 
+/**
+ * Copies a link to exactly what is on screen — this story, on this block.
+ *
+ * Deliberately NOT in the chip row beside `CopyChip` and the report
+ * download, where it visually belongs: that row is `overflow-x-auto` and
+ * already overflows at this panel's width, so a chip appended to it is
+ * reachable only by scrolling a row most readers won't know scrolls. It sits
+ * in the title row instead, beside Close, where it is always on screen.
+ *
+ * Reads `location.href` at *click* time rather than taking a prop: the URL
+ * changes as the reader moves through the story (see `useHashRoute`), so an
+ * href captured during render is stale the moment they step to the next
+ * block — which is exactly when someone reaches for "share this".
+ */
+function ShareLinkButton() {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(id);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard?.writeText(window.location.href).then(
+          () => setCopied(true),
+          () => undefined,
+        );
+      }}
+      aria-label="Copy a link to this story, open at this block"
+      title={copied ? "Link copied" : "Copy a link to this block"}
+      className={`u-press shrink-0 h-[28px] mt-[4px] flex items-center gap-[5px] rounded-full border cursor-pointer transition-colors ${
+        copied
+          ? "px-[10px] border-[#56b0a4] bg-[#e7f4f2] text-[#096151]"
+          : "w-[28px] justify-center border-[#dedee3] bg-white text-[#464650] hover:border-[#18181c] hover:bg-[#f2f2f2]"
+      }`}
+    >
+      <svg width="13" height="13" viewBox="0 0 12 12" className="shrink-0" {...stroke} strokeWidth={1.4}>
+        {copied ? (
+          <path d="M2.5 6.2 4.8 8.5 9.5 3.6" />
+        ) : (
+          <>
+            <path d="M5 7a2 2 0 0 0 3 .3l1.6-1.6a2.1 2.1 0 0 0-3-3l-.9.9" />
+            <path d="M7 5a2 2 0 0 0-3-.3L2.4 6.3a2.1 2.1 0 0 0 3 3l.9-.9" />
+          </>
+        )}
+      </svg>
+      {copied && (
+        <span className="text-[11px] font-semibold font-['Outfit',sans-serif] whitespace-nowrap">Link copied</span>
+      )}
+    </button>
+  );
+}
+
 /** One "12 ha / Total area" stat — a jump target for the block that explains it. */
 function HeadStat({ stat, onJump }: { stat: StoryHeadStat; onJump: () => void }) {
   return (
@@ -699,11 +754,21 @@ function TierUnlockBanner({ onOpen }: { onOpen: () => void }) {
 export default function StoryPanel({
   header,
   blocks,
+  requestedBlockId,
   onActiveBlockChange,
   onClose,
 }: {
   header: StoryHeader;
   blocks: StoryBlock[];
+  /** Which block navigation has asked for: a shared link on first load, or
+   * Back/Forward afterwards.
+   *
+   * Safe to treat as a live prop ONLY because the caller keeps it on a
+   * separate wire from the id this panel reports back (see App's
+   * `storyNavBlockId` vs `storyBlockId`). If the panel's own steps were fed
+   * back in here, every click would return as an instruction to jump where it
+   * already is. */
+  requestedBlockId?: string;
   /** Fires with whichever block is currently being read, so the map beside the
    * panel can follow it. Reports the block rather than its map view so the
    * caller decides what to do with it — this panel has no idea a map exists. */
@@ -717,6 +782,27 @@ export default function StoryPanel({
   const [outlineOpen, setOutlineOpen] = useState(false);
   const outlineRef = useRef<HTMLDivElement>(null);
   const [tierModalOpen, setTierModalOpen] = useState(false);
+  /** Which block a click landed on, and a nonce to replay the ripple with.
+   * The nonce is what makes clicking the SAME card twice animate twice — a
+   * CSS animation only restarts if the element is genuinely new, so the span
+   * below is keyed on it and remounts per click. */
+  const [ripple, setRipple] = useState<{ index: number; nonce: number } | null>(null);
+
+  // Navigation asked for a block — a shared link on mount, Back/Forward after.
+  // `useLayoutEffect` because block refs are populated during commit but the
+  // jump must land before paint: in a plain effect the reader sees the top of
+  // the story for a frame and is then yanked.
+  //
+  // Guarded on the last id actually applied, not on mount, so that Back to a
+  // *different* block still moves a panel that is already open — while a
+  // repeat of the id we're already on stays a no-op.
+  const appliedNavRef = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!requestedBlockId || requestedBlockId === appliedNavRef.current) return;
+    appliedNavRef.current = requestedBlockId;
+    const i = blocks.findIndex((b) => b.id === requestedBlockId);
+    if (i >= 0) goTo(i, { immediate: true });
+  }, [blocks, goTo, requestedBlockId]);
 
   const activeSection = blocks[active]?.section;
 
@@ -887,6 +973,7 @@ export default function StoryPanel({
             >
               {header.title}
             </button>
+            <ShareLinkButton />
             {onClose && (
               <button
                 type="button"
@@ -1079,10 +1166,35 @@ export default function StoryPanel({
               onClick={() => {
                 stopPlay();
                 goTo(i);
+                setRipple((prev) => ({ index: i, nonce: (prev?.nonce ?? 0) + 1 }));
               }}
               style={{ ["--i" as string]: Math.min(i, 8) }}
               className={`story-block ${block.isSectionHead ? "story-block--sec" : ""} my-[14px] cursor-pointer`}
             >
+              {/* Keyed on the nonce so it remounts — and therefore replays —
+                  on every click, including a second click of the same card.
+                  Origin is the pointer position the spotlight already tracks,
+                  so the ink starts under the finger rather than at a corner. */}
+              {ripple?.index === i && <span key={ripple.nonce} aria-hidden className="story-block__ripple" />}
+
+              {/* Selection is a click now, so the card has to say so. Absolute
+                  rather than in flow, for the reason `story-stat__jump` gives:
+                  in flow it would permanently reserve width for something only
+                  visible on hover. */}
+              {!block.isSectionHead && (
+                <span aria-hidden className={`story-block__cue ${isActive ? "is-reading" : ""}`}>
+                  {isActive ? (
+                    "Reading"
+                  ) : (
+                    <>
+                      Open
+                      <svg width="9" height="9" viewBox="0 0 16 16" {...stroke} strokeWidth={2}>
+                        <path d="M6 3.5 10.5 8 6 12.5" />
+                      </svg>
+                    </>
+                  )}
+                </span>
+              )}
               {block.isSectionHead ? (
                 <>
                   {block.section !== "overview" && <span className="block h-px bg-[#dbd9d8] mb-[6px]" />}

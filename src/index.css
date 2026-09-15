@@ -1841,7 +1841,7 @@ html {
 }
 
 .story-block:hover {
-  transform: translateY(-3px);
+  transform: translateY(-3px) scale(1.004);
   border-color: rgba(86, 176, 164, 0.45);
   box-shadow: 0 12px 30px rgba(20, 20, 20, 0.11), 0 3px 8px rgba(20, 20, 20, 0.05);
 }
@@ -1855,8 +1855,98 @@ html {
   transform: scaleX(1);
 }
 
+/* The press is the whole interaction now that scrolling no longer selects, so
+   it is tuned to feel like a button rather than a card that happens to move:
+   it goes DOWN past its resting position, not just back to it, and it gets
+   there on a much shorter clock than the hover it interrupts. A press that
+   eases over 400ms reads as lag; the response has to be immediate and the
+   settle can be long (see this file's own note on layered motion). */
 .story-block:active {
-  transform: translateY(-1px) scale(0.998);
+  transform: translateY(0) scale(0.988);
+  box-shadow: 0 2px 8px rgba(20, 20, 20, 0.08);
+  transition-duration: var(--dur-1), var(--dur-1), var(--dur-1), var(--dur-1);
+}
+
+/* --- Click ink ------------------------------------------------------------ */
+/* Ink spreading from the pointer, confirming the click landed on THIS card.
+   Sits at z-index 0 — under the content, over the background — so it reads as
+   the card's own surface reacting rather than a wash over the text.
+   Positioned from the same --mx/--my the spotlight already tracks. */
+/* Scoped (`.story-block .x`, not `.x`) to outrank `.story-block > *` above,
+   which gives every direct child `position: relative; z-index: 1`. That rule
+   and a bare `.story-block__ripple` would tie on specificity and be settled
+   by source order — true today, silently broken by the next reshuffle. */
+.story-block .story-block__ripple {
+  position: absolute;
+  z-index: 0;
+  left: var(--mx);
+  top: var(--my);
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(86, 176, 164, 0.4), rgba(86, 176, 164, 0) 70%);
+  animation: storyRipple 640ms var(--ease-lux) forwards;
+}
+
+@keyframes storyRipple {
+  from {
+    transform: scale(0.4);
+    opacity: 0.95;
+  }
+  to {
+    transform: scale(42);
+    opacity: 0;
+  }
+}
+
+/* --- "Open" cue ----------------------------------------------------------- */
+/* Out of flow on purpose — in flow it would permanently reserve width at the
+   end of every heading for something only visible on hover, the same trade
+   `story-stat__jump` documents. */
+.story-block .story-block__cue {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid #dedee3;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  font-family: "Outfit", sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: #5b5b66;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-3) var(--ease-lux),
+    background-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+}
+
+.story-block:hover .story-block__cue {
+  opacity: 1;
+  transform: none;
+}
+
+/* The block being read says so permanently — this is the state the cue is
+   really for, and it is the one card on screen that should not need a hover
+   to explain itself. */
+.story-block__cue.is-reading {
+  opacity: 1;
+  transform: none;
+  border-color: transparent;
+  background: #56b0a4;
+  color: #ffffff;
 }
 
 .story-block[data-active="true"] {
