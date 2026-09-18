@@ -29,6 +29,7 @@ import NdviCard from "./components/NdviCard";
 import OverallHealthCard from "./components/OverallHealthCard";
 import TreeHistoryModal, { TreeMiniPopover } from "./components/TreeHistoryModal";
 import RecentEventsList from "./components/RecentEventsList";
+import InspectionTriageList from "./components/InspectionTriageList";
 import PannableFrameStage from "./components/PannableFrameStage";
 import { HABITAT_FRAMES } from "./components/HabitatSnapshotCard";
 import { publicUrl } from "./lib/publicUrl";
@@ -45,7 +46,7 @@ import HabitatLegend from "./components/HabitatLegend";
 import ToolbarBtn from "./components/ToolbarBtn";
 import TreeSurveyCard from "./components/TreeSurveyCard";
 import { areas } from "./data/areas";
-import { eventsInRange, generateEvents, type TreeEvent } from "./data/events";
+import { eventsInRange, generateEvents, isCropFarm, type TreeEvent } from "./data/events";
 import { areaHectares, areaOverlays, frameMonthWindow } from "./data/overlays";
 import { aggregateRange, healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
@@ -307,6 +308,28 @@ export default function App() {
   const [activeAreaId, setActiveAreaId] = useState(initialRoute.areaId ?? areas[0].id);
   const activeArea = areas.find((a) => a.id === activeAreaId) ?? areas[0];
 
+  // Applies an area's suggested basemap the first time it becomes active —
+  // see `Area.defaultBasemapIndex`'s own comment for why this is a
+  // once-per-area nudge rather than a permanent override of the shared
+  // `basemapIndex` preference. Session-scoped (a plain ref, not persisted):
+  // reopening the app is a fresh suggestion, same as a first visit.
+  const basemapDefaultedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (activeArea.defaultBasemapIndex === undefined) return;
+    if (basemapDefaultedRef.current.has(activeArea.id)) return;
+    basemapDefaultedRef.current.add(activeArea.id);
+    setBasemapIndex(activeArea.defaultBasemapIndex);
+  }, [activeArea.id, activeArea.defaultBasemapIndex]);
+
+  // Landing on Liwa Oasis while "Recent events" is still the active tab (a
+  // stale selection from whatever area was open before) would otherwise leave
+  // the tab bar showing no active pill at all, since that tab strip drops
+  // this entry for crop farms — see `tabs` below. Assets is where its own
+  // "Recent events" panel actually lives now.
+  useEffect(() => {
+    if (isCropFarm(activeArea.id) && activeTab === "Recent events") setActiveTab("Assets");
+  }, [activeArea.id, activeTab]);
+
   // --- Shareable URLs ------------------------------------------------------
   // The navigation state above, expressed as something that can be pasted into
   // a message. This is not a router (see docs/ARCHITECTURE.md §1) — App still
@@ -398,7 +421,15 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
 
-  const tabs = ["Insights", "Recent events", "Assets", "Maps", "Areas", "Story"];
+  // Liwa Oasis's own notifications already live inside the Assets tab's own
+  // "Recent events" switcher panel (reordered first there) — a second, plain
+  // top-level "Recent events" tab beside it would be a redundant nav entry
+  // pointing at a stale card feed rather than the ranked worklist that panel
+  // now shows. No other area has that in-panel duplicate, so this is the one
+  // per-area exception to an otherwise-shared tab strip.
+  const tabs = isCropFarm(activeArea.id)
+    ? ["Insights", "Assets", "Maps", "Areas", "Story"]
+    : ["Recent events", "Insights", "Assets", "Maps", "Areas", "Story"];
 
   // The active-tab pill is one element that slides between tabs rather than
   // the colour jumping from one button to another — see useSlidingPill,
@@ -761,33 +792,48 @@ export default function App() {
                 />
               </div>
             )}
-            <div className={`max-w-[480px] w-full shrink-0 ${activeArea.id === "al-maha" ? "" : "flex-1"}`}>
-              {/* Filtered to habitat events only — the migration/species/
-                  ground-condition read, not the ordinary per-tree survey and
-                  decline events every area's Insights sidebar already shows.
-                  See `TreeEvent.habitat`'s own comment in events.ts for
-                  exactly which events that flags. */}
-              <RecentEventsList
-                events={visibleEvents.filter((e) => e.habitat)}
-                delay={CHROME_SEQUENCE_MS}
-                onSelectEvent={focusEventInPlace}
-                detailContext={{
-                  projectName: activeArea.projectName,
-                  monthLabels: activeArea.snapshots.map((s) => s.label),
-                  healthData: aggregated.healthData,
-                  healthScoreTrend,
-                  speciesData: aggregated.speciesData,
-                  onHiResDelivered: () => {
-                    setHiResDelivered(true);
-                    setHabitatFrameIndex(HABITAT_FRAMES.length);
-                  },
-                  areaHa: areaHectares(activeArea.id),
-                }}
-                compareContext={habitatCompareStats}
-                selectedPermitId={focusedPermitId}
-                onSelectPermit={togglePermitFocus}
-                onPanelChange={setEventsPanel}
-              />
+            <div
+              className={`w-full shrink-0 ${activeArea.id === "al-maha" ? "max-w-[480px]" : "flex-1"} ${
+                isCropFarm(activeArea.id) ? `${CONTENT_HEIGHT_CLASS} min-h-[400px]` : ""
+              }`}
+            >
+              {isCropFarm(activeArea.id) ? (
+                // Liwa Oasis reads its notifications as a ranked, filterable
+                // worklist (farm/field ID, violation type, confidence, date,
+                // severity) rather than the scrolling card feed every other
+                // area gets — see InspectionTriageList's own comment.
+                <InspectionTriageList
+                  events={visibleEvents.filter((e) => e.habitat)}
+                  onSelectEvent={focusEventInPlace}
+                />
+              ) : (
+                // Filtered to habitat events only — the migration/species/
+                // ground-condition read, not the ordinary per-tree survey and
+                // decline events every area's Insights sidebar already shows.
+                // See `TreeEvent.habitat`'s own comment in events.ts for
+                // exactly which events that flags.
+                <RecentEventsList
+                  events={visibleEvents.filter((e) => e.habitat)}
+                  delay={CHROME_SEQUENCE_MS}
+                  onSelectEvent={focusEventInPlace}
+                  detailContext={{
+                    projectName: activeArea.projectName,
+                    monthLabels: activeArea.snapshots.map((s) => s.label),
+                    healthData: aggregated.healthData,
+                    healthScoreTrend,
+                    speciesData: aggregated.speciesData,
+                    onHiResDelivered: () => {
+                      setHiResDelivered(true);
+                      setHabitatFrameIndex(HABITAT_FRAMES.length);
+                    },
+                    areaHa: areaHectares(activeArea.id),
+                  }}
+                  compareContext={habitatCompareStats}
+                  selectedPermitId={focusedPermitId}
+                  onSelectPermit={togglePermitFocus}
+                  onPanelChange={setEventsPanel}
+                />
+              )}
             </div>
           </div>
         ) : activeTab === "Areas" ? (

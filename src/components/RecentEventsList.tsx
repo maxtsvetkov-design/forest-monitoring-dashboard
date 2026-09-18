@@ -3,7 +3,7 @@ import { imgIcInfoCircle } from "../assets";
 import { treePhotoTileFor } from "../data/treePhotoSprite";
 import type { TreeEvent } from "../data/events";
 import type { AggregatedSnapshot, CategoryDatum } from "../data/types";
-import { CONDITION_COLOR } from "../data/taxonomy";
+import { CONDITION_COLOR, CONDITION_LABEL } from "../data/taxonomy";
 import EventDetailPanel from "./EventDetailPanel";
 import HabitatChangeCard from "./HabitatChangeCard";
 import EventActionButtons from "./EventActionButtons";
@@ -19,12 +19,30 @@ const SEVERITY_COLOR = CONDITION_COLOR;
  * data/treePhotoSprite.ts) rather than its own <img>, so this list's photo
  * column costs zero extra requests beyond the one sprite the page already
  * loads for the Areas tab. */
-function TreePreview({ color, eventId }: { color: string; eventId: string }) {
+export function TreePreview({ color, eventId }: { color: string; eventId: string }) {
   return (
     <div
-      className="w-11 h-11 rounded-full overflow-hidden shrink-0 bg-[#dedee3]"
-      style={{ boxShadow: `inset 0 0 0 2px ${color}`, ...treePhotoTileFor(eventId), backgroundSize: "auto" }}
+      className="relative shrink-0 w-12 h-12 rounded-[16px] overflow-hidden bg-[#dedee3]"
+      style={{ boxShadow: `inset 0 0 0 2px ${color}, 0 2px 6px rgba(0,0,0,0.12)`, ...treePhotoTileFor(eventId), backgroundSize: "auto" }}
     />
+  );
+}
+
+/** Small, muted severity chip — every row gets one now, not just the critical
+ *  ones (which used to lean on a single hardcoded red CriticalBadge instead).
+ *  Takes an already-resolved label/colour pair rather than a condition key
+ *  itself, so it works equally for a tree's condition (this file's own rows)
+ *  and for a compliance finding's `SeverityLabel` (InspectionTriageList's own
+ *  cards) without either caller reaching into the wrong lookup table. */
+export function SeverityChip({ label, color }: { label: string; color: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-[5px] h-[19px] px-[7px] rounded-full text-[10px] font-bold uppercase tracking-[0.03em] font-['Outfit',sans-serif] whitespace-nowrap"
+      style={{ background: `${color}1A`, color }}
+    >
+      <span className="w-[5px] h-[5px] rounded-full shrink-0" style={{ background: color }} aria-hidden="true" />
+      {label}
+    </span>
   );
 }
 
@@ -401,11 +419,15 @@ export default function RecentEventsList({
         </p>
       ) : (
         <div className="scroll-slim flex flex-col gap-[8px] flex-1 min-h-0 overflow-y-auto p-[2px] -m-[2px]">
-          {/* Critical rows sort first and stay pinned to the top of the
-              scroller (`sticky top-0`) rather than sitting wherever their own
-              date lands them — the same "critical events shouldn't need
-              scrolling to find" reasoning the Important-only switch already
-              serves, just applied without the reader having to flip it. */}
+          {/* Critical rows sort first — the same "critical events shouldn't
+              need scrolling to find" reasoning the Important-only switch
+              already serves, just applied without the reader having to flip
+              it. Only the very first row in that sorted order is pinned
+              (`sticky top-0`): every critical row sharing that same treatment
+              would all park at the identical `top: 0` coordinate and paint
+              directly over one another the moment more than one is on
+              screen — exactly what "Important only" (every visible row
+              critical) used to do before this was scoped to `i === 0`. */}
           {[...visibleEvents]
             .sort((a, b) => Number(b.tree.health === "Defoliated") - Number(a.tree.health === "Defoliated"))
             .map((event, i) => {
@@ -420,6 +442,7 @@ export default function RecentEventsList({
             // off it here is what actually keeps this badge truthful to what
             // clicking the row flies you to.
             const critical = event.tree.health === "Defoliated";
+            const pinned = critical && i === 0;
             return (
             <div
               key={event.id}
@@ -431,13 +454,23 @@ export default function RecentEventsList({
                 e.preventDefault();
                 handleSelect(event);
               }}
-              className={`u-press flex items-start gap-[12px] p-[12px] animate-fade-in cursor-pointer rounded-[16px] border transition-colors duration-150 ${
+              className={`u-press group/card relative flex items-start shrink-0 gap-[14px] pl-[18px] pr-[14px] py-[14px] overflow-hidden animate-fade-in cursor-pointer rounded-[20px] border transition-all duration-200 hover:-translate-y-[1px] ${
+                pinned ? "sticky top-0 z-[5]" : ""
+              } ${
                 critical
-                  ? "sticky top-0 z-[5] bg-[#fdf1f0] border-[#f6d3d1] hover:bg-[#fbe6e4] shadow-[0px_6px_16px_-6px_rgba(180,35,31,0.25)]"
-                  : "bg-white border-[rgba(0,0,0,0.06)] hover:bg-[#fbfbfa]"
+                  ? "bg-gradient-to-br from-[#fff6f5] to-[#fdf1f0] border-[#f6d3d1] hover:border-[#f0bcb9] shadow-[0px_6px_20px_-8px_rgba(180,35,31,0.3)] hover:shadow-[0px_14px_32px_-10px_rgba(180,35,31,0.4)]"
+                  : "bg-white border-[rgba(0,0,0,0.06)] hover:border-[rgba(0,0,0,0.1)] shadow-[0px_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0px_14px_32px_-12px_rgba(0,0,0,0.16)]"
               }`}
               style={{ animationDelay: `${delay + Math.min(i, 10) * 40}ms` }}
             >
+              {/* Left accent stripe — the same severity colour every donut and
+                  map pin already uses, read as a single glance-able bar rather
+                  than only a small dot buried in a chip. */}
+              <span
+                className="absolute left-0 top-0 bottom-0 w-[4px]"
+                style={{ background: SEVERITY_COLOR[event.severity] }}
+                aria-hidden="true"
+              />
               <TreePreview color={SEVERITY_COLOR[event.severity]} eventId={event.id} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
@@ -448,7 +481,7 @@ export default function RecentEventsList({
                       cannot share one. */}
                   <div className="flex items-start flex-wrap gap-x-[6px] gap-y-[3px] min-w-0">
                     <span
-                      className={`text-[14px] font-bold font-['Outfit',sans-serif] leading-[19px] ${
+                      className={`text-[14.5px] font-bold font-['Outfit',sans-serif] leading-[19px] ${
                         critical ? "text-[#B4231F]" : "text-[#18181c]"
                       }`}
                     >
@@ -456,9 +489,12 @@ export default function RecentEventsList({
                     </span>
                     {critical && !event.habitatImpact && <CriticalBadge />}
                   </div>
-                  <span className="text-[11px] text-[#71717a] font-['Outfit',sans-serif] shrink-0 whitespace-nowrap">
-                    {formatRelative(event.date)}
-                  </span>
+                  <div className="flex flex-col items-end gap-[4px] shrink-0">
+                    <span className="text-[10.5px] text-[#a1a1aa] font-['Outfit',sans-serif] whitespace-nowrap">
+                      {formatRelative(event.date)}
+                    </span>
+                    <SeverityChip label={CONDITION_LABEL[event.severity]} color={SEVERITY_COLOR[event.severity]} />
+                  </div>
                 </div>
                 {event.habitatImpact ? (
                   // Same shared card EventDetailPanel uses, just in its
@@ -490,7 +526,7 @@ export default function RecentEventsList({
                     )}
                   </>
                 )}
-                <div className="mt-[8px]">
+                <div className={`mt-[10px] pt-[10px] border-t ${critical ? "border-[#f6d3d1]" : "border-[rgba(0,0,0,0.06)]"}`}>
                   <EventActionButtons
                     saved={savedIds.has(event.id)}
                     onToggleSave={() => toggleSaved(event.id)}

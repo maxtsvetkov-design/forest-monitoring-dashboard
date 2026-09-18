@@ -30,6 +30,7 @@ const EXIT_MS = 480;
 export default function ManagerContactToast({
   detail,
   title = "Our manager will contact you soon.",
+  autoDismissMs = AUTO_DISMISS_MS,
   onDismiss,
 }: {
   /** The second line — what was actually requested, stated plainly rather
@@ -42,6 +43,11 @@ export default function ManagerContactToast({
    * prop. Keep any override in the same register: a promise about what happens
    * next, never a claim that it already has. */
   title?: string;
+  /** How long this instance stays before dismissing itself — a caller
+   *  confirming something already *done* (a push that already completed,
+   *  not a sales lead someone still has to act on) reads fine on a shorter
+   *  timer than the sales copy this default was tuned for. */
+  autoDismissMs?: number;
   onDismiss: () => void;
 }) {
   const [leaving, setLeaving] = useState(false);
@@ -51,9 +57,9 @@ export default function ManagerContactToast({
   // firing right as the button is pressed) must not restart the exit.
   useEffect(() => {
     if (leaving) return;
-    const t = window.setTimeout(() => setLeaving(true), AUTO_DISMISS_MS);
+    const t = window.setTimeout(() => setLeaving(true), autoDismissMs);
     return () => window.clearTimeout(t);
-  }, [leaving]);
+  }, [leaving, autoDismissMs]);
 
   useEffect(() => {
     if (!leaving) return;

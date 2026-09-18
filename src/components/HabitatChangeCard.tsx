@@ -1,12 +1,7 @@
 import type { TreeEvent } from "../data/events";
+import { SEVERITY_STYLE } from "../data/severity";
 
 type HabitatImpact = NonNullable<TreeEvent["habitatImpact"]>;
-
-const SEVERITY_STYLE: Record<HabitatImpact["severityLabel"], { bg: string; fg: string; dot: string; accent: string }> = {
-  CRITICAL: { bg: "#fde8e8", fg: "#c0392b", dot: "#e5484d", accent: "#e5484d" },
-  WARNING: { bg: "#fdf1d8", fg: "#a5690a", dot: "#e8a33d", accent: "#e8a33d" },
-  INFO: { bg: "#e6f2ec", fg: "#096151", dot: "#2e9b6f", accent: "#2e9b6f" },
-};
 
 function FactIcon({ kind }: { kind: "pin" | "area" | "layers" | "calendar" }) {
   const common = { width: 12, height: 12, viewBox: "0 0 16 16", fill: "none" } as const;

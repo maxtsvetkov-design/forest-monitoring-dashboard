@@ -1,4 +1,5 @@
 import { birdPlacement, getCrabPlovers, hasCrabPloverCensus, WEST_REEF_ARRIVALS, WEST_REEF_ZONE } from "./crabPlovers";
+import { COMPLIANCE_DETECTION_OBJECTS } from "./agriculturalCompliance";
 import { incidentalSightingFor } from "./coastalBirds";
 import { incidentalWoodlandSightingFor } from "./forestBirds";
 import { areaHectares, frameMonthWindow, getTimelapseImages, type MapOverlay } from "./overlays";
@@ -174,6 +175,43 @@ const SPECIES_KEY_BY_LABEL: Record<string, SpeciesKey> = Object.fromEntries(
   (Object.keys(speciesLabel) as SpeciesKey[]).map((key) => [speciesLabel[key], key]),
 );
 
+/** Areas that are agricultural plots rather than a forest or coastal habitat
+ *  survey — their feed reads as farm-management notices (irrigation, pests,
+ *  pollination, harvest) instead of habitat-change copy. Deliberately kept
+ *  OFF `habitatImpact`: that field's card reads its numbers against the
+ *  marine/terrestrial reference key in `habitatClassChange.ts`, and nothing
+ *  here is being classified against it — an irrigation block isn't a
+ *  saltmarsh reduction, and forcing one through that card would be exactly
+ *  the kind of contradiction this app's numbers otherwise refuse to carry.
+ *  See `generateCropEvents`. */
+const CROP_AREAS = new Set(["liwa-oasis"]);
+
+export function isCropFarm(areaId: string | undefined): boolean {
+  return !!areaId && CROP_AREAS.has(areaId);
+}
+
+/**
+ * One finding from the agricultural-compliance taxonomy
+ * (`agriculturalCompliance.ts`'s "2.1.5 Typical Agricultural Compliance
+ * Detection Scenarios"), picked at random and seeded the same way every
+ * other per-month narrative in this file is. Called once per month at its
+ * one call site (`generateCropEvents`) — Liwa's whole feed is violations, so
+ * every month reports one rather than a gated chance of one.
+ *
+ * `flagged` mirrors the object's own `severityLabel` rather than being a
+ * second independent judgement: CRITICAL is always flagged, INFO never is,
+ * and WARNING is a coin flip.
+ */
+function randomComplianceDetection(rand: () => number) {
+  const object = COMPLIANCE_DETECTION_OBJECTS[Math.floor(rand() * COMPLIANCE_DETECTION_OBJECTS.length)];
+  const flagged = object.severityLabel === "CRITICAL" ? true : object.severityLabel === "INFO" ? false : rand() < 0.5;
+  return {
+    title: `${object.label} ${object.severityLabel === "INFO" ? "confirmed" : "detected"}`,
+    description: `${object.note} (${object.category} — compliance scan finding.)`,
+    flagged,
+  };
+}
+
 /**
  * Picks the real tree an event is "about", from that month's inventory. Tries
  * progressively looser matches against the narrative so the pick reads as
@@ -230,6 +268,9 @@ export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], 
   // per-month sighting tally, the West reef migration counts) rather than
   // inventing a second dataset; see generateCoastalEvents below.
   if (hasCrabPloverCensus(areaId)) return generateCoastalEvents(overlay, snapshots, areaId, scale);
+  // Same reasoning, one area over: Liwa is surveyed for date-palm condition
+  // and irrigation, not woodland canopy — see `generateCropEvents`.
+  if (isCropFarm(areaId)) return generateCropEvents(overlay, snapshots, areaId, scale);
 
   const rand = seededRandom(`events:${areaId}`);
   const today = new Date();
@@ -440,6 +481,63 @@ export function generateEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], 
   const leadWoodland = sortedEvents.find((e) => e.habitatImpact !== undefined);
   if (leadWoodland) leadWoodland.title = REDUCTION_TITLE;
   return sortedEvents;
+}
+
+/**
+ * Liwa's own feed: agricultural-compliance violations only, not the mixed
+ * habitat-change/farm-management copy every other area's feed carries.
+ *
+ * Every event here comes from the same agricultural-compliance taxonomy
+ * (`agriculturalCompliance.ts`) the ranked worklist's own "violation type"
+ * column already reads its `event.title` off — a routine "no infestation
+ * found" clear check, a pollination reminder, or a harvest-readiness
+ * milestone is real farm activity, but none of it IS a violation, so none of
+ * it belongs in a feed whose whole premise is "what got flagged." One
+ * compliance finding is reported every month (no gate skipping a cycle),
+ * grounded on a real tree record's position the same way every other event
+ * in this file is — never a fabricated ID — picked from the Defoliated pool
+ * when the finding is flagged so the "Important only" filter, which reads
+ * the picked tree's own real condition, actually surfaces it.
+ *
+ * No `habitatImpact` on any of these — see `CROP_AREAS`'s own comment for
+ * why forcing farm-management copy through the ecological habitat-change card
+ * would be a contradiction, not a stretch.
+ */
+function generateCropEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], areaId: string, scale: number): TreeEvent[] {
+  const rand = seededRandom(`events:${areaId}`);
+  const today = new Date();
+  const events: TreeEvent[] = [];
+
+  const byMonth = snapshots.map((_, monthIndex) =>
+    generateTreeRecordsAt(overlay, areaId, snapshots, monthIndex, scale),
+  );
+
+  snapshots.forEach((month, monthIndex) => {
+    const monthRecords = byMonth[monthIndex];
+    if (monthRecords.length === 0) return;
+
+    const compliance = randomComplianceDetection(rand);
+    const complianceTree = pickTreeForEvent(
+      monthRecords,
+      rand,
+      "nakhlah",
+      compliance.flagged ? "defoliated" : "vigorous",
+    );
+    events.push({
+      id: `${areaId}-compliance-${monthIndex}`,
+      monthIndex,
+      date: randomDayInMonth(month.date, rand, today),
+      kind: "survey",
+      title: compliance.title,
+      description: compliance.description,
+      species: SPECIES_KEY_BY_LABEL[complianceTree.species] ?? "nakhlah",
+      severity: compliance.flagged ? complianceTree.condition : "vigorous",
+      tree: complianceTree,
+      habitat: true,
+    });
+  });
+
+  return events.sort((a, b) => b.date.getTime() - a.date.getTime());
 }
 
 /**

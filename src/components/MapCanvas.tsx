@@ -33,10 +33,16 @@ import { buildMapFilter, DEFAULT_MAP_CONTRAST, type MapColorMode } from "./mapCo
 import type { StoryFrame, StoryMapView } from "../data/storyMap";
 import MapToolbar from "./MapToolbar";
 import HabitatLegend from "./HabitatLegend";
+import ComplianceLegend from "./ComplianceLegend";
 import TreeHistoryModal from "./TreeHistoryModal";
+import ViolationRecordModal from "./ViolationRecordModal";
+import type { TriageEntry } from "../data/inspectionTriage";
+import type { FindingOutcome } from "../data/findingOutcome";
 import TreeTwinCard from "./TreeTwinCard";
-import { CONDITION_KEYS, CONDITION_LABEL, type ConditionKey } from "../data/taxonomy";
+import { CONDITION_KEYS, CONDITION_LABEL, conditionLabelFor, type ConditionKey } from "../data/taxonomy";
 import { smootherstep, underlayOpacity } from "../lib/crossfade";
+import { fieldBoundsUV } from "../data/farmFields";
+import { SEVERITY_STYLE } from "../data/severity";
 
 // OpenStreetMap data served as vector tiles by OpenFreeMap: free, unlimited,
 // no API key, and intended for embedding in third-party apps (unlike raw
@@ -73,6 +79,168 @@ const TERRAIN_SOURCE_ID = "terrain-dem";
 // Close enough that an individual tree fills a recognisable part of the frame,
 // while still showing the neighbours it should be compared against.
 const FOCUS_ZOOM = 18;
+const FIELD_HIGHLIGHT_SOURCE_ID = "field-highlight";
+const FIELD_HIGHLIGHT_FILL_ID = "field-highlight-fill";
+const FIELD_HIGHLIGHT_LINE_ID = "field-highlight-line";
+
+const PIN_AREA_SOURCE_ID = "pin-area";
+const PIN_AREA_LINE_ID = "pin-area-line";
+const PIN_AREA_CROPS_SOURCE_ID = "pin-area-crops";
+const PIN_AREA_CROPS_BASE_LAYER_ID = "pin-area-crops-base";
+const PIN_AREA_CROPS_TOP_LAYER_ID = "pin-area-crops-top";
+// The ground each violation pin is read against — not the tree's real crown
+// radius (MAX_CROWN_RADIUS_M, 14m), a plaza big enough that a single organic
+// mass reads as a patch of field rather than a footprint marker.
+const PIN_AREA_FIELD_HALF_SIZE_M = 18;
+const BLOB_RADIUS_M = 14;
+const BLOB_VERTICES = 16;
+const BLOB_JITTER = 0.32;
+const BLOB_MIN_HEIGHT_M = 22;
+const BLOB_MAX_HEIGHT_M = 48;
+/** A "marching ants" dash sequence for the plaza's own boundary — stepping
+ *  through it on a timer is the standard trick for a *flowing* border with
+ *  plain `line-dasharray` (MapLibre has no dash-phase/offset paint property
+ *  to animate directly): each entry is the same total pattern length with
+ *  the on/off split shifted along by half a dash, so cycling through them
+ *  reads as the dashes travelling around the shape rather than a fixed
+ *  pattern that just changes length. */
+const PIN_AREA_FLOW_DASH_SEQUENCE: number[][] = [
+  [0, 4, 3],
+  [0.5, 4, 2.5],
+  [1, 4, 2],
+  [1.5, 4, 1.5],
+  [2, 4, 1],
+  [2.5, 4, 0.5],
+  [3, 4, 0],
+  [0, 0.5, 3, 3.5],
+  [0, 1, 3, 3],
+  [0, 1.5, 3, 2.5],
+  [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5],
+  [0, 3, 3, 1],
+  [0, 3.5, 3, 0.5],
+];
+
+/** A square ring (closed, 5 points) around a ground point, `halfSizeMeters`
+ *  to each side — the same local-metres→degrees approximation used
+ *  throughout this file (flat-earth over a few hundred metres, the whole
+ *  scale this plot is ever viewed at). */
+function squareRingAround(lng: number, lat: number, halfSizeMeters: number): [number, number][] {
+  const metresPerDegLat = 111_320;
+  const metresPerDegLng = 111_320 * Math.cos((lat * Math.PI) / 180);
+  const dLng = halfSizeMeters / metresPerDegLng;
+  const dLat = halfSizeMeters / metresPerDegLat;
+  return [
+    [lng - dLng, lat - dLat],
+    [lng + dLng, lat - dLat],
+    [lng + dLng, lat + dLat],
+    [lng - dLng, lat + dLat],
+    [lng - dLng, lat - dLat],
+  ];
+}
+
+/** A single irregular, closed polygon around a ground point — `vertices`
+ *  points at even angles, each pushed in/out from `baseRadiusMeters` by up to
+ *  `jitter` (0..1) using the caller's own seeded `rand`. One organic mass per
+ *  pin instead of a grid of uniform boxes — still an abstraction (this app
+ *  has no real per-plant planting record at pin scale), just one whose
+ *  silhouette doesn't read as a stack of identical crates. */
+function organicBlobRing(
+  lng: number,
+  lat: number,
+  baseRadiusMeters: number,
+  rand: () => number,
+  vertices = BLOB_VERTICES,
+  jitter = BLOB_JITTER,
+): [number, number][] {
+  const metresPerDegLat = 111_320;
+  const metresPerDegLng = 111_320 * Math.cos((lat * Math.PI) / 180);
+  const ring: [number, number][] = [];
+  for (let i = 0; i < vertices; i++) {
+    const angle = (i / vertices) * Math.PI * 2;
+    const r = baseRadiusMeters * (1 + (rand() - 0.5) * 2 * jitter);
+    const dx = Math.cos(angle) * r;
+    const dy = Math.sin(angle) * r;
+    ring.push([lng + dx / metresPerDegLng, lat + dy / metresPerDegLat]);
+  }
+  ring.push(ring[0]);
+  return ring;
+}
+
+/** A tiny, dependency-free seeded PRNG (mulberry32) so each crop cell's own
+ *  height is random-*looking* but stable across re-renders — seeded off the
+ *  finding's own event id plus its row/column, not `Math.random()`, which
+ *  would reshuffle every "crop" on every re-render. */
+function seededRandom(seed: string): () => number {
+  let state = 0;
+  for (let i = 0; i < seed.length; i++) state = (Math.imul(31, state) + seed.charCodeAt(i)) | 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Linear RGB blend between two `#rrggbb` colours, `t` 0 (all `from`) to 1
+ *  (all `to`) — the one bit of colour maths the plaza's gradient and its
+ *  procedural shimmer both build on. */
+function mixHexColor(from: string, to: string, t: number): string {
+  const clampT = Math.max(0, Math.min(1, t));
+  const parse = (hex: string) => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+  const [r1, g1, b1] = parse(from);
+  const [r2, g2, b2] = parse(to);
+  const channel = (a: number, b: number) =>
+    Math.round(a + (b - a) * clampT)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(r1, r2)}${channel(g1, g2)}${channel(b1, b2)}`;
+}
+
+/** This pin's own vertical colour gradient plus its procedural shimmer, both
+ *  built from the same seed as its shape (`organicBlobRing`) so height,
+ *  silhouette and colour all stay one consistent, stable "random" per
+ *  finding. Fill-extrusion has no true per-vertex gradient paint property, so
+ *  the gradient is faked the way these things usually are on the web: two
+ *  stacked bands sharing one footprint, a darker one low and a lighter one
+ *  high (`fill-extrusion-vertical-gradient` then adds its own lighting shade
+ *  on top of that). The "procedural" half is the top band's colour drifting
+ *  between its lit and its glowing tone on a slow sine, phase-offset per pin
+ *  (off the same seed) so a field of these never pulses in lockstep. Called
+ *  fresh every animation frame — cheap enough at this feature count that
+ *  regenerating the tiny GeoJSON beats trying to express "elapsed time"
+ *  inside a MapLibre paint expression, which has no clock to read. */
+function buildCropFeatures(entries: TriageEntry[], elapsedSec: number) {
+  return entries.flatMap((entry) => {
+    const accent = SEVERITY_STYLE[entry.severityLabel].accent;
+    const rand = seededRandom(entry.event.id);
+    const ring = organicBlobRing(entry.lng, entry.lat, BLOB_RADIUS_M, rand);
+    const height = BLOB_MIN_HEIGHT_M + rand() * (BLOB_MAX_HEIGHT_M - BLOB_MIN_HEIGHT_M);
+    const phaseOffset = rand() * Math.PI * 2;
+    const baseColor = mixHexColor(accent, "#000000", 0.34);
+    const litColor = mixHexColor(accent, "#ffffff", 0.28);
+    const glowColor = mixHexColor(accent, "#ffffff", 0.62);
+    const shimmer = (Math.sin(elapsedSec * 1.3 + phaseOffset) + 1) / 2;
+    const topColor = mixHexColor(litColor, glowColor, shimmer);
+    const bandHeight = height * 0.55;
+    return [
+      {
+        type: "Feature" as const,
+        properties: { color: baseColor, base: 0, height: bandHeight, band: "base" },
+        geometry: { type: "Polygon" as const, coordinates: [ring] },
+      },
+      {
+        type: "Feature" as const,
+        properties: { color: topColor, base: bandHeight, height, band: "top" },
+        geometry: { type: "Polygon" as const, coordinates: [ring] },
+      },
+    ];
+  });
+}
 
 /** Bounds for the derived inspect zoom. The ceiling is above MapLibre's own
  * default maxZoom of 22 — a 1 m sapling cannot fill a viewport from 22, and
@@ -551,6 +719,12 @@ function PinTooltip({
   state,
   onClose,
   onExpand,
+  violationType,
+  speciesLabel,
+  isCropFarm,
+  confidencePct,
+  dateDetected,
+  severityLabel,
 }: {
   state: PinTooltipState;
   onClose: () => void;
@@ -558,10 +732,42 @@ function PinTooltip({
    * omit where no full record is available to expand into (see the ref that
    * backs it in MapCanvas). */
   onExpand?: () => void;
+  /** This pin's own compliance finding, e.g. "Combustion Residual Ash
+   *  confirmed" — same wording the notification list uses for the same
+   *  finding. A raw tree id (`LIW-1098`) means nothing on its own to a
+   *  reader deciding whether to expand; the finding name is what the
+   *  notification that led them here already showed them. Omit for a
+   *  plain forest pin with no compliance record, which falls back to the
+   *  tree id since there's no finding name to show instead. */
+  violationType?: string;
+  /** This tree's own species common name (e.g. "Nakhlah") — the fallback
+   *  title for a plain, non-violation pin on a farm, where a bare tree id
+   *  reads as meaningless. Only used when `violationType` is absent. */
+  speciesLabel?: string;
+  /** Present alongside `violationType`: this finding's own confidence and
+   *  detection date, in place of the generic "Canopy loss" / "Last
+   *  surveyed" lines below — every pin left on Liwa's map is now a real
+   *  finding (see the pin-generation filter in MapCanvas), so what a reader
+   *  needs here is what the scan actually found, not a habitat metric with
+   *  nothing to do with a compliance decision. */
+  confidencePct?: number;
+  dateDetected?: Date;
+  /** This finding's own compliance severity (CRITICAL/WARNING/INFO) —
+   *  present alongside `violationType`. A compliance pin's colour should
+   *  read the same severity every other piece of this finding's own UI
+   *  already uses (the card stripe, the chip, the 3D plaza), not the
+   *  canopy-condition colour below, which is a different scale entirely and
+   *  would disagree with them. */
+  severityLabel?: TriageEntry["severityLabel"];
+  /** Liwa Oasis is a working farm, not a habitat-restoration plot — its
+   *  ~97 plain (non-violation) pins get farm-relevant condition wording
+   *  ("Severe stress") instead of the forest scorecard's own vocabulary
+   *  ("Defoliated"). See `conditionLabelFor`. */
+  isCropFarm?: boolean;
 }) {
   const { pin, monthIndex, x, y } = state;
   const severity = pinSeverityAt(pin, monthIndex);
-  const color = severity ? SEVERITY_COLOR[severity] : "#86868f";
+  const color = severityLabel ? SEVERITY_STYLE[severityLabel].accent : severity ? SEVERITY_COLOR[severity] : "#86868f";
   return createPortal(
     <div
       className="pin-tooltip fixed z-[1000] -translate-x-1/2 -translate-y-full bg-white rounded-[12px] px-3 py-2 min-w-[160px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.12),0px_6px_20px_-4px_rgba(0,0,0,0.12)] font-['Outfit',sans-serif] animate-fade-in"
@@ -602,19 +808,33 @@ function PinTooltip({
           </svg>
         </button>
       </div>
-      <div className="text-[13px] font-bold text-[#18181c] mb-1 pr-10">{pin.id}</div>
+      <div className="text-[13px] font-bold text-[#18181c] mb-1 pr-10">{violationType ?? speciesLabel ?? pin.id}</div>
       <div className="flex items-center gap-[6px] mb-[6px]">
         <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
         <span className="text-[12px] font-medium" style={{ color }}>
-          {severity ? CONDITION_LABEL[severity] : "Not flagged"}
+          {severity ? conditionLabelFor(severity, !!isCropFarm) : "Not flagged"}
         </span>
       </div>
-      <div className="text-[12px] text-[#464650]">
-        Canopy loss: <strong>{pin.canopyLossByMonth[monthIndex] ?? 0}%</strong>
-      </div>
-      <div className="text-[11px] text-[#5b5b66] mt-[2px]">
-        Last surveyed {pin.monthLabels[monthIndex] ?? ""}
-      </div>
+      {violationType ? (
+        <>
+          <div className="text-[12px] text-[#464650]">
+            Confidence: <strong>{confidencePct ?? 0}%</strong>
+          </div>
+          <div className="text-[11px] text-[#5b5b66] mt-[2px]">
+            Detected{" "}
+            {dateDetected?.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) ?? "—"}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="text-[12px] text-[#464650]">
+            Canopy loss: <strong>{pin.canopyLossByMonth[monthIndex] ?? 0}%</strong>
+          </div>
+          <div className="text-[11px] text-[#5b5b66] mt-[2px]">
+            Last surveyed {pin.monthLabels[monthIndex] ?? ""}
+          </div>
+        </>
+      )}
       {/* Pointer tail, mirrors the old popup's tip. */}
       <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px w-2 h-2 bg-white border-r border-b border-[#dedee3] rotate-45" />
     </div>,
@@ -658,6 +878,12 @@ export default function MapCanvas({
   storyView,
   chrome = true,
   skipAutoFit = false,
+  violationEntries,
+  findingOutcomes,
+  onSetFindingOutcome,
+  onRequestHiRes,
+  fieldFocusRequest,
+  resetViewRequest,
 }: {
   center: [number, number];
   zoom?: number;
@@ -717,7 +943,19 @@ export default function MapCanvas({
    * the spot — the ring matters because healthy trees carry no pin, so without
    * it selecting one would just zoom into anonymous imagery.
    */
-  focusTree?: { id: string; lng: number; lat: number } | null;
+  focusTree?: {
+    id: string;
+    lng: number;
+    lat: number;
+    /** The specific finding clicked, when this focus came from a Recent
+     *  Events row rather than a plain table/pin selection — a tree can carry
+     *  more than one compliance finding over time, and without this the
+     *  record shown always defaulted to that tree's *latest* one (see
+     *  `violationByTreeId`), silently substituting a different finding than
+     *  the one actually clicked whenever an older notification shared a
+     *  tree with a newer one. */
+    eventId?: string;
+  } | null;
   /**
    * A tree whose digital twin is open. Isolates the twin layer, drops the
    * camera to eye level beside that tree and shows its full record — a
@@ -779,6 +1017,40 @@ export default function MapCanvas({
    * its own sidebar and tool strip from the Figma design and would otherwise
    * stack two competing sets of map chrome on top of each other. */
   chrome?: boolean;
+  /**
+   * Every compliance violation ever logged for this area (all months, not
+   * range-filtered) — Liwa Oasis only. Lets a clicked pin that happens to be
+   * the exact tree a past compliance finding was logged against expand into
+   * `ViolationRecordModal` (satellite crop + real baseline/detected condition
+   * + this field's own flag history) instead of the generic tree scorecard.
+   * Omitted everywhere else, where there's no compliance record to correlate.
+   */
+  violationEntries?: TriageEntry[];
+  /** Every finding's accept/dismiss/hi-res decision, keyed by `TreeEvent.id`
+   *  — shared with the ranked worklist's own copy of the same finding (see
+   *  AssetsView's `findingOutcomes`), so setting it from a map pin's
+   *  expanded record and from the worklist stay in sync. */
+  findingOutcomes?: Map<string, FindingOutcome>;
+  onSetFindingOutcome?: (eventId: string, outcome: FindingOutcome | null) => void;
+  /** Opens the evidence pack for a violation record's own "Request a
+   *  higher-resolution look" button — see AssetsView's `evidencePackEntry`. */
+  onRequestHiRes?: (entry: TriageEntry) => void;
+  /** A field band to fly the camera to and outline — see AssetsView's
+   *  `focusField`. `fieldIndex` draws the real ground quad that band covers
+   *  (see `fieldBoundsUV`); `lng`/`lat` (the band's own midpoint) are the
+   *  fallback centre if the overlay's own coordinates aren't available yet.
+   *  Bumped by its own `nonce` so re-requesting the same field still
+   *  re-triggers the flight. Kept separate from `focusTree`: a field has no
+   *  single tree/pin to ring or open a tooltip for, just a place — and now a
+   *  boundary — on the map to look at. */
+  fieldFocusRequest?: { fieldIndex: number; lng: number; lat: number; nonce: number } | null;
+  /** Bumped (any changing number) to close whatever pin popover/modal is open
+   *  and fly the camera back to this area's own default `center`/`zoom` —
+   *  what "Push to inspection system" resolves to, so finishing that flow
+   *  doesn't leave the reader zoomed into one tree with a modal still open.
+   *  A nonce rather than a boolean so the same reset can be requested twice
+   *  in a row. */
+  resetViewRequest?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -786,8 +1058,18 @@ export default function MapCanvas({
   // state: rebuilding it doesn't need a re-render, only the separate
   // range-visibility effect (below) reading it does.
   const pinsRef = useRef<{ pin: TreePin; marker: maplibregl.Marker }[]>([]);
+  // The violation entries the pin-area plaza was last built from — read back
+  // by its own animation loop every frame to regenerate the shimmering top
+  // band without that effect needing `violationByTreeId` in its own deps.
+  const cropEntriesRef = useRef<TriageEntry[]>([]);
   // The ring drawn over a tree selected in the Assets table.
   const focusMarkerRef = useRef<maplibregl.Marker | null>(null);
+  // The specific finding a Recent Events click asked for (see `focusTree`'s
+  // own `eventId` comment) — read once, at render, by whichever branch opens
+  // `ViolationRecordModal` for the now-active pin. Cleared by a direct pin
+  // click below, which has no particular finding in mind and should fall
+  // back to that tree's latest one same as always.
+  const preferredEventIdRef = useRef<string | null>(null);
   // Which of the two aerial-overlay slots (OVERLAY_*_ID_A/B) is currently
   // showing, and what the previous overlay prop was -- used to tell a hard
   // switch (new area/coordinates: reset outright) from a soft one (same area,
@@ -893,10 +1175,51 @@ export default function MapCanvas({
   // marker click handlers are bound once when the pool is built and would
   // otherwise close over a stale month for the rest of the session.
   const displayMonthRef = useRef(0);
+  // Last `visibleTreeIds` the pin-visibility effect saw, so it can tell a
+  // filter change (stagger the pins) from a timeline change (don't) — see
+  // that effect's own note.
+  const prevVisibleTreeIdsRef = useRef<Set<string> | undefined>(undefined);
   // The panel's strips need month labels, and MapCanvas holds snapshots rather
   // than labels — memoized so the chips' own coverage memo isn't invalidated by
   // a fresh array on every render.
   const monthLabelsForPanel = useMemo(() => snapshots.map((s) => s.label), [snapshots]);
+  // A clicked pin's tree id → the one compliance violation actually logged
+  // against that exact tree, if any. Most flagged pins have none (a pin marks
+  // every condition-flagged tree; only some were the specific tree a
+  // compliance scan picked that month) — those keep the generic scorecard.
+  // Sorted oldest-first before folding into the map so the most recent
+  // finding on a tree wins a rare same-tree repeat, matching what "the
+  // current record for this tree" should mean.
+  const violationByTreeId = useMemo(() => {
+    if (!violationEntries) return undefined;
+    const sorted = [...violationEntries].sort((a, b) => a.dateDetected.getTime() - b.dateDetected.getTime());
+    const map = new Map<string, TriageEntry>();
+    for (const entry of sorted) map.set(entry.event.tree.id, entry);
+    return map;
+  }, [violationEntries]);
+  // Every finding, keyed by its own event id rather than folded down to one
+  // per tree — `focusTree.eventId` (see that prop's own comment) looks the
+  // exact clicked finding up here first, so an older notification that
+  // happens to share a tree with a newer one still opens its own record
+  // rather than `violationByTreeId`'s "latest for this tree" pick.
+  const violationByEventId = useMemo(() => {
+    if (!violationEntries) return undefined;
+    return new Map(violationEntries.map((entry) => [entry.event.id, entry]));
+  }, [violationEntries]);
+  // Every violation on record for a given field, newest first — the "farm's
+  // flag history" `ViolationRecordModal` shows so a reader can judge a
+  // one-off flag against a recurring pattern in that same block.
+  const violationsByField = useMemo(() => {
+    if (!violationEntries) return undefined;
+    const map = new Map<string, TriageEntry[]>();
+    for (const entry of violationEntries) {
+      const list = map.get(entry.field) ?? [];
+      list.push(entry);
+      map.set(entry.field, list);
+    }
+    for (const list of map.values()) list.sort((a, b) => b.dateDetected.getTime() - a.dateDetected.getTime());
+    return map;
+  }, [violationEntries]);
   // Whether the open pin popover is showing its full history form instead of
   // the compact tooltip — toggled by the expand/collapse affordances on each,
   // not a state of its own separate from `activePin`.
@@ -998,6 +1321,14 @@ export default function MapCanvas({
       if (cancelled) return;
       const m = mapRef.current;
       if (!m) return;
+      // React StrictMode's dev-only double-invoke can leave `isFirstBasemapRef`
+      // out of sync with which map instance is actually live, letting this
+      // handler run a second time against a style it already populated —
+      // MapLibre throws "Source ... already exists" from inside its own
+      // render loop on the second addSource, which broke rendering entirely
+      // (the reported map going blank/dead). Every add below is guarded the
+      // same way for the same reason.
+      if (m.getSource(TERRAIN_SOURCE_ID)) return;
 
       m.addSource(TERRAIN_SOURCE_ID, {
         type: "raster-dem",
@@ -1023,7 +1354,7 @@ export default function MapCanvas({
         });
       }
 
-      if (overlay) {
+      if (overlay && !overlay.hidden) {
         m.addSource(OVERLAY_SOURCE_ID_A, { type: "image", url: overlay.url, coordinates: overlay.coordinates });
         m.addLayer({
           id: OVERLAY_LAYER_ID_A,
@@ -1037,8 +1368,10 @@ export default function MapCanvas({
 
       // The canopy mask is Al Maha's own crown artwork, drawn in the shared
       // drone frame's image space — see areaHasOwnImagery for why an area with
-      // its own captures must not have it draped over them.
-      if (overlay && canopyImageUrl && !areaHasOwnImagery(areaId ?? "")) {
+      // its own captures must not have it draped over them. `overlay.hidden`
+      // areas get the same exclusion for the same underlying reason: nothing
+      // about this artwork is really theirs either.
+      if (overlay && !overlay.hidden && canopyImageUrl && !areaHasOwnImagery(areaId ?? "")) {
         m.addSource(CANOPY_SOURCE_ID, { type: "image", url: canopyImageUrl, coordinates: overlay.coordinates });
         m.addLayer({
           id: CANOPY_LAYER_ID,
@@ -1219,13 +1552,24 @@ export default function MapCanvas({
         window.clearTimeout(timeoutId);
         setLoaded(true);
         setError(null);
-        map.addSource(TERRAIN_SOURCE_ID, {
-          type: "raster-dem",
-          tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-          tileSize: 256,
-          encoding: "terrarium",
-          maxzoom: 15,
-        });
+        // "load" isn't a one-shot: a fast resize (dragging the map/table
+        // split, for instance) can make MapLibre give up diffing the style
+        // and rebuild it from scratch instead — the console's own "Rebuilding
+        // the style from scratch" warning — which re-fires "load" on the same
+        // map instance. A second unconditional addSource here threw "Source
+        // already exists" *inside* MapLibre's render loop, an uncaught
+        // exception that broke rendering entirely — the reported "map dies"
+        // on resize. Guarding on `getSource` is what makes this handler safe
+        // to run more than once.
+        if (!map.getSource(TERRAIN_SOURCE_ID)) {
+          map.addSource(TERRAIN_SOURCE_ID, {
+            type: "raster-dem",
+            tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+            tileSize: 256,
+            encoding: "terrarium",
+            maxzoom: 15,
+          });
+        }
         map.resize();
       });
     }
@@ -1275,7 +1619,10 @@ export default function MapCanvas({
   const overlayCornersKey = overlay ? JSON.stringify(overlay.coordinates) : "";
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !loaded || !overlay) return;
+    // Hovering has nothing to report on a hidden overlay — there's no photo
+    // underneath the cursor to give a resolution reading for, only the live
+    // basemap.
+    if (!map || !loaded || !overlay || overlay.hidden) return;
     const corners = overlay.coordinates;
     const onMove = (e: maplibregl.MapMouseEvent) => {
       const { lng, lat } = e.lngLat;
@@ -1331,6 +1678,17 @@ export default function MapCanvas({
 
       if (!overlay) return;
 
+      // No image to preload or wait on — the ground box is already known
+      // (see `MapOverlay.hidden`), so readiness is immediate rather than
+      // gated behind a probe that would never fire for a URL never fetched.
+      // Everything downstream that gates on `overlayReady` (pins, auto-fit,
+      // the story camera) needs this to still flip true for a hidden overlay,
+      // or Liwa Oasis would silently lose its tree pins along with its photo.
+      if (overlay.hidden) {
+        setOverlayReady(true);
+        return;
+      }
+
       let cancelled = false;
       // Preload the file first: if it's missing, skip the overlay rather than
       // letting a 404 surface as a fatal map error and hide the whole basemap.
@@ -1364,7 +1722,7 @@ export default function MapCanvas({
     // wouldn't be worth re-running -- but the dependency array can't express
     // "only on url change" directly, so bail out cheaply if url is unchanged
     // (e.g. this ran again only because `loaded` or another dep ticked).
-    if (overlay.url === prev.url) return;
+    if (overlay.hidden || overlay.url === prev.url) return;
     prevOverlayRef.current = overlay;
 
     const outgoingSlot = activeOverlaySlotRef.current;
@@ -1800,7 +2158,7 @@ export default function MapCanvas({
 
     if (map.getLayer(CANOPY_LAYER_ID)) map.removeLayer(CANOPY_LAYER_ID);
     if (map.getSource(CANOPY_SOURCE_ID)) map.removeSource(CANOPY_SOURCE_ID);
-    if (!overlay || !canopyImageUrl || areaHasOwnImagery(areaId ?? "")) return;
+    if (!overlay || overlay.hidden || !canopyImageUrl || areaHasOwnImagery(areaId ?? "")) return;
 
     map.addSource(CANOPY_SOURCE_ID, { type: "image", url: canopyImageUrl, coordinates: overlay.coordinates });
     map.addLayer({
@@ -2456,7 +2814,47 @@ export default function MapCanvas({
       return;
     }
 
-    const pins = generateTreePins(overlay, areaId ?? "area", snapshots);
+    const allPins = generateTreePins(overlay, areaId ?? "area", snapshots);
+    // Liwa Oasis is a compliance map, not a habitat-monitoring one: a reader
+    // there wants one pin per actual finding, not ~97 condition-flagged trees
+    // most of which were never the subject of any scan. Every pin left on
+    // this map now correlates to a real notification (see `violationByTreeId`
+    // below), instead of a sea of generic health markers with a handful of
+    // real findings buried inside.
+    //
+    // `generateTreePins` only ever keeps a tree that reaches a *flagged*
+    // canopy condition at some point in the window — a compliance finding on
+    // an otherwise-healthy tree (an uncovered tank, a parked vehicle) was
+    // therefore dropped from the pool entirely, so clicking that notification
+    // flew the camera to an empty ring with no marker and no record to open.
+    // The fix is to backfill a real pin for every violation tree missing one,
+    // built from that exact tree's own record rather than inventing a new
+    // one — `severityByMonth` reads its genuine `conditionHistory` outright
+    // (not just the flagged bands `generateTreePins` keeps), since a
+    // violation pin's job is marking where a finding was logged, not
+    // reporting canopy stress; `canopyLossByMonth` repeats its one real
+    // current `canopyLossPct`, the only per-tree loss figure this app keeps.
+    let pins = allPins;
+    if (areaId === "liwa-oasis" && violationByTreeId) {
+      const flaggedPins = allPins.filter((pin) => violationByTreeId.has(pin.id));
+      const flaggedIds = new Set(flaggedPins.map((pin) => pin.id));
+      const backfilled: TreePin[] = [];
+      for (const [treeId, entry] of violationByTreeId) {
+        if (flaggedIds.has(treeId)) continue;
+        const tree = entry.event.tree;
+        backfilled.push({
+          id: tree.id,
+          lng: tree.lng,
+          lat: tree.lat,
+          u: tree.u,
+          v: tree.v,
+          severityByMonth: tree.conditionHistory,
+          canopyLossByMonth: tree.conditionHistory.map(() => tree.canopyLossPct),
+          monthLabels: monthLabelsForPanel,
+        });
+      }
+      pins = [...flaggedPins, ...backfilled];
+    }
     // Deterministic (seeded by areaId — see generateTreeRecords), so calling
     // it again here with the same arguments reproduces the exact same list
     // generateTreePins just filtered down, rather than diverging from it.
@@ -2479,6 +2877,9 @@ export default function MapCanvas({
         if (!point || !rect) return;
         setActivePin({ pin, monthIndex: displayMonthRef.current, x: rect.left + point.x, y: rect.top + point.y });
         setPinExpanded(false);
+        // A direct pin click, not a specific notification — falls back to
+        // this tree's latest finding same as ever (see `preferredEventIdRef`).
+        preferredEventIdRef.current = null;
         onPinClick?.(pin.id);
       });
       // Hover-only signal, separate from the click above — lets a caller
@@ -2537,7 +2938,165 @@ export default function MapCanvas({
       setActivePin(null);
       setPinExpanded(false);
     };
-  }, [overlay, overlayReady, loaded, areaId, snapshots]);
+  }, [overlay, overlayReady, loaded, areaId, snapshots, violationByTreeId, monthLabelsForPanel]);
+
+  // Draws every violation pin's own plaza as an abstract little 3D field: a
+  // dashed boundary at ground level (the same read as `field-highlight`'s own
+  // outline, just per-pin and always the finding's severity colour, and wide
+  // enough to hold the shape it frames) around a single organic mass standing
+  // in for the crop itself — not a real planting record (this app has none at
+  // pin scale), so its irregular silhouette and height are a stable, seeded
+  // "random" rather than invented real data, closer to how an uneven patch of
+  // field actually reads than a uniform box would. Colour still carries the
+  // actual meaning (severity); shape and height are texture. Only meaningful
+  // once the camera is actually pitched (see the visibility effect right below
+  // this one) — a fill-extrusion layer viewed perfectly flat from above is
+  // indistinguishable from a plain fill.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    if (!violationByTreeId || violationByTreeId.size === 0) {
+      cropEntriesRef.current = [];
+      if (map.getLayer(PIN_AREA_CROPS_TOP_LAYER_ID)) map.removeLayer(PIN_AREA_CROPS_TOP_LAYER_ID);
+      if (map.getLayer(PIN_AREA_CROPS_BASE_LAYER_ID)) map.removeLayer(PIN_AREA_CROPS_BASE_LAYER_ID);
+      if (map.getLayer(PIN_AREA_LINE_ID)) map.removeLayer(PIN_AREA_LINE_ID);
+      if (map.getSource(PIN_AREA_CROPS_SOURCE_ID)) map.removeSource(PIN_AREA_CROPS_SOURCE_ID);
+      if (map.getSource(PIN_AREA_SOURCE_ID)) map.removeSource(PIN_AREA_SOURCE_ID);
+      return;
+    }
+
+    // Narrowed by the same set that hides the pins, so a finding filtered out
+    // of the worklist doesn't leave its 3D plaza standing on the ground with
+    // no pin above it.
+    //
+    // Filtered HERE rather than by narrowing `violationByTreeId` upstream:
+    // that map is in the marker-pool build effect's deps (see its dep array),
+    // so changing it would tear down and re-add every marker on every chip
+    // click — which would both flash the map and destroy the staggered
+    // reveal the visibility effect above is doing. This effect only ever
+    // setData()s an existing source, so it is the cheap place to filter.
+    const entries = [...violationByTreeId.entries()]
+      .filter(([treeId]) => visibleTreeIds === undefined || visibleTreeIds.has(treeId))
+      .map(([, entry]) => entry);
+    cropEntriesRef.current = entries;
+
+    const boundaryFeatures = entries.map((entry) => ({
+      type: "Feature" as const,
+      properties: { color: SEVERITY_STYLE[entry.severityLabel].accent },
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [squareRingAround(entry.lng, entry.lat, PIN_AREA_FIELD_HALF_SIZE_M)],
+      },
+    }));
+    const boundaryGeojson = { type: "FeatureCollection" as const, features: boundaryFeatures };
+    const cropsGeojson = { type: "FeatureCollection" as const, features: buildCropFeatures(entries, 0) };
+
+    const existingBoundary = map.getSource(PIN_AREA_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const existingCrops = map.getSource(PIN_AREA_CROPS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (existingBoundary && existingCrops) {
+      existingBoundary.setData(boundaryGeojson);
+      existingCrops.setData(cropsGeojson);
+      return;
+    }
+
+    map.addSource(PIN_AREA_SOURCE_ID, { type: "geojson", data: boundaryGeojson });
+    map.addLayer({
+      id: PIN_AREA_LINE_ID,
+      type: "line",
+      source: PIN_AREA_SOURCE_ID,
+      layout: { visibility: is3DRef.current ? "visible" : "none" },
+      paint: { "line-color": ["get", "color"], "line-width": 2, "line-dasharray": [2, 1.4], "line-opacity": 0.85 },
+    });
+
+    // Two fill-extrusion layers reading the same source, filtered by each
+    // feature's own "band" — a darker base and a lighter top sharing one
+    // footprint is how a vertical colour gradient gets faked on a paint
+    // property (fill-extrusion-color) that only ever takes one colour per
+    // feature. See `buildCropFeatures` for where the two tones — and the
+    // top band's procedural shimmer — actually get computed.
+    map.addSource(PIN_AREA_CROPS_SOURCE_ID, { type: "geojson", data: cropsGeojson });
+    const sharedCropsPaint: maplibregl.FillExtrusionLayerSpecification["paint"] = {
+      "fill-extrusion-color": ["get", "color"],
+      "fill-extrusion-height": ["get", "height"],
+      "fill-extrusion-base": ["get", "base"],
+      "fill-extrusion-opacity": 0.88,
+      "fill-extrusion-opacity-transition": { duration: 300 },
+      // Shades each face darker toward its base and brighter toward its
+      // top on top of the two-tone gradient below — the built-in stand-in
+      // for real lighting on an extrusion. (fill-extrusion-opacity itself
+      // is constant-only in this MapLibre version — a data expression here
+      // throws and takes the whole map down, so this stays a plain number.)
+      "fill-extrusion-vertical-gradient": true,
+    };
+    map.addLayer({
+      id: PIN_AREA_CROPS_BASE_LAYER_ID,
+      type: "fill-extrusion",
+      source: PIN_AREA_CROPS_SOURCE_ID,
+      filter: ["==", ["get", "band"], "base"],
+      layout: { visibility: is3DRef.current ? "visible" : "none" },
+      paint: sharedCropsPaint,
+    });
+    map.addLayer({
+      id: PIN_AREA_CROPS_TOP_LAYER_ID,
+      type: "fill-extrusion",
+      source: PIN_AREA_CROPS_SOURCE_ID,
+      filter: ["==", ["get", "band"], "top"],
+      layout: { visibility: is3DRef.current ? "visible" : "none" },
+      paint: sharedCropsPaint,
+    });
+  }, [violationByTreeId, visibleTreeIds, loaded]);
+
+  // Ties the pin-area field's visibility to the 3D toggle — same on/off
+  // switch every other 3D-only layer here already follows.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    const visibility = is3D ? "visible" : "none";
+    if (map.getLayer(PIN_AREA_CROPS_BASE_LAYER_ID)) map.setLayoutProperty(PIN_AREA_CROPS_BASE_LAYER_ID, "visibility", visibility);
+    if (map.getLayer(PIN_AREA_CROPS_TOP_LAYER_ID)) map.setLayoutProperty(PIN_AREA_CROPS_TOP_LAYER_ID, "visibility", visibility);
+    if (map.getLayer(PIN_AREA_LINE_ID)) map.setLayoutProperty(PIN_AREA_LINE_ID, "visibility", visibility);
+  }, [is3D, loaded]);
+
+  // The plaza's own procedural "shader" touches, since none of this is a
+  // static paint value MapLibre can express on its own (there's no clock a
+  // paint expression can read): the boundary's dashes step through
+  // `PIN_AREA_FLOW_DASH_SEQUENCE` so the border reads as flowing rather than
+  // fixed, the mass's own opacity breathes on a slow sine, and — the one that
+  // actually needs regenerating the geometry, not just reassigning a paint
+  // value — the top band's own gradient colour drifts between its lit and
+  // glowing tone (see `buildCropFeatures`). All driven by one rAF loop, and
+  // all stopped whenever 3D is off, so nothing ticks for a pin no one is
+  // looking at.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !is3D) return;
+    let rafId: number;
+    let lastDashStep = -1;
+    const start = performance.now();
+    function tick(now: number) {
+      const step = Math.floor((now / 90) % PIN_AREA_FLOW_DASH_SEQUENCE.length);
+      if (step !== lastDashStep && map!.getLayer(PIN_AREA_LINE_ID)) {
+        lastDashStep = step;
+        map!.setPaintProperty(PIN_AREA_LINE_ID, "line-dasharray", PIN_AREA_FLOW_DASH_SEQUENCE[step]);
+      }
+      const elapsedSec = (now - start) / 1000;
+      if (map!.getLayer(PIN_AREA_CROPS_BASE_LAYER_ID)) {
+        const breathingOpacity = 0.78 + Math.sin(elapsedSec * 1.4) * 0.1;
+        map!.setPaintProperty(PIN_AREA_CROPS_BASE_LAYER_ID, "fill-extrusion-opacity", breathingOpacity);
+        map!.setPaintProperty(PIN_AREA_CROPS_TOP_LAYER_ID, "fill-extrusion-opacity", breathingOpacity);
+      }
+      const cropsSource = map!.getSource(PIN_AREA_CROPS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (cropsSource && cropEntriesRef.current.length > 0) {
+        cropsSource.setData({
+          type: "FeatureCollection",
+          features: buildCropFeatures(cropEntriesRef.current, elapsedSec),
+        });
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [is3D, loaded]);
 
   // Shows/hides pins to match the selected date range and, in the Assets view,
   // the table's active filters — this is what makes dragging the timeline or
@@ -2565,6 +3124,62 @@ export default function MapCanvas({
     );
     const visibleIds = new Set(visible.map(({ pin }) => pin.id));
 
+    // ---- Staggered reveal ------------------------------------------------
+    // A filter chip in the worklist can flip a dozen pins at once, and
+    // flipping them all on the same frame reads as a hard cut — the whole map
+    // changes state with no sense of what moved. Each pin that CHANGES this
+    // pass gets a transition-delay one beat after the last, so the change
+    // sweeps across the map instead of snapping.
+    //
+    // Ordered north-to-south by real latitude, not by pin id or DOM order:
+    // the sweep has to correspond to something the reader can actually see on
+    // the ground, and any other order reads as random flicker at this density.
+    //
+    // Entering runs north-to-south, leaving runs south-to-north (`reverse`),
+    // so a filter and its undo are mirror images rather than the same motion
+    // played twice — the detail that makes it read as authored.
+    //
+    // Only CHANGING pins take a beat. A pin already in its target state must
+    // not consume one, or revealing two pins out of forty would sit through a
+    // stagger counted for thirty-eight pins that never moved.
+    //
+    // SCOPED TO FILTER CHANGES ONLY. This effect also re-runs on every
+    // timeline frame (`range`/`pinsRange` are in its deps), and staggering
+    // there would be a regression, not a flourish: a drag would re-arm a
+    // ~350ms cascade on pins still mid-transition from the previous frame, so
+    // scrubbing would stutter and lag behind the handle. Keyed off
+    // `visibleTreeIds` IDENTITY — AssetsView memoises it, so it changes when a
+    // filter changes and holds steady while only the month moves. The first
+    // run counts as a change too, which gives the map a choreographed first
+    // entrance rather than a flat pop-in.
+    const filterChanged = prevVisibleTreeIdsRef.current !== visibleTreeIds;
+    prevVisibleTreeIdsRef.current = visibleTreeIds;
+
+    const isShown = (pin: TreePin) =>
+      pinSeverityAt(pin, month) !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id));
+    // Capped, the way the card list caps its own (`Math.min(i, 10) * 40`):
+    // uncapped, a 40-pin sweep at one beat each would run for nearly two
+    // seconds after a single click.
+    const STAGGER_STEP_MS = 45; // --stagger
+    const STAGGER_MAX_BEATS = 8;
+    // id -> delay, built once. A lookup per pin inside the loop below was
+    // indexOf over two arrays, which is O(n²) across the whole pool — fine
+    // at Liwa's handful of findings, wasteful at the several hundred pins
+    // other areas carry.
+    const delayById = new Map<string, number>();
+    if (filterChanged) {
+      const changing = pinsRef.current
+        .filter(({ pin, marker }) => marker.getElement().classList.contains("tree-pin--hidden") === isShown(pin))
+        .sort((a, b) => b.pin.lat - a.pin.lat);
+      const entering = changing.filter(({ pin }) => isShown(pin));
+      const leaving = changing.filter(({ pin }) => !isShown(pin)).reverse();
+      for (const group of [entering, leaving]) {
+        group.forEach(({ pin }, i) => {
+          delayById.set(pin.id, Math.min(i, STAGGER_MAX_BEATS) * STAGGER_STEP_MS);
+        });
+      }
+    }
+
     // One marker per tree, repainted for the month on screen: show it only if
     // this tree is flagged that month, and give it that month's colour. This is
     // why the pool doesn't need a marker per (tree, month) — swapping a CSS
@@ -2573,10 +3188,35 @@ export default function MapCanvas({
       const severity = pinSeverityAt(pin, month);
       const el = marker.getElement();
       const show = severity !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id));
+      // Delay goes on the root (which transitions `opacity`) AND on the two
+      // inner elements that carry the scale, because transition-delay does
+      // not inherit — left off the children, a pin would pop to full size
+      // while still transparent and then fade in already-scaled, losing the
+      // pop entirely. `transition-delay` is safe on the root in a way
+      // `transform`/`animation` are not: MapLibre owns `transform` there
+      // (see index.css:228-250) but never touches timing.
+      const delayMs = delayById.get(pin.id) ?? 0;
+      // Always written, never only when non-zero — a delay left over from the
+      // previous filter change would otherwise stick to the element and hold
+      // up a later, un-staggered update.
+      const delay = delayMs ? `${delayMs}ms` : "";
+      el.style.transitionDelay = delay;
+      el.querySelectorAll<HTMLElement>(".tree-pin__body, .tree-pin__blob").forEach((inner) => {
+        inner.style.transitionDelay = delay;
+      });
       el.classList.toggle("tree-pin--hidden", !show);
       if (severity) {
-        el.style.setProperty("--pin-color", SEVERITY_COLOR[severity]);
-        el.setAttribute("aria-label", `${CONDITION_LABEL[severity]} tree ${pin.id}`);
+        // A compliance finding's own pin reads by its finding's severity
+        // (CRITICAL/WARNING/INFO) — the same scale its card, chip and 3D
+        // plaza already use — not the canopy-condition colour every other
+        // pin on this map still uses, which is a different scale and would
+        // disagree with the rest of that finding's own UI.
+        const violation = violationByTreeId?.get(pin.id);
+        el.style.setProperty("--pin-color", violation ? SEVERITY_STYLE[violation.severityLabel].accent : SEVERITY_COLOR[severity]);
+        el.setAttribute(
+          "aria-label",
+          violation ? `${violation.severityLabel} finding — ${violation.violationType}` : `${CONDITION_LABEL[severity]} tree ${pin.id}`,
+        );
       }
     });
 
@@ -2590,7 +3230,7 @@ export default function MapCanvas({
 
     // A pin that just faded out of range shouldn't leave its tooltip dangling.
     setActivePin((prev) => (prev && !visibleIds.has(prev.pin.id) ? null : prev));
-  }, [overlay, overlayReady, loaded, areaId, snapshots, range, pinsRange, visibleTreeIds]);
+  }, [overlay, overlayReady, loaded, areaId, snapshots, range, pinsRange, visibleTreeIds, violationByTreeId]);
 
   // Flies to the tree selected in the Assets table and rings it. Runs after the
   // visibility effect above so that, for a flagged tree, the marker it wants to
@@ -2609,7 +3249,40 @@ export default function MapCanvas({
       .setLngLat([focusTree.lng, focusTree.lat])
       .addTo(map);
 
-    map.flyTo({ center: [focusTree.lng, focusTree.lat], zoom: FOCUS_ZOOM, duration: 1100, essential: true });
+    // A two-act flight rather than one flat flyTo: pull back to an oblique
+    // establishing angle first (reusing the same pitch/bearing pairing
+    // `STORY_FRAMES.canopy` already uses elsewhere — "a tilt with the north
+    // axis still square on reads as a photo that has been skewed rather than
+    // a place being looked at from somewhere", see that constant's own
+    // comment), then dive down to a flat, level lock on the pin. The
+    // establishing shot is what gives the move a sense of arriving *from*
+    // somewhere; landing level keeps the actual working view exactly the
+    // plain top-down framing every pin click/tooltip already assumes.
+    let cancelled = false;
+    const establishZoom = Math.max(FOCUS_ZOOM - 4.2, 12);
+    map.flyTo({
+      center: [focusTree.lng, focusTree.lat],
+      zoom: establishZoom,
+      pitch: 46,
+      bearing: -18,
+      duration: 620,
+      curve: 1.25,
+      essential: true,
+    });
+    function diveIn() {
+      if (cancelled) return;
+      map!.once("moveend", revealTooltip);
+      map!.flyTo({
+        center: [focusTree!.lng, focusTree!.lat],
+        zoom: FOCUS_ZOOM,
+        pitch: 0,
+        bearing: 0,
+        duration: 950,
+        curve: 1.42,
+        essential: true,
+      });
+    }
+    map.once("moveend", diveIn);
 
     function focusScreenPos(): { x: number; y: number } {
       // Non-null: this closure only runs while the effect's own `!map` guard
@@ -2630,18 +3303,27 @@ export default function MapCanvas({
     // underneath it too meant both were open at once — this tooltip is that
     // caller's fallback for when it doesn't have a bigger one of its own.
     function revealTooltip() {
+      element.classList.add("tree-focus--locked");
+      preferredEventIdRef.current = focusTree?.eventId ?? null;
       if (!onFocusArrived) {
         const found = pinsRef.current.find(({ pin }) => pin.id === focusTree?.id);
         if (found && map) {
           const rect = map.getContainer().getBoundingClientRect();
           const point = map.project([found.pin.lng, found.pin.lat]);
           setActivePin({ pin: found.pin, monthIndex: displayMonthRef.current, x: rect.left + point.x, y: rect.top + point.y });
-          setPinExpanded(false);
+          // A tree flown to from a clicked notification — rather than a
+          // plain table/pin selection — already has a specific finding
+          // behind it whenever that finding is a logged compliance
+          // violation. Opening straight to the full record (the same
+          // `tree-modal` shell `ViolationRecordModal` shares with
+          // `TreeHistoryModal`) is the "drill into the notification" a
+          // reader asked for; the compact tooltip is for a plain pin click
+          // that has no specific finding to jump straight to.
+          setPinExpanded(!!violationByTreeId?.get(found.pin.id));
         }
       }
       onFocusArrived?.(focusScreenPos());
     }
-    map.once("moveend", revealTooltip);
 
     // Keeps a caller's popover glued to this tree's screen position through
     // subsequent pan/zoom/rotate — the same discipline as the pin tooltip's
@@ -2653,10 +3335,82 @@ export default function MapCanvas({
     map.on("move", handleMove);
 
     return () => {
+      cancelled = true;
+      map.off("moveend", diveIn);
       map.off("moveend", revealTooltip);
       map.off("move", handleMove);
     };
   }, [focusTree, loaded]);
+
+  // Flies to a field band and draws its real ground quad — not a tree
+  // selection (no ring, no tooltip, since there is no single tree this is
+  // "about"), and not a plain fixed-zoom fly-to either: `fitBounds` on the
+  // field's own four corners (see `fieldBoundsUV`) frames exactly that
+  // band's real extent, however wide or narrow it actually is, the same
+  // real u/v→lat/lng projection every tree and pin in this app is already
+  // placed with — rather than a guessed zoom level that overshoots a
+  // narrow field or undershoots a wide one. Keyed on the request's own
+  // `nonce` (not just its fieldIndex) so clicking the same field chip twice
+  // in a row still re-triggers the flight.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !fieldFocusRequest) return;
+    if (!overlay) return;
+    const corners = fieldBoundsUV(fieldFocusRequest.fieldIndex).map(
+      ([u, v]) => pointInQuad(overlay.coordinates, u, v) as [number, number],
+    );
+    const lngs = corners.map((c) => c[0]);
+    const lats = corners.map((c) => c[1]);
+    const bounds: [[number, number], [number, number]] = [
+      [Math.min(...lngs), Math.min(...lats)],
+      [Math.max(...lngs), Math.max(...lats)],
+    ];
+    map.fitBounds(bounds, { padding: 56, duration: 900, essential: true });
+
+    const geojson = {
+      type: "Feature" as const,
+      properties: {},
+      geometry: { type: "Polygon" as const, coordinates: [[...corners, corners[0]]] },
+    };
+    const existingSource = map.getSource(FIELD_HIGHLIGHT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (existingSource) {
+      existingSource.setData(geojson);
+    } else {
+      map.addSource(FIELD_HIGHLIGHT_SOURCE_ID, { type: "geojson", data: geojson });
+      map.addLayer({
+        id: FIELD_HIGHLIGHT_FILL_ID,
+        type: "fill",
+        source: FIELD_HIGHLIGHT_SOURCE_ID,
+        paint: { "fill-color": "#096151", "fill-opacity": 0.14, "fill-opacity-transition": { duration: 300 } },
+      });
+      map.addLayer({
+        id: FIELD_HIGHLIGHT_LINE_ID,
+        type: "line",
+        source: FIELD_HIGHLIGHT_SOURCE_ID,
+        paint: { "line-color": "#096151", "line-width": 2.5, "line-dasharray": [2, 1.4] },
+      });
+    }
+    // fieldFocusRequest.nonce is what actually varies per request; the rest
+    // are derived from it, so keying on the whole object (or omitting nonce)
+    // would either re-run needlessly or miss a repeat click on the same field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldFocusRequest?.nonce, loaded, overlay]);
+
+  // Closes any open pin popover/modal and flies back to the area's own
+  // starting view — see `resetViewRequest`'s own comment.
+  useEffect(() => {
+    if (resetViewRequest === undefined) return;
+    setActivePin(null);
+    setPinExpanded(false);
+    const map = mapRef.current;
+    if (!map) return;
+    map.flyTo({ center, zoom, duration: 900, essential: true });
+    // Only the bump itself should re-trigger this — `center`/`zoom` are read
+    // fresh from the closure each time, not tracked as deps, so this doesn't
+    // also fire (and interrupt whatever the reader is doing) whenever the
+    // area's own defaults happen to re-render with the same values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetViewRequest]);
 
   // Reprojects `overlay`'s four ground corners to on-screen pixels for
   // `onOverlayQuadChange` — the same project()-plus-container-rect math every
@@ -3048,10 +3802,41 @@ export default function MapCanvas({
           per the reference it was supplied for. A reference key, not a claim
           that this map's own layers are classified into these exact codes. */}
       {chrome && loaded && !error && areaId === "al-maha" && <HabitatLegend />}
+      {chrome && loaded && !error && areaId === "liwa-oasis" && <ComplianceLegend />}
 
       {activePin &&
         (() => {
           const record = treeRecordsRef.current.get(activePin.pin.id);
+          // The exact finding a Recent Events click asked for, when it asked
+          // for one — falls back to this tree's latest finding for a plain
+          // pin click (see `preferredEventIdRef`'s own comment).
+          const violation =
+            (preferredEventIdRef.current && violationByEventId?.get(preferredEventIdRef.current)) ||
+            violationByTreeId?.get(activePin.pin.id);
+          if (pinExpanded && violation) {
+            // This exact tree has a compliance finding on record — the
+            // crop-correlated read (satellite crop, baseline vs detected
+            // condition, this field's own flag history) rather than the
+            // generic forest scorecard, which has nothing to say about a
+            // farm violation.
+            return (
+              <ViolationRecordModal
+                entry={violation}
+                fieldHistory={violationsByField?.get(violation.field) ?? [violation]}
+                monthLabels={monthLabelsForPanel}
+                anchor={{ x: activePin.x, y: activePin.y }}
+                onClose={() => {
+                  setActivePin(null);
+                  setPinExpanded(false);
+                }}
+                onCollapse={() => setPinExpanded(false)}
+                onFlyToPin={() => mapRef.current?.flyTo({ center: [violation.lng, violation.lat], zoom: 17, duration: 800 })}
+                outcome={findingOutcomes?.get(violation.event.id) ?? null}
+                onSetOutcome={(id, o) => onSetFindingOutcome?.(id, o)}
+                onRequestHiRes={(e) => onRequestHiRes?.(e)}
+              />
+            );
+          }
           if (pinExpanded && record) {
             return (
               <TreeHistoryModal
@@ -3063,6 +3848,7 @@ export default function MapCanvas({
                 }}
                 onCollapse={() => setPinExpanded(false)}
                 onFlyToPin={() => mapRef.current?.flyTo({ center: [record.lng, record.lat], zoom: 17, duration: 800 })}
+                isCropFarm={areaId === "liwa-oasis"}
               />
             );
           }
@@ -3071,6 +3857,12 @@ export default function MapCanvas({
               state={activePin}
               onClose={() => setActivePin(null)}
               onExpand={record ? () => setPinExpanded(true) : undefined}
+              violationType={violation?.violationType}
+              speciesLabel={record?.species}
+              isCropFarm={areaId === "liwa-oasis"}
+              confidencePct={violation?.confidencePct}
+              dateDetected={violation?.dateDetected}
+              severityLabel={violation?.severityLabel}
             />
           );
         })()}

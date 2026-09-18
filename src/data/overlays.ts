@@ -15,6 +15,13 @@ export interface MapOverlay {
    */
   coordinates: [[number, number], [number, number], [number, number], [number, number]];
   opacity?: number;
+  /** True for a plot with no real aerial capture of its own AND no honest
+   *  photo to re-georeference onto it either — see `NO_AERIAL_OVERLAY_AREAS`.
+   *  `coordinates` stays populated (tree pins, canopy health and every other
+   *  ground-footprint calculation still need the real box), only the raster
+   *  *image* is skipped, so the reader sees the live Esri satellite basemap
+   *  underneath instead of a photo of a different plot pasted over it. */
+  hidden?: boolean;
 }
 
 /**
@@ -159,6 +166,22 @@ export function areaHasOwnImagery(areaId: string): boolean {
   return areaId in AREA_BASE_IMAGE;
 }
 
+/**
+ * Areas that get NEITHER an own capture NOR the shared drone plate — the
+ * generic fallback every other pilot plot without its own imagery still
+ * gets (see `areaOverlays` below). Liwa Oasis is a real agricultural site
+ * hundreds of kilometres from Al Maha's actual footprint; pasting that
+ * drone photo over it would be exactly the kind of "photo of a different
+ * place" this app otherwise refuses to paper over its own gaps with. The
+ * live Esri World Imagery basemap underneath is the honest answer here —
+ * real satellite coverage of the real location, not a re-georeferenced
+ * stand-in.
+ *
+ * `areaOverlays` still gives this area a real `coordinates` box (see
+ * `MapOverlay.hidden`'s own comment) — only the raster paint is skipped.
+ */
+const NO_AERIAL_OVERLAY_AREAS = new Set(["liwa-oasis"]);
+
 export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
   areas.map((area) => {
     const own = AREA_BASE_IMAGE[area.id];
@@ -168,6 +191,7 @@ export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
         url: publicUrl(own?.url ?? "/overlays/al-maha-aerial.png"),
         coordinates: boxAround(area.center, PLOT_WIDTH_M[area.id] ?? 1200, own?.aspect ?? AERIAL_ASPECT),
         opacity: 1,
+        hidden: NO_AERIAL_OVERLAY_AREAS.has(area.id),
       } satisfies MapOverlay,
     ];
   }),

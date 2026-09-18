@@ -10,6 +10,17 @@ export interface Area {
    *  (Maps: 12.5, Assets: 11.5, Story: 12.5) — for the rare area that wants a
    *  different starting camera distance than every other area shares. */
   zoom?: number;
+  /** Suggests a starting basemap (index into `MapCanvas`'s `BASEMAPS`, 0 =
+   *  OpenStreetMap, 1 = Esri World Imagery) the first time this area becomes
+   *  active. A suggestion, not a lock — `basemapIndex` stays the one shared,
+   *  reader-driven preference every tab and area already agrees to honour
+   *  (see App.tsx), so switching away and back to a plain area never resets
+   *  a choice the reader made. Liwa Oasis is the one area with no drone-photo
+   *  overlay of its own (see `overlays.ts`'s `NO_AERIAL_OVERLAY_AREAS`), so
+   *  OpenStreetMap's plain road-map styling would otherwise be the first
+   *  thing a reader sees under an empty plot — Esri's real satellite imagery
+   *  is what actually shows the ground there. */
+  defaultBasemapIndex?: number;
   snapshots: MonthSnapshot[];
 }
 
@@ -63,5 +74,19 @@ export const areas: Area[] = [
     // The island's own position, west of Abu Dhabi.
     center: [53.8272, 24.2069],
     snapshots: generateMonthlySnapshots(1.1, "abu-al-abyad"),
+  },
+  {
+    // The one agricultural site on the programme — a working date-palm
+    // orchard, not a habitat-restoration plot, which is why it gets its own
+    // project grouping rather than joining "Al Maha Forest (Pilot)" above.
+    // Its Recent Events feed reads as farm-management notices (irrigation,
+    // pests, harvest) instead of habitat-change copy — see `isCropFarm` and
+    // `generateCropEvents` in events.ts for why that split exists.
+    id: "liwa-oasis",
+    name: "Liwa Oasis Date Farm",
+    projectName: "Liwa Oasis Farms (Pilot)",
+    center: [54.71275799623225, 24.505954381777737],
+    defaultBasemapIndex: 1, // Esri World Imagery — see the field's own comment.
+    snapshots: generateMonthlySnapshots(0.8, "liwa-oasis"),
   },
 ];

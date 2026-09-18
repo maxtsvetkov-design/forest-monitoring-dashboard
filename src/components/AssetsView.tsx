@@ -8,9 +8,15 @@ import {
   areaOverlays,
   dyingTreeOverlayForRange,
   getTimelapseImages,
+  pointInQuad,
   timelapseBucketIndex,
 } from "../data/overlays";
 import { generateTreeRecordsAt } from "../data/trees";
+import { isFlaggedCondition } from "../data/taxonomy";
+import { FIELD_LETTERS, fieldCenterUV } from "../data/farmFields";
+import EvidencePackModal from "./EvidencePackModal";
+import ManagerContactToast from "./ManagerContactToast";
+import InProgressList from "./InProgressList";
 import { clamp, useDragResize } from "../hooks/useDragResize";
 import { applyPendingFilter, useTreeFilters, type PendingAssetFilter } from "../hooks/useTreeFilters";
 import type { ContentLayerId } from "./LayerPanel";
@@ -19,8 +25,13 @@ import type { LayerTime } from "../hooks/useLayerTime";
 import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
 import CrabPloverTable from "./CrabPloverTable";
+import CropFieldsTable from "./CropFieldsTable";
+import InspectionTriageList from "./InspectionTriageList";
+import { buildTriageEntries, type TriageEntry } from "../data/inspectionTriage";
+import type { FindingOutcome } from "../data/findingOutcome";
 import AreaImageStage from "./AreaImageStage";
 import { getCrabPlovers, hasCrabPloverCensus } from "../data/crabPlovers";
+import { isCropFarm } from "../data/events";
 import TreeTable from "./TreeTable";
 import { CONTENT_HEIGHT_CLASS } from "../layout";
 
@@ -29,17 +40,29 @@ import { CONTENT_HEIGHT_CLASS } from "../layout";
 // exact same height or the divider stops lining up with its neighbours.
 const AREAS_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[400px]`;
 
-type RightPanel = "table" | "events";
+type RightPanel = "table" | "events" | "inProgress";
 
 /** The switch's own labels. The first one names whatever the site is actually
  *  surveyed for — "Trees table" on a planted plot, the species on a site with
  *  its own census — because a tab reading "Trees" over a list of shorebirds is
  *  the label lying about its contents. */
-function rightPanelOptions(tableLabel: string): { key: RightPanel; label: string }[] {
-  return [
-    { key: "table", label: tableLabel },
-    { key: "events", label: "Recent events" },
-  ];
+function rightPanelOptions(
+  tableLabel: string,
+  eventsFirst: boolean,
+  inProgressCount: number | null,
+): { key: RightPanel; label: string }[] {
+  const table = { key: "table" as const, label: tableLabel };
+  const events = { key: "events" as const, label: "Recent events" };
+  // Liwa Oasis leads with Recent events rather than the table — a farm's
+  // compliance notifications are the thing an inspector opens this tab to
+  // check first, the fields list is the reference beside it.
+  const base = eventsFirst ? [events, table] : [table, events];
+  // Only a compliance-tracking farm has anything to push to an inspection
+  // system in the first place — `inProgressCount` is null everywhere else,
+  // and null (not 0) is what tells this apart from "Liwa with nothing
+  // in progress right now", which still gets the tab.
+  if (inProgressCount === null) return base;
+  return [...base, { key: "inProgress" as const, label: `In progress (${inProgressCount})` }];
 }
 
 /** Small segmented control — the right pane's own view switch, distinct
@@ -52,13 +75,19 @@ function RightPanelSwitcher({
   value,
   onChange,
   tableLabel,
+  eventsFirst = false,
+  inProgressCount = null,
 }: {
   value: RightPanel;
   onChange: (v: RightPanel) => void;
   tableLabel: string;
+  eventsFirst?: boolean;
+  /** Adds the "In progress" tab when not null — see `rightPanelOptions`'s
+   *  own comment on why null (not 0) is what gates it. */
+  inProgressCount?: number | null;
 }) {
   const { trackRef, setItemRef, pill, ready, morphing } = useSlidingPill(value);
-  const options = rightPanelOptions(tableLabel);
+  const options = rightPanelOptions(tableLabel, eventsFirst, inProgressCount);
   return (
     <div ref={trackRef} className="seg-track relative shrink-0">
       <div
@@ -177,7 +206,85 @@ export default function AssetsView({
   const areaEvents = useMemo(() => generateEvents(baseOverlay, area.snapshots, area.id), [baseOverlay, area.snapshots, area.id]);
   const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
 
-  const [rightPanel, setRightPanel] = useState<RightPanel>("table");
+  // Every compliance violation ever logged for this farm, all months — not
+  // range-filtered like `visibleEvents` — so a pin's expanded record can show
+  // its field's full flag history rather than only whatever's in the current
+  // date-range selection. Liwa Oasis only; `undefined` elsewhere so MapCanvas
+  // falls back to its generic tree-history modal.
+  const violationEntries = useMemo(
+    () => (isCropFarm(area.id) ? buildTriageEntries(areaEvents) : undefined),
+    [area.id, areaEvents],
+  );
+
+  // Every finding's accept/dismiss/hi-res decision, keyed by the underlying
+  // TreeEvent id — held here rather than inside InspectionTriageList or
+  // MapCanvas because the same finding shows up in both (the worklist and a
+  // clicked map pin's expanded record), and a decision made from either one
+  // should show up in the other rather than each keeping its own answer.
+  const [findingOutcomes, setFindingOutcomes] = useState<Map<string, FindingOutcome>>(new Map());
+  function setFindingOutcome(eventId: string, outcome: FindingOutcome | null) {
+    setFindingOutcomes((prev) => {
+      const next = new Map(prev);
+      if (outcome === null) next.delete(eventId);
+      else next.set(eventId, outcome);
+      return next;
+    });
+  }
+
+  // Every finding currently sitting with the (mocked) inspection system —
+  // the "In progress" tab's own worklist, kept separate from the ranked one
+  // above rather than a filter toggle on it, since deciding what to do with
+  // a pushed finding (close it out, or take it back) is a different job
+  // than triaging a fresh one. `null`, not `[]`, on a non-crop-farm area —
+  // see `rightPanelOptions`'s own comment on why that distinction matters.
+  const inProgressEntries = useMemo(() => {
+    if (!violationEntries) return null;
+    return violationEntries.filter((entry) => findingOutcomes.get(entry.event.id) === "hi_res");
+  }, [violationEntries, findingOutcomes]);
+
+  // "Export to inspection system" doesn't set its outcome directly —
+  // it opens the evidence pack first (see EvidencePackModal), and only
+  // pushing that pack to the inspection system actually moves the finding to
+  // "in progress". Held as the one open finding rather than a boolean: which
+  // finding's pack is showing is exactly what the modal needs to render.
+  const [evidencePackEntry, setEvidencePackEntry] = useState<TriageEntry | null>(null);
+
+  // Bumped once the evidence pack is actually pushed — closes the map's own
+  // pin popover/modal and flies back to the area's default view, so finishing
+  // that flow doesn't leave the reader zoomed into one tree with a modal
+  // still open behind the pack that just closed.
+  const [resetViewNonce, setResetViewNonce] = useState<number | undefined>(undefined);
+
+  // The one confirmation a push to the (mocked) inspection system gets —
+  // same floating-toast shape TierComparisonModal/DenseCoverageModal already
+  // use for "we heard you", not a second toast component for the same job.
+  const [pushedToast, setPushedToast] = useState<TriageEntry | null>(null);
+
+  // Real ground centre of a field band — the same u/v→lat/lng projection
+  // every tree in this app is placed with (`pointInQuad`), evaluated at that
+  // band's own midpoint (`fieldCenterUV`) rather than a fabricated point, so
+  // "zoom to Field B" lands exactly where Field B's own trees actually sit.
+  const [fieldFocusRequest, setFieldFocusRequest] = useState<{
+    fieldIndex: number;
+    lng: number;
+    lat: number;
+    nonce: number;
+  } | null>(null);
+  function focusField(field: string) {
+    const index = FIELD_LETTERS.indexOf(field);
+    if (index < 0) return;
+    const { u, v } = fieldCenterUV(index);
+    const [lng, lat] = pointInQuad(overlay.coordinates, u, v);
+    setFieldFocusRequest({ fieldIndex: index, lng, lat, nonce: Date.now() });
+  }
+
+  // Liwa Oasis opens straight on its own Recent events worklist rather than
+  // the fields table — the same "compliance notifications are the thing an
+  // inspector opens this tab to check first" reasoning that already put
+  // "Recent events" ahead of the table in the switcher itself
+  // (`rightPanelOptions`'s own `eventsFirst`) — now applied to which panel is
+  // actually showing, not just which one reads first in the pill.
+  const [rightPanel, setRightPanel] = useState<RightPanel>(isCropFarm(area.id) ? "events" : "table");
 
   // Applies a filter handed in from outside the table (a clicked widget on
   // Insights) exactly once, then reports it consumed so App.tsx clears the
@@ -195,10 +302,37 @@ export default function AssetsView({
   // The map honours the same filters as the table. Memoised so the identity is
   // stable — MapCanvas's visibility effect depends on this set, and a fresh one
   // each render would re-run it on every keystroke.
-  const visibleTreeIds = useMemo(
-    () => new Set(filters.visible.map((t) => t.id)),
-    [filters.visible],
+  //
+  // Liwa Oasis is the one exception: a working date farm has hundreds of
+  // routine, healthy palms that would otherwise all get their own pin, next
+  // to a handful that actually triggered a notification — the map reading as
+  // "which palms need a look" gets buried under the ones that don't. Pins
+  // there are cut down to the same flagged trees the ranked worklist already
+  // lists, rather than every standing tree the way every other area's map
+  // still shows.
+  // Whatever survives InspectionTriageList's own type/field/severity chips.
+  // `null` means "that panel hasn't reported yet, or isn't mounted" — which
+  // is not the same as "it filtered everything out", so it must not be an
+  // empty Set: an empty one would blank every pin on the map before the
+  // panel's first effect even runs.
+  const [triageVisibleEntries, setTriageVisibleEntries] = useState<TriageEntry[] | null>(null);
+  const triageVisibleTreeIds = useMemo(
+    () => (triageVisibleEntries ? new Set(triageVisibleEntries.map((e) => e.event.tree.id)) : null),
+    [triageVisibleEntries],
   );
+
+  const visibleTreeIds = useMemo(() => {
+    const pool = isCropFarm(area.id) ? filters.visible.filter((t) => isFlaggedCondition(t.condition)) : filters.visible;
+    const ids = new Set(pool.map((t) => t.id));
+    // The worklist's chips narrow the map too, but only where that worklist
+    // is the panel on screen (Liwa/crop farms) — every other area shows
+    // RecentEventsList, which has no chips and never reports, so its stale
+    // `null` correctly leaves the map alone.
+    if (isCropFarm(area.id) && triageVisibleTreeIds) {
+      for (const id of [...ids]) if (!triageVisibleTreeIds.has(id)) ids.delete(id);
+    }
+    return ids;
+  }, [filters.visible, area.id, triageVisibleTreeIds]);
 
   // Highlights + scrolls to a row in the table. Set by either a table row
   // click or a map pin click — the two entry points share this one state
@@ -214,6 +348,12 @@ export default function AssetsView({
   // an action that only asked to highlight a table row would be an
   // unrequested camera hijack, not a convenience.
   const [flyToId, setFlyToId] = useState<string | null>(null);
+  // The specific event clicked, separate from `flyToId` (its tree) — a tree
+  // can carry more than one compliance finding over time, so the map needs
+  // to know exactly which one was clicked rather than defaulting to that
+  // tree's latest (see MapCanvas's `focusTree.eventId`). `null` for a table
+  // row click, which has no particular finding behind it.
+  const [flyToEventId, setFlyToEventId] = useState<string | null>(null);
 
   // An event's tree is selected/flown-to exactly like a table row click —
   // this panel and the table are two views onto the same right-hand pane
@@ -222,7 +362,14 @@ export default function AssetsView({
   function handleSelectEvent(event: TreeEvent) {
     setSelectedId(event.tree.id);
     setFlyToId(event.tree.id);
-    setRightPanel("table");
+    setFlyToEventId(event.id);
+    // Liwa Oasis stays on its own Recent events panel — "table" there is the
+    // Crop fields summary, not a per-tree view, so switching to it after
+    // drilling into a notification would land the reader on an unrelated
+    // aggregate instead of the finding's own detail. The map's flagged pin
+    // opens that detail directly (see MapCanvas's `revealTooltip`), so there
+    // is nothing for the right panel to switch to here.
+    if (!isCropFarm(area.id)) setRightPanel("table");
   }
 
   // Derived from the visible set rather than stored alongside it: a tree that
@@ -240,8 +387,8 @@ export default function AssetsView({
 
   const focusTree = useMemo(() => {
     const found = filters.visible.find((t) => t.id === flyToId);
-    return found ? { id: found.id, lng: found.lng, lat: found.lat } : null;
-  }, [filters.visible, flyToId]);
+    return found ? { id: found.id, lng: found.lng, lat: found.lat, eventId: flyToEventId ?? undefined } : null;
+  }, [filters.visible, flyToId, flyToEventId]);
 
   // The census census's own grouping — see AreaImageStage's split prompt.
   // `censusCaptureIndex` mirrors that stage's internally-owned timeline
@@ -305,6 +452,12 @@ export default function AssetsView({
         visibleTreeIds={visibleTreeIds}
         focusTree={focusTree}
         inspectTree={inspectTree}
+        violationEntries={violationEntries}
+        findingOutcomes={findingOutcomes}
+        onSetFindingOutcome={setFindingOutcome}
+        onRequestHiRes={setEvidencePackEntry}
+        fieldFocusRequest={fieldFocusRequest}
+        resetViewRequest={resetViewNonce}
         onExitInspect={() => setInspectId(null)}
         onPinClick={(id) => setSelectedId(id)}
         onPinHover={setHoveredId}
@@ -314,6 +467,7 @@ export default function AssetsView({
         onLayerOpacityChange={onLayerOpacityChange}
         basemapIndex={basemapIndex}
         onBasemapIndexChange={onBasemapIndexChange}
+        show3DToggle={isCropFarm(area.id)}
         className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
         style={{ width: `${splitPct}%` }}
       />
@@ -353,7 +507,11 @@ export default function AssetsView({
           <RightPanelSwitcher
             value={rightPanel}
             onChange={setRightPanel}
-            tableLabel={hasCrabPloverCensus(area.id) ? "Crab-plover census" : "Trees table"}
+            tableLabel={
+              hasCrabPloverCensus(area.id) ? "Crab-plover census" : isCropFarm(area.id) ? "Crop fields" : "Trees table"
+            }
+            eventsFirst={isCropFarm(area.id)}
+            inProgressCount={inProgressEntries?.length ?? null}
           />
         </div>
         <div className="flex-1 min-h-0">
@@ -370,6 +528,11 @@ export default function AssetsView({
               selectedId={selectedId}
               onSelect={(b) => setSelectedId(b.id)}
             />
+          ) : rightPanel === "table" && isCropFarm(area.id) ? (
+            // Liwa Oasis is managed by field, not by individual palm — see
+            // CropFieldsTable's own comment. Same slot CrabPloverTable takes
+            // above for the same reason on a different area.
+            <CropFieldsTable records={inRange} areaId={area.id} areaName={area.name} onFocusField={focusField} />
           ) : rightPanel === "table" ? (
             <TreeTable
               records={inRange}
@@ -378,6 +541,7 @@ export default function AssetsView({
               onSelect={(t) => {
                 setSelectedId(t.id);
                 setFlyToId(t.id);
+                setFlyToEventId(null);
               }}
               selectedId={selectedId}
               hoveredId={hoveredId}
@@ -399,11 +563,55 @@ export default function AssetsView({
               }
               inspectingId={inspectId}
             />
+          ) : rightPanel === "inProgress" ? (
+            <InProgressList
+              entries={inProgressEntries ?? []}
+              onSelectEvent={(entry) => handleSelectEvent(entry.event)}
+              onMarkClosed={(id) => setFindingOutcome(id, "accepted")}
+              onTakeBack={(id) => setFindingOutcome(id, null)}
+            />
+          ) : isCropFarm(area.id) ? (
+            // Liwa's own notifications read as a ranked, filterable worklist
+            // (farm ID, violation type, confidence, date detected, severity,
+            // plus a spatial-clustering toggle) rather than the scrolling
+            // card feed every other area's "Recent events" panel gets here —
+            // see InspectionTriageList's own comment.
+            <InspectionTriageList
+              events={visibleEvents}
+              onSelectEvent={handleSelectEvent}
+              outcomes={findingOutcomes}
+              onSetOutcome={setFindingOutcome}
+              onRequestHiRes={setEvidencePackEntry}
+              onFocusField={focusField}
+              onVisibleEntriesChange={setTriageVisibleEntries}
+            />
           ) : (
             <RecentEventsList events={visibleEvents} delay={0} onSelectEvent={handleSelectEvent} />
           )}
         </div>
       </div>
+
+      {evidencePackEntry && (
+        <EvidencePackModal
+          entry={evidencePackEntry}
+          onClose={() => setEvidencePackEntry(null)}
+          onPushed={() => {
+            setFindingOutcome(evidencePackEntry.event.id, "hi_res");
+            setPushedToast(evidencePackEntry);
+            setEvidencePackEntry(null);
+            setResetViewNonce((n) => (n ?? 0) + 1);
+          }}
+        />
+      )}
+
+      {pushedToast && (
+        <ManagerContactToast
+          title="Pushed to inspection system"
+          detail={`${pushedToast.farmId} · ${pushedToast.violationType} — status set to in progress.`}
+          autoDismissMs={4000}
+          onDismiss={() => setPushedToast(null)}
+        />
+      )}
     </div>
   );
 }

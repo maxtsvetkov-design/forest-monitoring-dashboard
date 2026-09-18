@@ -1010,6 +1010,37 @@ body.is-dragging-resize {
   }
 }
 
+/* A one-shot "lock-on" reticle, layered on top of the steady pulse above —
+   added once the two-act camera flight (MapCanvas's `focusTree` effect)
+   actually lands, not while it's still mid-flight, so the reticle reads as
+   the camera *arriving* at this exact pin rather than decoration that was
+   already sitting there. A rotated square converging with an overshoot
+   (var(--ease-spring)) rather than a plain fade — a GIS crosshair snapping
+   onto a target, not a marker quietly appearing. */
+.tree-focus--locked::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1.5px solid #096151;
+  border-radius: 4px;
+  opacity: 0;
+  animation: treeFocusLockOn 720ms var(--ease-spring) both;
+}
+
+@keyframes treeFocusLockOn {
+  0% {
+    transform: scale(2.6) rotate(28deg);
+    opacity: 0;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 0;
+  }
+}
+
 /* ===========================================================================
    Motion system
    ---------------------------------------------------------------------------
@@ -1617,6 +1648,65 @@ html {
     opacity: 1;
     transform: none;
     filter: none;
+  }
+}
+
+/* Pairs with `.modal-panel`: a dimming, blurring scrim behind it. The blur
+   and tint themselves are constant (set via Tailwind's own `backdrop-blur-*`
+   / `bg-black/*` utilities) — only opacity animates, since animating
+   `backdrop-filter` itself is expensive and inconsistently supported. Shorter
+   than the panel's own settle (--dur-4 vs --dur-5) so the scrim reads as
+   "already there" by the time the panel finishes arriving, rather than the
+   two competing for attention at once. */
+.modal-backdrop {
+  animation: modalBackdropIn var(--dur-4) var(--ease-out) backwards;
+}
+
+@keyframes modalBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* "Collapse to compact view" — instead of the full record just vanishing and
+   the small tooltip appearing in its place, the panel itself plays a liquid
+   implosion first (see `playCollapseAnimation` in TreeHistoryModal.tsx,
+   shared by it and ViolationRecordModal), diving down toward where the
+   compact tooltip is about to take over. One continuous curve end to end —
+   an earlier version bulged outward before shrinking, but reversing
+   direction partway through a keyframe animation is exactly what reads as a
+   "step": the eye catches the velocity discontinuity at the reversal even
+   though each half is individually eased. A single monotonic scale-down,
+   under one long, decelerating-into-nothing curve, is what makes this read
+   as one graceful motion rather than a sequence of beats. `transform-origin`
+   sits at the bottom-left because that's the corner nearest this popover's
+   own anchor point (see `placePopover`) — the shrink reads as diving toward
+   the pin rather than toward the panel's own arbitrary center. */
+.tree-modal--collapsing {
+  animation: liquidCollapse 720ms cubic-bezier(0.45, 0, 0.2, 1) forwards;
+  transform-origin: 24px calc(100% - 24px);
+  pointer-events: none;
+}
+
+@keyframes liquidCollapse {
+  0% {
+    transform: scale(1);
+    border-radius: 20px;
+    opacity: 1;
+    filter: blur(0);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    transform: scale(0.05);
+    border-radius: 999px;
+    opacity: 0;
+    filter: blur(2px);
   }
 }
 

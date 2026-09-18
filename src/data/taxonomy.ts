@@ -126,6 +126,23 @@ export const CONDITION_COLOR: Record<ConditionKey, string> = Object.fromEntries(
   CONDITIONS.map((c) => [c.key, c.color]),
 ) as Record<ConditionKey, string>;
 
+/** Same five bands, same thresholds, same colours — Liwa Oasis is a working
+ *  date-palm orchard, not a habitat-restoration plot, so "Defoliated" reads as
+ *  forestry vocabulary borrowed from the other five areas rather than
+ *  something a farm inspector would recognise. Wording only; nothing here
+ *  changes which band a tree falls in or how it's coloured. */
+export const CROP_CONDITION_LABEL: Record<ConditionKey, string> = {
+  defoliated: "Severe stress",
+  sparse: "High stress",
+  moderate: "Moderate stress",
+  normal: "Healthy",
+  vigorous: "Thriving",
+};
+
+export function conditionLabelFor(key: ConditionKey, isCrop: boolean): string {
+  return isCrop ? CROP_CONDITION_LABEL[key] : CONDITION_LABEL[key];
+}
+
 /** Severity rank, worst = 0 — read off CONDITIONS' own worst-first order
  * rather than restated, so "did this tree get better or worse?" can never
  * disagree with the band thresholds that decided its condition in the first

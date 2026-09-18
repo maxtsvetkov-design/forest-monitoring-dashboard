@@ -1,11 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TreeEvent } from "../data/events";
 import { generateTreeHistory } from "../data/treeHistory";
 import { MAX_CROWN_RADIUS_M } from "../data/canopies";
 import type { TreeRecord } from "../data/trees";
 import type { HealthKey } from "../data/types";
-import { CONDITIONS, CONDITION_COLOR, CONDITION_LABEL, type ConditionKey } from "../data/taxonomy";
+import { CONDITIONS, CONDITION_COLOR, conditionLabelFor, type ConditionKey } from "../data/taxonomy";
+import FindingOutcomeActions from "./FindingOutcomeActions";
+import type { FindingOutcome } from "../data/findingOutcome";
 
 const SEVERITY_COLOR = CONDITION_COLOR;
 
@@ -64,18 +66,21 @@ function formatDate(date: Date): string {
  * for `placePopover`'s own clamping math; the actual box asks for whatever
  * the viewport can spare, up to that.
  */
-const POPOVER_WIDTH = 456;
-const POPOVER_MAX_HEIGHT = 840;
+export const POPOVER_WIDTH = 456;
+export const POPOVER_MAX_HEIGHT = 840;
 // The ring drawn on the focused tree (.tree-focus in index.css) is 30px
 // across; the gap has to clear its radius plus a visible seam, not just be an
 // arbitrary margin, or the card's edge lands on top of the ring it's pointing at.
 const RING_RADIUS = 15;
 const POPOVER_GAP = RING_RADIUS + 10;
-const VIEWPORT_PADDING = 12;
+export const VIEWPORT_PADDING = 12;
 
 /** Clamps the popover's top-left so it stays fully on screen, preferring a
- * position beside (never directly over) the pin it points at. */
-function placePopover(anchor: { x: number; y: number }, maxHeight: number) {
+ * position beside (never directly over) the pin it points at. Exported so
+ * `ViolationRecordModal` (Liwa's own compliance-record popover) places itself
+ * with the exact same on-screen behaviour as this one, rather than a second,
+ * slightly-different copy of the same clamping math. */
+export function placePopover(anchor: { x: number; y: number }, maxHeight: number) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   // Default: to the right of the pin, vertically centred on it.
@@ -88,6 +93,23 @@ function placePopover(anchor: { x: number; y: number }, maxHeight: number) {
   left = Math.max(VIEWPORT_PADDING, Math.min(left, vw - POPOVER_WIDTH - VIEWPORT_PADDING));
   top = Math.max(VIEWPORT_PADDING, Math.min(top, vh - maxHeight - VIEWPORT_PADDING));
   return { left, top };
+}
+
+/** How long `.tree-modal--collapsing` (index.css) takes to fully implode —
+ *  shared so the caller's own state change (unmounting this popover, mounting
+ *  the compact tooltip in its place) waits for the animation to finish
+ *  playing rather than cutting it off mid-shrink. */
+export const COLLAPSE_ANIMATION_MS = 720;
+
+/** "Collapse to compact view" plays a liquid shrink on the popover itself
+ *  before the swap to the small tooltip actually happens, rather than the
+ *  full record just vanishing and something else popping up in its place —
+ *  see `.tree-modal--collapsing`'s own comment for the animation itself.
+ *  Takes the button that was clicked rather than a ref so both
+ *  `TreeHistoryModal` and `ViolationRecordModal` can call this without each
+ *  needing to plumb a ref to their own outer panel just for this. */
+export function playCollapseAnimation(button: HTMLElement) {
+  button.closest<HTMLElement>(".tree-modal")?.classList.add("tree-modal--collapsing");
 }
 
 /** One scorecard metric — a label, a real value restated 0-100 to size the
@@ -117,12 +139,13 @@ function MetricBar({ label, pct, display, color }: { label: string; pct: number;
  * elsewhere in the app (the pin popover, the digital twin card, the events
  * feed); this is a denser second look at the same tree, not a new dataset.
  */
-function TreeScorecard({ tree }: { tree: TreeRecord }) {
+function TreeScorecard({ tree, isCropFarm }: { tree: TreeRecord; isCropFarm?: boolean }) {
   const key = HEALTH_KEY[tree.health];
   const color = CONDITION_COLOR[key];
   const score = conditionScore(key);
   const grade = scoreGrade(score);
   const canopyRetainedPct = 100 - tree.canopyLossPct;
+  const healthLabel = conditionLabelFor(key, !!isCropFarm);
 
   return (
     <div
@@ -152,7 +175,7 @@ function TreeScorecard({ tree }: { tree: TreeRecord }) {
             <span className="text-[14px] font-medium text-[#8a8a94] font-['Outfit',sans-serif]">/ 100</span>
           </div>
           <p className="text-[10px] tracking-wide text-[#8a8a94] font-bold uppercase font-['Outfit',sans-serif] mt-[1px]">
-            Condition score · {tree.health}
+            Condition score · {healthLabel}
           </p>
         </div>
       </div>
@@ -181,7 +204,7 @@ function TreeScorecard({ tree }: { tree: TreeRecord }) {
           {tree.conditionHistory.map((c, i) => (
             <span
               key={i}
-              title={CONDITION_LABEL[c]}
+              title={conditionLabelFor(c, !!isCropFarm)}
               className="flex-1 h-[14px] rounded-[3px] first:rounded-l-[5px] last:rounded-r-[5px]"
               style={{ background: CONDITION_COLOR[c] }}
             />
@@ -192,47 +215,6 @@ function TreeScorecard({ tree }: { tree: TreeRecord }) {
   );
 }
 
-/** One of the popover's two footer actions. There's no ticketing/mail backend
- * behind either yet, so a click flips the button into a brief confirmed state
- * instead of firing a request — real feedback that something happened, rather
- * than a dead button or a silent no-op. */
-function CTAButton({
-  label,
-  confirmedLabel,
-  icon,
-  variant,
-}: {
-  label: string;
-  confirmedLabel: string;
-  icon: ReactNode;
-  variant: "primary" | "secondary";
-}) {
-  const [sent, setSent] = useState(false);
-  return (
-    <button
-      type="button"
-      disabled={sent}
-      onClick={() => {
-        setSent(true);
-        window.setTimeout(() => setSent(false), 2600);
-      }}
-      className={`u-press flex-1 flex items-center justify-center gap-[6px] px-[10px] py-[8px] rounded-[9px] text-[12px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer disabled:cursor-default ${
-        variant === "primary"
-          ? "bg-[#096151] text-white hover:bg-[#0a7761] disabled:bg-[#24A67A]"
-          : "border border-[#dedee3] text-[#18181c] hover:bg-[#ebece7] disabled:bg-[#f0f9f5] disabled:border-[#bfe3d3] disabled:text-[#096151]"
-      }`}
-    >
-      {sent ? (
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0">
-          <path d="M3 8.5l3.2 3.2L13 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ) : (
-        icon
-      )}
-      {sent ? confirmedLabel : label}
-    </button>
-  );
-}
 
 /**
  * Compact counterpart to the full modal below — what App.tsx swaps in when a
@@ -317,6 +299,7 @@ export default function TreeHistoryModal({
   onClose,
   onFlyToPin,
   onCollapse,
+  isCropFarm,
 }: {
   tree: TreeRecord;
   /** The notification that opened this popover, when it was opened from a
@@ -332,6 +315,11 @@ export default function TreeHistoryModal({
   /** Collapses back to the compact pin popover, in place — omit to hide the
    * affordance for a caller that has no compact form to collapse into. */
   onCollapse?: () => void;
+  /** Liwa Oasis is a working farm, not a habitat-restoration plot — swaps the
+   *  scorecard's condition wording for farm-relevant terms (see
+   *  `conditionLabelFor`). Omit for every other area, which keeps the
+   *  forest vocabulary. */
+  isCropFarm?: boolean;
 }) {
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -340,6 +328,12 @@ export default function TreeHistoryModal({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
+
+  // Local, not lifted like Liwa's `findingOutcomes` map — this popover has no
+  // compliance record behind it to share across views (see
+  // `FindingOutcomeActions`'s own comment), so the decision only needs to
+  // live as long as this one open instance does.
+  const [outcome, setOutcomeState] = useState<FindingOutcome | null>(null);
 
   const history = generateTreeHistory(tree);
   // Bounded by the viewport, not just the `POPOVER_MAX_HEIGHT` ceiling — on
@@ -400,7 +394,10 @@ export default function TreeHistoryModal({
                 type="button"
                 aria-label="Collapse to compact view"
                 title="Collapse to compact view"
-                onClick={onCollapse}
+                onClick={(e) => {
+                  playCollapseAnimation(e.currentTarget);
+                  window.setTimeout(onCollapse, COLLAPSE_ANIMATION_MS);
+                }}
                 className="u-press w-7 h-7 flex items-center justify-center rounded-full text-[#71717a] hover:bg-[#ebece7] hover:text-[#464650] cursor-pointer"
               >
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
@@ -428,7 +425,7 @@ export default function TreeHistoryModal({
         </div>
 
         <div className="scroll-slim overflow-y-auto px-5 py-3 flex flex-col gap-3">
-          <TreeScorecard tree={tree} />
+          <TreeScorecard tree={tree} isCropFarm={isCropFarm} />
 
           {/* The notification that opened this modal — absent when opened by
               expanding a plain pin click instead of a Recent Events row. */}
@@ -468,24 +465,9 @@ export default function TreeHistoryModal({
         </div>
 
         {/* Footer action — the one next step a flagged tree actually needs:
-            queue it for a second, more certain look. */}
-        <div className="flex items-center gap-[8px] px-4 py-2.5 border-t border-[#ebece7] shrink-0">
-          <CTAButton
-            label="Send for verification"
-            confirmedLabel="Queued"
-            variant="primary"
-            icon={
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <path
-                  d="M8 14.5S13 9.8 13 6.3A5 5 0 0 0 3 6.3C3 9.8 8 14.5 8 14.5Z"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
-                <path d="M6 6.3 7.4 7.7 10.3 4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            }
-          />
+            decide whether the reading is real. */}
+        <div className="px-4 py-2.5 border-t border-[#ebece7] shrink-0">
+          <FindingOutcomeActions id={tree.id} outcome={outcome} onSetOutcome={(_, o) => setOutcomeState(o)} />
         </div>
       </div>
     </div>,
