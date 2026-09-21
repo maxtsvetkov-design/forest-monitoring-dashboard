@@ -180,7 +180,7 @@ export function areaHasOwnImagery(areaId: string): boolean {
  * `areaOverlays` still gives this area a real `coordinates` box (see
  * `MapOverlay.hidden`'s own comment) — only the raster paint is skipped.
  */
-const NO_AERIAL_OVERLAY_AREAS = new Set(["liwa-oasis"]);
+const NO_AERIAL_OVERLAY_AREAS = new Set(["liwa-oasis", "liwa-crop-monitor"]);
 
 export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
   areas.map((area) => {

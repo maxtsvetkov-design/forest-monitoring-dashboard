@@ -44,6 +44,7 @@ const TAB_SLUG: Record<string, string> = {
   Assets: "assets",
   Maps: "maps",
   Areas: "areas",
+  "Drift list": "drift",
   Story: "story",
 };
 

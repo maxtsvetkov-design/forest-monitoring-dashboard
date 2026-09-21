@@ -21,6 +21,10 @@ import type { SeverityLabel } from "./severity";
  * that ranking to mean something. Documented per entry below.
  */
 export type ComplianceCategory =
+  | "Cultivated Area Expansion"
+  | "Cultivation Reduction"
+  | "Structural Change"
+  | "Irrigation Surface Indicator"
   | "Unhealthy Vegetation"
   | "Waste Burning"
   | "Agricultural Waste"
@@ -32,6 +36,9 @@ export interface ComplianceDetectionObject {
   category: ComplianceCategory;
   label: string;
   severityLabel: SeverityLabel;
+  /** Priority RFP monitoring outcomes. The Crop Monitor generator guarantees
+   * these make up three quarters of its monthly notification feed. */
+  monitoringPriority?: boolean;
   /** One sentence: what finding this object actually means for the block,
    *  read by both the legend (as reference) and the notification's own
    *  description (as the "why this was flagged" line). */
@@ -39,6 +46,39 @@ export interface ComplianceDetectionObject {
 }
 
 export const COMPLIANCE_DETECTION_OBJECTS: ComplianceDetectionObject[] = [
+  {
+    code: "CROP-EXPANSION",
+    category: "Cultivated Area Expansion",
+    label: "New Cultivated Area",
+    severityLabel: "INFO",
+    monitoringPriority: true,
+    note: "Cultivation now extends beyond the previous monitored footprint — review the new boundary and registered crop use.",
+  },
+  {
+    code: "CROP-REDUCTION",
+    category: "Cultivation Reduction",
+    label: "Cultivation Reduction",
+    severityLabel: "WARNING",
+    monitoringPriority: true,
+    note: "Cultivated cover has contracted since the previous capture — verify whether the affected ground is fallow or abandoned.",
+  },
+  {
+    code: "STRUCT-ADDITION",
+    category: "Structural Change",
+    label: "Farm Structure Addition",
+    severityLabel: "WARNING",
+    monitoringPriority: true,
+    note: "A new or expanded built footprint is visible inside the farm boundary — compare it with the registered structure permit.",
+  },
+  {
+    code: "IRR-SURFACE",
+    category: "Irrigation Surface Indicator",
+    label: "Irrigation Surface Indicator",
+    severityLabel: "WARNING",
+    monitoringPriority: true,
+    note: "A new surface-moisture or pooling signature follows the irrigation network — inspect for leakage, overflow, or altered distribution.",
+  },
+
   // Unhealthy Vegetation — the block's own plant health, same condition
   // scale the rest of this app already reads trees against.
   {
@@ -148,6 +188,10 @@ export function complianceObjectByCode(code: string): ComplianceDetectionObject 
 /** Every category, in the source list's own order — what `ComplianceLegend`
  *  groups its sections by. */
 export const COMPLIANCE_CATEGORIES: ComplianceCategory[] = [
+  "Cultivated Area Expansion",
+  "Cultivation Reduction",
+  "Structural Change",
+  "Irrigation Surface Indicator",
   "Unhealthy Vegetation",
   "Waste Burning",
   "Agricultural Waste",

@@ -13,6 +13,8 @@ import AIAssistant from "./components/AIAssistant";
 import AnimatedDonutChart from "./components/AnimatedDonutChart";
 import AreaSwitcher from "./components/AreaSwitcher";
 import AssetsView from "./components/AssetsView";
+import CropMonitorOverlay from "./components/CropMonitorOverlay";
+import { CYCLE_LABEL, CYCLE_WINDOW, LAST_SCAN } from "./components/EstateDashboard";
 import AreasView from "./components/AreasView";
 import CrownRadiusTreemap from "./components/CrownRadiusTreemap";
 import EcosystemConditionCard from "./components/EcosystemConditionCard";
@@ -47,7 +49,8 @@ import ToolbarBtn from "./components/ToolbarBtn";
 import TreeSurveyCard from "./components/TreeSurveyCard";
 import { areas } from "./data/areas";
 import { eventsInRange, generateEvents, isCropFarm, type TreeEvent } from "./data/events";
-import { areaHectares, areaOverlays, frameMonthWindow } from "./data/overlays";
+import { areaHectares, areaOverlays, frameMonthWindow, pointInQuad } from "./data/overlays";
+import { fieldCenterUV, FIELD_LETTERS } from "./data/farmFields";
 import { aggregateRange, healthScoreSeries, maxScatterCount } from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
 import { PERMIT_SECTIONS } from "./data/permits";
@@ -77,6 +80,12 @@ const SIDEBAR_DEFAULT_WIDTH = 320;
 // every card delay downstream is pushed back by this much so the two read as
 // one continuous reveal instead of the chrome and the grid popping in at once.
 const CHROME_SEQUENCE_MS = 280;
+
+// How long the outgoing tab plays `.view-leave` (index.css) before the real
+// switch commits — must match that animation's own duration exactly, or the
+// swap either cuts the animation off mid-flight or leaves a dead gap after
+// it finishes.
+const VIEW_LEAVE_MS = 320;
 
 function formatMonthYear(date: Date): string {
   return date.toLocaleString("en-US", { month: "short", year: "numeric" });
@@ -225,17 +234,80 @@ export default function App() {
     [pendingTreeFocus, focusNonce],
   );
 
+  // A Drift list row click flies Crop Monitor's shared map to that field's
+  // real ground centre — the same u/v→lng/lat projection AssetsView's own
+  // "zoom to field" already uses (`fieldCenterUV` + `pointInQuad`), so
+  // "Field B" lands exactly where Field B's own trees actually sit rather
+  // than a fabricated point. Lives in App.tsx, not DriftListView, because
+  // the map it flies is App.tsx's shared MapsView instance, not a map of the
+  // panel's own.
+  const [fieldFocusRequest, setFieldFocusRequest] = useState<{
+    fieldIndex: number;
+    lng: number;
+    lat: number;
+    nonce: number;
+  } | null>(null);
+  const focusField = useCallback((field: string) => {
+    const index = FIELD_LETTERS.indexOf(field);
+    if (index < 0) return;
+    const { u, v } = fieldCenterUV(index);
+    const [lng, lat] = pointInQuad(areaOverlays["liwa-crop-monitor"].coordinates, u, v);
+    setFieldFocusRequest({ fieldIndex: index, lng, lat, nonce: Date.now() });
+  }, []);
+
+  // Which field band(s) EstateDashboard's hovered KPI card is about, glowed
+  // in place on the shared map — see MapCanvas's `highlightFieldLetters`.
+  const [hoveredFieldLetters, setHoveredFieldLetters] = useState<string[] | null>(null);
+
+  // Which Drift list card is selected — isolates the shared map to that
+  // field (see MapCanvas's `driftFieldFocus`): every other field's pins
+  // hide, the world OUTSIDE that field's own ground quad dims (the field
+  // itself stays fully lit and gets a highlight outline), and its own red
+  // pins glow. A second click on the same card clears the selection rather
+  // than re-selecting it
+  // — the card is a toggle, not a one-way "pick a field" control, since
+  // "go back to seeing the whole plot" needs a way back that isn't a
+  // separate button. Selecting (not deselecting) also flies the camera
+  // there, same as before this card had a selected state at all.
+  const [selectedDriftField, setSelectedDriftField] = useState<string | null>(null);
+  const selectDriftField = useCallback(
+    (field: string) => {
+      setSelectedDriftField((prev) => {
+        const next = prev === field ? null : field;
+        if (next) focusField(next);
+        return next;
+      });
+    },
+    [focusField],
+  );
+
   // Popups belong to the view that spawned them: a tree popover left floating
   // over the Insights charts, or a map focus silently waiting to re-fly the
   // next time Maps is opened, both read as bugs. Manual tab changes go through
   // here so they clear that state. The programmatic switches below
   // (selectTreeEvent, the donut and treemap handlers) deliberately set the
   // state they want carried across, so they call setActiveTab directly.
+  // A real exit animation needs the old tab to still be on screen while it
+  // plays — React would otherwise unmount it the instant `setActiveTab`
+  // commits, leaving nothing for a CSS animation to run on. (The browser's
+  // View Transitions API looked like the natural fit for this — snapshot the
+  // old DOM, animate the snapshot out — but it blanked the whole content
+  // pane for the animation's full duration in testing, a much worse
+  // regression than no exit animation at all, so this does the same job by
+  // hand instead: keep rendering the CURRENT tab for one more beat with
+  // `isLeaving` true, so `.view-leave` (index.css) has real content to
+  // downscale away, then swap to the new tab once that's finished.)
+  const [isLeaving, setIsLeaving] = useState(false);
   function switchTab(tab: string) {
-    setOpenTreeEvent(null);
-    setTreeFocusCollapsed(false);
-    setPendingTreeFocus(null);
-    setActiveTab(tab);
+    if (tab === activeTab) return;
+    setIsLeaving(true);
+    window.setTimeout(() => {
+      setOpenTreeEvent(null);
+      setTreeFocusCollapsed(false);
+      setPendingTreeFocus(null);
+      setActiveTab(tab);
+      setIsLeaving(false);
+    }, VIEW_LEAVE_MS);
   }
 
   function selectTreeEvent(event: TreeEvent) {
@@ -329,6 +401,29 @@ export default function App() {
   useEffect(() => {
     if (isCropFarm(activeArea.id) && activeTab === "Recent events") setActiveTab("Assets");
   }, [activeArea.id, activeTab]);
+
+  // Same correction, for the "Areas" / "Drift list" swap: each only exists
+  // in the tab strip for its own side of the crop-farm split (see `tabs`
+  // above), so a stale pill from whichever area was open before needs to
+  // land on that area's own equivalent tab instead of vanishing.
+  useEffect(() => {
+    if (activeArea.id === "liwa-crop-monitor" && activeTab === "Areas") setActiveTab("Insights");
+    else if (activeArea.id !== "liwa-crop-monitor" && activeTab === "Drift list") setActiveTab("Areas");
+  }, [activeArea.id, activeTab]);
+
+  // A Drift list selection is that screen's own state, not something the map
+  // should keep showing once the reader has navigated away from it —
+  // leaving the isolation mask up on Insights, a different area, or any
+  // other tab would read as the map being stuck rather than a choice that
+  // screen made. Keyed on BOTH `activeTab` and `activeArea.id` (not just
+  // whether the reader is still literally on "Drift list") so this also
+  // covers the correction effect right above swapping the tab out from under
+  // a selection, not only an explicit click through `switchTab`. Runs on
+  // every change including a switch back INTO Drift list, so returning to it
+  // is always the clean, nothing-selected state.
+  useEffect(() => {
+    setSelectedDriftField(null);
+  }, [activeTab, activeArea.id]);
 
   // --- Shareable URLs ------------------------------------------------------
   // The navigation state above, expressed as something that can be pasted into
@@ -427,9 +522,18 @@ export default function App() {
   // pointing at a stale card feed rather than the ranked worklist that panel
   // now shows. No other area has that in-panel duplicate, so this is the one
   // per-area exception to an otherwise-shared tab strip.
-  const tabs = isCropFarm(activeArea.id)
-    ? ["Insights", "Assets", "Maps", "Areas", "Story"]
-    : ["Recent events", "Insights", "Assets", "Maps", "Areas", "Story"];
+  const tabs =
+    activeArea.id === "liwa-crop-monitor"
+      ? // Crop Monitor's registration-drift register stands in for the plain
+        // aerial-capture gallery every other area gets under "Areas" — this
+        // persona cares whether a field's *filed* crop still matches what
+        // the last scan actually saw, not a browsable photo bento. Second,
+        // right beside Insights: the same live map backs both, so the two
+        // are a matched pair — one map, two readings of it — not a detour.
+        ["Insights", "Drift list", "Assets", "Maps", "Story"]
+      : isCropFarm(activeArea.id)
+        ? ["Insights", "Assets", "Maps", "Areas", "Story"]
+        : ["Recent events", "Insights", "Assets", "Maps", "Areas", "Story"];
 
   // The active-tab pill is one element that slides between tabs rather than
   // the colour jumping from one button to another — see useSlidingPill,
@@ -529,6 +633,11 @@ export default function App() {
             setFocusNonce((n) => n + 1);
           }
           if (opts?.tab) setActiveTab(opts.tab);
+          // Crop Monitor's own "first page" — a plain onEnter() (no explicit
+          // destination) still lands wherever was last open for every other
+          // area, but this one persona view opens on Insights, where its
+          // estate-cycle summary now lives as that tab's lead section.
+          else if (areaId === "liwa-crop-monitor") setActiveTab("Insights");
           setShowLanding(false);
         }}
       />
@@ -641,7 +750,11 @@ export default function App() {
                       activeTab === tab ? "text-[#ebece7]" : "text-[#464650] hover:text-[#18181c]"
                     }`}
                   >
-                    {tab === "Recent events" && activeArea.id === "al-maha" ? "Events EAD" : tab}
+                    {tab === "Recent events" && activeArea.id === "al-maha"
+                      ? "Events EAD"
+                      : tab === "Drift list" && activeArea.id === "liwa-crop-monitor"
+                        ? "Fields at a glance"
+                        : tab}
                   </button>
                 ))}
               </div>
@@ -686,13 +799,38 @@ export default function App() {
                     }
                   : undefined
               }
+              centerContent={
+                activeArea.id === "liwa-crop-monitor" && activeTab === "Insights" ? (
+                  <div className="text-center">
+                    <p className="text-[10px] font-bold text-[#8a8a94] font-['Outfit',sans-serif] uppercase tracking-[0.08em]">
+                      Estate dashboard · {activeArea.name}
+                    </p>
+                    <h1 className="text-[16px] font-extrabold text-[#18181c] font-['Outfit',sans-serif] leading-[20px] mt-[1px]">
+                      {CYCLE_LABEL}
+                      <span className="text-[12px] font-normal text-[#5b5b66] ml-[8px]">{CYCLE_WINDOW}</span>
+                    </h1>
+                  </div>
+                ) : undefined
+              }
+              rightContent={
+                activeArea.id === "liwa-crop-monitor" && activeTab === "Insights" ? (
+                  <span className="text-[11.5px] text-[#8a8a94] font-['Outfit',sans-serif] whitespace-nowrap">
+                    Last scan {LAST_SCAN}
+                  </span>
+                ) : undefined
+              }
             />
           )}
         </div>
 
         {/* Content */}
         {/* `view-enter-soft` is opacity-only for the two map views — see index.css
-            for why a transform above MapLibre's canvas is not worth its cost. */}
+            for why a transform above MapLibre's canvas is not worth its cost.
+            The outer wrapper below is `switchTab`'s exit half — see its own
+            comment — the CURRENT tab keeps rendering (and gets `.view-leave`)
+            for one more beat after a click, before `activeTab` itself
+            changes. */}
+        <div className={isLeaving ? "view-leave" : undefined}>
         {activeTab === "Maps" ? (
           <div className="view-enter-soft">
             <MapsView
@@ -718,8 +856,10 @@ export default function App() {
           <div className="view-enter-soft">
             <AssetsView
               area={activeArea}
+              events={areaEvents}
               layerTime={layerTime}
               range={range}
+              onRangeChange={setRange}
               isTimelinePlaying={isTimelinePlaying}
               pendingFilter={pendingFilter}
               onPendingFilterApplied={() => setPendingFilter(null)}
@@ -838,6 +978,55 @@ export default function App() {
           </div>
         ) : activeTab === "Areas" ? (
           <AreasView area={activeArea} range={calendar.range} />
+        ) : activeArea.id === "liwa-crop-monitor" && (activeTab === "Insights" || activeTab === "Drift list") ? (
+          // Crop Monitor's Insights and Drift list share one live map — per
+          // the Figma "Project Bloom Coastal" dashboard reference — rather
+          // than each tab mounting (and re-mounting, WebGL context and all)
+          // its own. Switching between them only swaps which panel floats
+          // over it; the map itself never unmounts or moves. No generic
+          // tree-health grid, no donut charts, no Recent events sidebar —
+          // those belong to every other area's shared Insights layout below,
+          // not this persona's.
+          <div className="view-enter-soft">
+            <MapsView
+              area={activeArea}
+              layerTime={layerTime}
+              range={range}
+              isTimelinePlaying={isTimelinePlaying}
+              focusTree={focusTree}
+              onFocusArrived={(pos) => {
+                setModalAnchor(pos);
+                if (pendingTreeFocus) setOpenTreeEvent(pendingTreeFocus);
+              }}
+              onFocusMove={setModalAnchor}
+              layerVisibility={layerVisibility}
+              onLayerVisibilityChange={setLayerVisibility}
+              layerOpacity={layerOpacity}
+              onLayerOpacityChange={setLayerOpacity}
+              basemapIndex={basemapIndex}
+              onBasemapIndexChange={setBasemapIndex}
+              chrome={false}
+              // This persona's map is a flat crop-inspection view — no 3D
+              // toggle renders (chrome is false), so letting MapCanvas's own
+              // auto-tilt-on-load effect run anyway left the reader stuck on
+              // a pitched, terrain-displaced map with no button to flatten
+              // it back out.
+              show3DToggle={false}
+              fieldFocusRequest={fieldFocusRequest}
+              highlightFieldLetters={hoveredFieldLetters}
+              driftFieldFocus={selectedDriftField}
+              onOpenFarmDetection={(field) => drillIntoAssets({ kind: "farmDetection", field })}
+              overlay={
+                <CropMonitorOverlay
+                  mode={activeTab === "Drift list" ? "drift" : "insights"}
+                  areaName={activeArea.name}
+                  onFocusField={selectDriftField}
+                  selectedField={selectedDriftField}
+                  onHoverFields={setHoveredFieldLetters}
+                />
+              }
+            />
+          </div>
         ) : (
           <div className="view-enter flex gap-[16px] items-stretch px-5 pb-6">
             {/* Main column */}
@@ -988,6 +1177,7 @@ export default function App() {
             </div>
           </div>
         )}
+        </div>
       </div>
 
       <AIAssistant

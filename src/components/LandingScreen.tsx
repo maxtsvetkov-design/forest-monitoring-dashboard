@@ -33,13 +33,15 @@ import {
   areaHectares,
   areaOverlays,
   getTimelapseImages,
+  pointInQuad,
   PROMO_PLANNED_CAPTURES,
+  type MapOverlay,
 } from "../data/overlays";
 import IconBtn from "./IconBtn";
 import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
 import { generateEvents, type TreeEvent } from "../data/events";
-import { CONDITIONS } from "../data/taxonomy";
+import { CONDITIONS, isFlaggedCondition } from "../data/taxonomy";
 import DenseCoverageModal from "./DenseCoverageModal";
 import TierComparisonModal from "./TierComparisonModal";
 import SlotScore from "./SlotScore";
@@ -105,6 +107,14 @@ const SATELLITE_BASEMAP_INDEX = 1;
  */
 const DEMO_LAST_SYNC_HOURS_AGO = 2;
 
+/** How long the "Mapping updated" pill stays before dismissing itself. */
+const SYNC_PILL_VISIBLE_MS = 5000;
+/** Must match `.toast-exit`'s own animation-duration in index.css (see
+ * ManagerContactToast, which uses the identical pattern) — the unmount is
+ * deferred by exactly this long so the exit animation finishes playing
+ * before React actually removes the element. */
+const SYNC_PILL_EXIT_MS = 480;
+
 /** The events bar mirrors the project sidebar on the opposite edge, so it
  *  takes a fixed width where that one is resizable — there is nothing on this
  *  side to trade space with, and the event rows have a natural width. Matches
@@ -123,6 +133,169 @@ function SidebarButton({ src, alt, onClick }: { src: string; alt: string; onClic
     </button>
   );
 }
+
+// Al Maha Forest is a pilot, not one of the contract's monitored sites — the
+// sidebar's "Monitored areas"/"Custom" split (below) is where that
+// distinction actually shows up, so its rows come out of AREA_ROWS here
+// rather than living in a second hand-maintained list that could drift from
+// `data/areas.ts`. Every other project's rows are untouched.
+const CUSTOM_PROJECT_NAME = "Al Maha Forest (Pilot)";
+const MONITORED_AREA_ROWS = AREA_ROWS.filter((row) => row.projectName !== CUSTOM_PROJECT_NAME);
+const CUSTOM_AREA_ROWS = AREA_ROWS.filter((row) => row.projectName === CUSTOM_PROJECT_NAME);
+
+/**
+ * A schematic stand-in for Liwa Oasis Farms' two real sites, drawn over the
+ * background map while "Monitored areas" is the active scope — Custom keeps
+ * the map exactly as it already was (Al Maha's real MapCanvas raster, pins,
+ * and 3D badge, all untouched below). Not a second real MapCanvas render —
+ * one map, two georeferenced quads drawn over its live projection — but a
+ * real ground footprint either way, not a box parked at a fixed spot on the
+ * viewport: each square's own four corners are real `[lng, lat]` points
+ * (`squareCorners`, below), reprojected to screen pixels every frame by
+ * MapCanvas's `focusPoints`/`onFocusPointsChange` (the same mechanism
+ * `onOverlayQuadChange` already gives the tether-line boundary above), so the
+ * square keeps its true ground shape and size through every pan, zoom and
+ * tilt instead of just riding along at one fixed pixel offset from a single
+ * anchor point. Rendered as an SVG `<polygon>` from those four live-projected
+ * corners rather than a CSS box for exactly that reason — a plain
+ * `left/top/width/height` box can't turn into the trapezoid a pitched camera
+ * would actually see, a polygon can.
+ *
+ * Centred a couple hundred real metres apart from `MONITORED_SQUARES_ANCHOR`
+ * (`squareCorners`'s own `centerOffsetM`) rather than at the real, identical
+ * plot centre the Crop Monitor and Date Farm entries actually share (see
+ * `data/areas.ts`'s own comment — "a second lens on the same physical
+ * farm") — plotting both at their true shared centre would draw one square
+ * fully overlapping the other. Still a real, camera-respecting ground
+ * footprint, just a hand-offset one, the same honest simplification this
+ * persona's other mocked panels already lean on (EstateDashboard,
+ * DriftListView) rather than a second layer pretending these are two
+ * distinct, independently-surveyed parcels.
+ *
+ * The notification pins on each square are real, though — each area's own
+ * flagged events (`generateEvents`, the same feed the Recent Events list and
+ * Assets tab worklist read), scattered across hand-picked *fractional*
+ * positions within the square (`NOTICE_SCATTER`, u/v like every other
+ * fractional placement in this app — see `pointInQuad`) rather than real
+ * per-tree coordinates, for the same reason. Each square's own fill carries a
+ * critical/non-critical colour ramp too — green when every notice on it is
+ * routine, red the more of them are flagged as defoliated — so severity
+ * reads straight off the shape before a single pin is even opened.
+ */
+interface MonitoredFarmNotice {
+  id: string;
+  title: string;
+  flagged: boolean;
+  /** Real ground point, `pointInQuad`'d from the square's own corners — see
+   *  the file header for why this isn't a screen-space position. */
+  point: [number, number];
+}
+
+interface MonitoredFarmSquare {
+  areaId: string;
+  label: string;
+  /** Real ground corners, top-left → clockwise — `MapOverlay["coordinates"]`'s
+   *  own order, so `pointInQuad` (notices, above) can be reused unchanged. */
+  corners: MapOverlay["coordinates"];
+  notices: MonitoredFarmNotice[];
+  /** 0 (every notice routine) to 1 (every notice flagged) — drives the
+   *  square's own fill colour, see `criticalRampColor`. */
+  criticalRatio: number;
+}
+
+/** Metres-per-degree-of-longitude shrinks with latitude (meridians converge
+ *  toward the poles); metres-per-degree-of-latitude is constant enough at
+ *  this scale to treat as one number — the same simplification a schematic
+ *  diagram's own ground offsets can afford that a real survey couldn't. */
+const METERS_PER_DEG_LAT = 111_320;
+function offsetLngLat([lng, lat]: [number, number], eastM: number, northM: number): [number, number] {
+  const dLat = northM / METERS_PER_DEG_LAT;
+  const dLng = eastM / (METERS_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180));
+  return [lng + dLng, lat + dLat];
+}
+
+/** A square's own four real ground corners, top-left → clockwise — the same
+ *  order `pointInQuad`/`MapOverlay` already use everywhere else in this app. */
+function squareCorners(center: [number, number], halfSizeM: number): MapOverlay["coordinates"] {
+  return [
+    offsetLngLat(center, -halfSizeM, halfSizeM),
+    offsetLngLat(center, halfSizeM, halfSizeM),
+    offsetLngLat(center, halfSizeM, -halfSizeM),
+    offsetLngLat(center, -halfSizeM, -halfSizeM),
+  ];
+}
+
+// The ground point the schematic squares are built around — real Liwa desert
+// coordinates near the two Liwa Oasis Farms sites. Each square's own corners
+// offset from this, not the point itself drawn on the map.
+const MONITORED_SQUARES_ANCHOR: [number, number] = [54.71565298969728, 24.514783923162966];
+
+/** Fractional (u, v) placements for a handful of notices inside a square,
+ *  fed straight into `pointInQuad` — real ground points, not screen ones. */
+const NOTICE_SCATTER: [number, number][] = [
+  [0.22, 0.28],
+  [0.68, 0.2],
+  [0.4, 0.62],
+  [0.78, 0.6],
+  [0.18, 0.76],
+];
+
+/** Green (every notice on the square routine) toward red (every one
+ *  flagged) — the same three-way severity language `DriftBadge`
+ *  (DriftListView.tsx) already teaches, just continuous here instead of a
+ *  three-bucket pill, since a whole square's mixed notices don't reduce to
+ *  one discrete status the way one parcel's own drift number does. */
+function criticalRampColor(ratio: number): string {
+  const green: [number, number, number] = [15, 157, 104];
+  const red: [number, number, number] = [209, 72, 58];
+  const mix = green.map((c, i) => Math.round(c + (red[i] - c) * ratio));
+  return `rgb(${mix.join(",")})`;
+}
+
+const MONITORED_FARM_SQUARES: MonitoredFarmSquare[] = (() => {
+  const cropMonitorArea = areas.find((a) => a.id === "liwa-crop-monitor");
+  const oasisArea = areas.find((a) => a.id === "liwa-oasis");
+  if (!cropMonitorArea || !oasisArea) return [];
+
+  function buildSquare(
+    area: (typeof areas)[number],
+    centerOffsetM: [number, number],
+    halfSizeM: number,
+    limit: number,
+  ): MonitoredFarmSquare {
+    const corners = squareCorners(offsetLngLat(MONITORED_SQUARES_ANCHOR, centerOffsetM[0], centerOffsetM[1]), halfSizeM);
+    const flaggedEvents = generateEvents(areaOverlays[area.id], area.snapshots, area.id)
+      .filter((e) => isFlaggedCondition(e.severity))
+      .slice(0, limit);
+    const notices: MonitoredFarmNotice[] = flaggedEvents.map((e, i) => ({
+      id: e.id,
+      title: e.title,
+      flagged: e.severity === "defoliated",
+      point: pointInQuad(corners, NOTICE_SCATTER[i][0], NOTICE_SCATTER[i][1]),
+    }));
+    const criticalRatio = notices.length === 0 ? 0 : notices.filter((n) => n.flagged).length / notices.length;
+    return { areaId: area.id, label: area.name, corners, notices, criticalRatio };
+  }
+
+  // Centres ~250-350m apart from the shared anchor — far enough that two
+  // ~350-400m-wide squares read as distinct plots side by side rather than
+  // overlapping, without straying so far the pair reads as unrelated to the
+  // real farm they're standing in for.
+  return [
+    buildSquare(cropMonitorArea, [-260, 90], 200, 3),
+    buildSquare(oasisArea, [230, -90], 170, 2),
+  ];
+})();
+
+/** The flat point list handed to MapCanvas's `focusPoints` — every square's
+ *  own corners, then its own notices, back to back in the same order
+ *  `MONITORED_FARM_SQUARES` lists them, so the live-projected pixels
+ *  (`monitoredSquaresPoints`) can be sliced back apart by each square's own
+ *  known corner/notice counts (see the render below). */
+const MONITORED_SQUARES_FOCUS_POINTS: [number, number][] = MONITORED_FARM_SQUARES.flatMap((sq) => [
+  ...sq.corners,
+  ...sq.notices.map((n) => n.point),
+]);
 
 // The project sidebar's own width — draggable from its right edge, same
 // pattern as the site table's own column grips (see AreaTable).
@@ -191,6 +364,25 @@ export default function LandingScreen({
   // dashboard's timeline opens.
   const [futureOpen, setFutureOpen] = useState(false);
   const [tierModalOpen, setTierModalOpen] = useState(false);
+
+  // The "Mapping updated" pill — appears on arrival, then dismisses itself:
+  // a live-pipeline notice reads as stale reassurance if it just sits there
+  // permanently, the same reasoning ManagerContactToast's own auto-timer
+  // exists for. `leaving` plays the exit animation before `visible` actually
+  // unmounts the pill, so the fade-out gets to finish rather than being cut
+  // off on frame one by a state flip.
+  const [syncPillVisible, setSyncPillVisible] = useState(true);
+  const [syncPillLeaving, setSyncPillLeaving] = useState(false);
+  useEffect(() => {
+    if (syncPillLeaving) return;
+    const t = window.setTimeout(() => setSyncPillLeaving(true), SYNC_PILL_VISIBLE_MS);
+    return () => window.clearTimeout(t);
+  }, [syncPillLeaving]);
+  useEffect(() => {
+    if (!syncPillLeaving) return;
+    const t = window.setTimeout(() => setSyncPillVisible(false), SYNC_PILL_EXIT_MS);
+    return () => window.clearTimeout(t);
+  }, [syncPillLeaving]);
   const heroPreviewImages = useMemo(() => getTimelapseImages(heroArea.id), [heroArea]);
 
   /**
@@ -247,6 +439,7 @@ export default function LandingScreen({
   const pastBtnRef = useRef<HTMLButtonElement>(null);
   const futureBtnRef = useRef<HTMLButtonElement>(null);
   const [overlayQuad, setOverlayQuad] = useState<{ x: number; y: number }[] | null>(null);
+  const [monitoredSquaresPoints, setMonitoredSquaresPoints] = useState<{ x: number; y: number }[] | null>(null);
   const [boundaryPoint, setBoundaryPoint] = useState<{ x: number; y: number } | null>(null);
   const [parallax, setParallax] = useState({ x: 0, y: 0 });
   const [lineEndpoints, setLineEndpoints] = useState<{
@@ -413,8 +606,15 @@ export default function LandingScreen({
         onMouseLeave={handleMapPointerLeave}
       >
         <MapCanvas
-          center={heroArea.center}
-          zoom={13.4}
+          // Monitored areas' anchor is a real, distant ground point (near
+          // Liwa) from Al Maha's own — fixed screen coordinates alone would
+          // never put it on screen. Flying the camera there (MapCanvas
+          // already re-flies on any `center`/`zoom` prop change) is what
+          // makes "fixed over this location" true rather than the anchor
+          // sitting off past the edge of whatever Al Maha's own view
+          // happened to be showing.
+          center={scope === "monitored" ? MONITORED_SQUARES_ANCHOR : heroArea.center}
+          zoom={scope === "monitored" ? 14.6 : 13.4}
           overlay={areaOverlays[heroArea.id]}
           generativeOverlay={areaGenerativeOverlays[heroArea.id]}
           dyingTreeOverlay={areaDyingTreeOverlays[heroArea.id]}
@@ -428,6 +628,8 @@ export default function LandingScreen({
           basemapIndex={basemapIndex}
           onBasemapIndexChange={setBasemapIndex}
           onOverlayQuadChange={setOverlayQuad}
+          focusPoints={MONITORED_SQUARES_FOCUS_POINTS}
+          onFocusPointsChange={setMonitoredSquaresPoints}
           chrome={false}
           className="w-full h-full"
         />
@@ -468,6 +670,78 @@ export default function LandingScreen({
               strokeWidth="1.5"
               className="tether-dot-ring"
             />
+          </svg>
+        )}
+
+        {/* Monitored areas' own schematic overlay — see MONITORED_FARM_SQUARES'
+            own header comment for the full argument (real ground corners,
+            SVG polygons so a pitched camera's trapezoid renders correctly,
+            the critical/non-critical fill ramp). Custom's map (Al Maha's
+            real raster/pins/3D badge, above and below) is untouched either
+            way. `monitoredSquaresPoints` is `MONITORED_SQUARES_FOCUS_POINTS`
+            reprojected live by MapCanvas — see `focusPoints`'s own comment
+            there — sliced back into each square's own corners/notices below
+            by the exact counts that array was built from, so a mismatch
+            there can only come from editing one without the other. */}
+        {scope === "monitored" && monitoredSquaresPoints && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-[8]" aria-hidden="true">
+            {(() => {
+              let cursor = 0;
+              return MONITORED_FARM_SQUARES.map((square) => {
+                const cornerPx = monitoredSquaresPoints.slice(cursor, cursor + square.corners.length);
+                cursor += square.corners.length;
+                const noticePx = monitoredSquaresPoints.slice(cursor, cursor + square.notices.length);
+                cursor += square.notices.length;
+                if (cornerPx.length < square.corners.length) return null;
+
+                const rampColor = criticalRampColor(square.criticalRatio);
+                const points = cornerPx.map((p) => `${p.x},${p.y}`).join(" ");
+                // Label anchored on the top-left corner (index 0, same
+                // ordering `squareCorners` builds) — a few px up/left of it,
+                // clear of the polygon's own edge.
+                const labelX = cornerPx[0].x;
+                const labelY = cornerPx[0].y;
+
+                return (
+                  <g key={square.areaId} className="animate-fade-in-up">
+                    {/* The critical/non-critical wash — fill opacity carries
+                        the signal, not the fill hue alone, so a square with
+                        no notices at all (still green, ratio 0) still reads
+                        as clearly lighter than one flagged throughout. */}
+                    <polygon
+                      points={points}
+                      fill={rampColor}
+                      fillOpacity={0.14 + square.criticalRatio * 0.22}
+                      stroke={rampColor}
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                    />
+                    <foreignObject x={labelX} y={labelY - 26} width={260} height={22} style={{ overflow: "visible" }}>
+                      <span className="inline-block text-[11px] font-semibold text-white bg-[#18181c]/85 px-[8px] py-[3px] rounded-[6px] whitespace-nowrap font-['Outfit',sans-serif]">
+                        {square.label}
+                      </span>
+                    </foreignObject>
+                    {square.notices.map((notice, i) => {
+                      const p = noticePx[i];
+                      if (!p) return null;
+                      return (
+                        <circle
+                          key={notice.id}
+                          cx={p.x}
+                          cy={p.y}
+                          r={7}
+                          fill={notice.flagged ? "#c0392b" : "#e3a008"}
+                          stroke="#fff"
+                          strokeWidth={2}
+                        >
+                          <title>{notice.title}</title>
+                        </circle>
+                      );
+                    })}
+                  </g>
+                );
+              });
+            })()}
           </svg>
         )}
 
@@ -558,19 +832,24 @@ export default function LandingScreen({
           never collides with the tab strip centred over it. Above the
           dashboard overlay's z-[25] for the same reason that strip is, so it
           stays visible while any tab's own section is showing. */}
-      <div
-        className="absolute top-[54px] left-[60px] z-[28] flex items-center gap-[7px] px-[10px] h-[34px] rounded-full bg-white shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-left"
-        style={{ animationDelay: "40ms" }}
-      >
-        <span className="relative flex w-[7px] h-[7px] shrink-0">
-          <span className="absolute inset-0 rounded-full bg-[#0a7761] opacity-70 animate-ping" />
-          <span className="relative w-[7px] h-[7px] rounded-full bg-[#0a7761]" />
-        </span>
-        <span className="text-[12px] font-medium text-[#464650] font-['Outfit',sans-serif] whitespace-nowrap">
-          Mapping updated:{" "}
-          <span className="font-semibold text-[#18181c]">{DEMO_LAST_SYNC_HOURS_AGO} hours ago</span>
-        </span>
-      </div>
+      {syncPillVisible && (
+        <div
+          role="status"
+          className={`absolute top-[54px] left-[60px] z-[28] flex items-center gap-[7px] px-[10px] h-[34px] rounded-full bg-white shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] ${
+            syncPillLeaving ? "toast-exit" : "animate-fade-in-left"
+          }`}
+          style={syncPillLeaving ? undefined : { animationDelay: "40ms" }}
+        >
+          <span className="relative flex w-[7px] h-[7px] shrink-0">
+            <span className="absolute inset-0 rounded-full bg-[#0a7761] opacity-70 animate-ping" />
+            <span className="relative w-[7px] h-[7px] rounded-full bg-[#0a7761]" />
+          </span>
+          <span className="text-[12px] font-medium text-[#464650] font-['Outfit',sans-serif] whitespace-nowrap">
+            Mapping updated:{" "}
+            <span className="font-semibold text-[#18181c]">{DEMO_LAST_SYNC_HOURS_AGO} hours ago</span>
+          </span>
+        </div>
+      )}
 
       {/* Above the dashboard overlay's own z-[25], so the strip stays usable
           while the Dashboard tab is showing and can switch back out of it. */}
@@ -836,7 +1115,9 @@ export default function LandingScreen({
           </div>
 
           {scope === "monitored" ? (
-            <AreaTable rows={AREA_ROWS} onSelectSite={onEnter} />
+            <AreaTable rows={MONITORED_AREA_ROWS} onSelectSite={onEnter} />
+          ) : CUSTOM_AREA_ROWS.length > 0 ? (
+            <AreaTable rows={CUSTOM_AREA_ROWS} onSelectSite={onEnter} />
           ) : (
             <p className="bg-white rounded-[12px] px-[8px] py-[24px] text-[12px] text-[#71717a] font-['Outfit',sans-serif] text-center">
               No custom areas drawn yet.

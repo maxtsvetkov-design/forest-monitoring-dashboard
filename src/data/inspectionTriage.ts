@@ -68,6 +68,13 @@ export interface TriageEntry {
   dateDetected: Date;
   lat: number;
   lng: number;
+  dataSource: "Satellite" | "Drone";
+}
+
+/** Broad spectral/thermal changes resolve from satellite monitoring; small,
+ * discrete infrastructure objects require the closer drone pass. */
+function dataSourceForViolation(title: string): TriageEntry["dataSource"] {
+  return /(tank|storage area|housing|structure)/i.test(title) ? "Drone" : "Satellite";
 }
 
 export function buildTriageEntries(events: TreeEvent[]): TriageEntry[] {
@@ -86,6 +93,7 @@ export function buildTriageEntries(events: TreeEvent[]): TriageEntry[] {
       dateDetected: event.date,
       lat: event.tree.lat,
       lng: event.tree.lng,
+      dataSource: dataSourceForViolation(event.title),
     };
   });
 }

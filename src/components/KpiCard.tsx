@@ -12,6 +12,8 @@ export default function KpiCard({
   delay,
   onDrillDown,
   drillDownLabel,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   label: string;
   value: string;
@@ -31,10 +33,20 @@ export default function KpiCard({
    * it a screen reader hears only the KPI label and no hint that activating
    * the card navigates anywhere. */
   drillDownLabel?: string;
+  /** Crop Monitor's own field-highlight preview — see EstateDashboard's
+   *  `METRIC_FIELDS`. Optional: every other caller of this card leaves it
+   *  unset and gets the exact same hover-less behaviour as before. */
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   const Tag = onDrillDown ? "button" : "div";
   return (
-    <div className="flex-1 min-w-[152px] animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
+    <div
+      className="flex-1 min-w-[152px] animate-fade-in-up"
+      style={{ animationDelay: `${delay}ms` }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       <div className="surface-card surface-card--interactive h-full group">
         {/* `w-full text-left` because a <button> is inline-block and
             centre-aligned by default — without them the card collapses to its

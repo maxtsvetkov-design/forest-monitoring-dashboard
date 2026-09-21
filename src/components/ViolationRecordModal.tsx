@@ -14,6 +14,7 @@ import {
 } from "./TreeHistoryModal";
 import FindingOutcomeActions from "./FindingOutcomeActions";
 import { OUTCOME_META, type FindingOutcome } from "../data/findingOutcome";
+import { cropLabelFor, cropScientificNameFor } from "../data/cropVocabulary";
 
 /**
  * Liwa Oasis's own "expand a violation pin" record — what `TreeHistoryModal`
@@ -63,6 +64,7 @@ export default function ViolationRecordModal({
   outcome,
   onSetOutcome,
   onRequestHiRes,
+  areaId,
 }: {
   entry: TriageEntry;
   /** Every violation on record for this same field, newest first — includes
@@ -82,7 +84,16 @@ export default function ViolationRecordModal({
   /** Opens the evidence pack for this finding — see AssetsView's
    *  `evidencePackEntry`. */
   onRequestHiRes: (entry: TriageEntry) => void;
+  /** Crop Monitor's own species relabeling (see cropVocabulary.ts) applies
+   *  only when this is that area — Liwa Oasis keeps the real botanical
+   *  species/scientific name unchanged. */
+  areaId?: string;
 }) {
+  const isCropMonitor = areaId === "liwa-crop-monitor";
+  const speciesLabel = isCropMonitor ? cropLabelFor(entry.event.tree.species) : entry.event.tree.species;
+  const scientificLabel = isCropMonitor
+    ? cropScientificNameFor(entry.event.tree.species)
+    : entry.event.tree.scientificName;
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -267,10 +278,10 @@ export default function ViolationRecordModal({
                   Species
                 </p>
                 <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif] mt-[2px] truncate">
-                  {entry.event.tree.species}
+                  {speciesLabel}
                 </p>
                 <p className="text-[9.5px] text-[#8a8a94] font-['Outfit',sans-serif] italic truncate">
-                  {entry.event.tree.scientificName}
+                  {scientificLabel}
                 </p>
               </div>
               <div className="rounded-[10px] border border-[#eeeef1] bg-[#f9f9fb] px-[10px] py-[8px]">

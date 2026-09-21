@@ -6,6 +6,9 @@ import { SortArrow, type SortDir } from "./SortArrow";
 import { SeverityChip, TreePreview } from "./RecentEventsList";
 import FindingOutcomeActions from "./FindingOutcomeActions";
 import { OUTCOME_META, type FindingOutcome } from "../data/findingOutcome";
+import { FARM_DETECTIONS } from "../data/farmDetections";
+import type { PendingAssetFilter } from "../hooks/useTreeFilters";
+import FarmDetectionModal from "./FarmDetectionModal";
 
 /**
  * Liwa Oasis's Recent Events — notification cards by default (the same
@@ -45,6 +48,64 @@ function SeverityPill({ label }: { label: TriageEntry["severityLabel"] }) {
       <span className="w-[6px] h-[6px] rounded-full shrink-0" style={{ background: style.dot }} aria-hidden="true" />
       {label}
     </span>
+  );
+}
+
+function FarmDetectionNotification({ field, active, onSelect }: { field: string; active: boolean; onSelect: () => void }) {
+  const detection = FARM_DETECTIONS[field];
+  const style = SEVERITY_STYLE[detection.severity];
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={active}
+      aria-label={`${detection.severity}: ${detection.headline} at Farm ${field}`}
+      className={`u-press group/card relative flex items-start shrink-0 gap-[14px] min-h-[158px] pl-[18px] pr-[14px] py-[14px] overflow-hidden animate-fade-in cursor-pointer rounded-[20px] border transition-all duration-200 hover:-translate-y-[1px] bg-white hover:border-[rgba(0,0,0,0.1)] shadow-[0px_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0px_14px_32px_-12px_rgba(0,0,0,0.16)] text-left ${
+        active ? "border-[#18181c] ring-2 ring-[#18181c]/10" : "border-[rgba(0,0,0,0.06)]"
+      }`}
+    >
+      <span className="absolute inset-y-0 left-0 w-[4px]" style={{ background: style.accent }} aria-hidden="true" />
+      <span
+        className="relative flex h-[58px] w-[58px] shrink-0 items-center justify-center overflow-hidden rounded-[16px] transition-transform duration-200 group-hover/card:scale-[1.04]"
+        style={{ background: style.bg, color: style.fg }}
+        aria-hidden="true"
+      >
+        <span className="absolute h-[38px] w-[38px] rounded-full border opacity-20" style={{ borderColor: style.accent }} />
+        <span className="absolute h-[24px] w-[24px] rounded-full border opacity-35" style={{ borderColor: style.accent }} />
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M5 16.5 8.5 13m7-7 3-3m-8 8 3.5 3.5M7 5l12 12M4.5 7.5l4-4 3 3-4 4-3-3Zm8 8 4-4 3 3-4 4-3-3ZM8 19h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+
+      <span className="flex min-w-0 flex-1 flex-col self-stretch">
+        <span className="flex items-start justify-between gap-[12px]">
+          <span className="min-w-0">
+            <span className="block text-[10px] font-bold uppercase tracking-[0.08em] font-['Outfit',sans-serif]" style={{ color: style.fg }}>
+              Satellite detection · Farm {field}
+            </span>
+            <span className="mt-[4px] block text-[16px] font-extrabold leading-[20px] text-[#18181c] font-['Outfit',sans-serif]">
+            {detection.headline}
+            </span>
+          </span>
+          <SeverityPill label={detection.severity} />
+        </span>
+        <span className="mt-[7px] block text-[12.5px] leading-[18px] text-[#5b5b66] font-['Outfit',sans-serif]">
+          {detection.detail}
+        </span>
+        <span className="mt-auto flex items-center justify-between gap-[10px] border-t border-[rgba(0,0,0,0.06)] pt-[10px]">
+          <span className="flex items-center gap-[7px]">
+            <span className="h-[8px] w-[8px] rounded-full shadow-[0_0_0_4px_rgba(0,0,0,0.035)]" style={{ background: style.dot }} aria-hidden="true" />
+            <span className="text-[10.5px] font-semibold text-[#71717a] font-['Outfit',sans-serif]">Source · Satellite</span>
+          </span>
+          <span className="inline-flex items-center gap-[6px] text-[10.5px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
+            View Farm {field}
+            <svg className="transition-transform duration-200 group-hover/card:translate-x-[2px]" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -211,7 +272,7 @@ function TriageCard({
               {entry.violationType}
             </span>
             <p className="text-[11px] text-[#5b5b66] font-['Outfit',sans-serif] mt-[2px]">
-              {entry.farmId} · Field {entry.field}
+              {entry.farmId} · Farm {entry.field}
             </p>
           </div>
           <div className="flex flex-col items-end gap-[4px] shrink-0">
@@ -253,6 +314,9 @@ function TriageCard({
               {entry.confidencePct}%
             </span>
           </div>
+          <span className="shrink-0 rounded-full bg-[#f4f5f2] px-[8px] py-[4px] text-[10px] font-bold text-[#5b5b66] font-['Outfit',sans-serif]">
+            Source · {entry.dataSource}
+          </span>
         </div>
         <div className="mt-[8px]">
           <FindingOutcomeActions
@@ -275,6 +339,8 @@ export default function InspectionTriageList({
   onRequestHiRes,
   onFocusField,
   onVisibleEntriesChange,
+  pendingDetection,
+  onPendingDetectionApplied,
 }: {
   events: TreeEvent[];
   onSelectEvent?: (event: TreeEvent) => void;
@@ -303,12 +369,19 @@ export default function InspectionTriageList({
    *  make the effect below re-fire every render and loop against the parent's
    *  own setState. */
   onVisibleEntriesChange?: (entries: TriageEntry[]) => void;
+  pendingDetection?: Extract<PendingAssetFilter, { kind: "farmDetection" }> | null;
+  onPendingDetectionApplied?: () => void;
 }) {
-  const allEntries = useMemo(() => buildTriageEntries(events), [events]);
+  const allEntries = useMemo(
+    () => buildTriageEntries(events).filter((entry) => FARM_DETECTIONS[entry.field]),
+    [events],
+  );
 
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
   const [fieldFilter, setFieldFilter] = useState<Set<string>>(new Set());
   const [severityFilter, setSeverityFilter] = useState<Set<string>>(new Set());
+  const [detectionFilter, setDetectionFilter] = useState<string | null>(null);
+  const [detectionModalField, setDetectionModalField] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "dateDetected", dir: "desc" });
   // Cards first — Liwa's own notifications, same as every other area's feed,
   // rather than opening on the denser table. The table and the spatial view
@@ -326,8 +399,25 @@ export default function InspectionTriageList({
   const severityCounts = useMemo(() => {
     const counts = new Map<TriageEntry["severityLabel"], number>();
     for (const e of allEntries) counts.set(e.severityLabel, (counts.get(e.severityLabel) ?? 0) + 1);
+    for (const detection of Object.values(FARM_DETECTIONS)) {
+      counts.set(detection.severity, (counts.get(detection.severity) ?? 0) + 1);
+    }
     return counts;
   }, [allEntries]);
+
+  useEffect(() => {
+    if (!pendingDetection) return;
+    const detection = FARM_DETECTIONS[pendingDetection.field];
+    if (!detection) return;
+    setFieldFilter(new Set([pendingDetection.field]));
+    setDetectionFilter(detection.headline);
+    setTypeFilter(new Set());
+    setSeverityFilter(new Set());
+    setView("cards");
+    onPendingDetectionApplied?.();
+    // Consumed once; the parent clears the pending navigation payload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDetection]);
 
   function toggle(set: Set<string>, setSet: (s: Set<string>) => void, value: string) {
     const next = new Set(set);
@@ -337,10 +427,21 @@ export default function InspectionTriageList({
 
   const filtered = useMemo(() => {
     return allEntries
+      .filter((e) => !detectionFilter || FARM_DETECTIONS[e.field]?.headline === detectionFilter)
       .filter((e) => typeFilter.size === 0 || typeFilter.has(e.violationType))
       .filter((e) => fieldFilter.size === 0 || fieldFilter.has(e.field))
       .filter((e) => severityFilter.size === 0 || severityFilter.has(e.severityLabel));
-  }, [allEntries, typeFilter, fieldFilter, severityFilter]);
+  }, [allEntries, detectionFilter, typeFilter, fieldFilter, severityFilter]);
+
+  const visibleDetections = Object.keys(FARM_DETECTIONS).filter((field) => {
+    const detection = FARM_DETECTIONS[field];
+    return (
+      typeFilter.size === 0 &&
+      (!detectionFilter || detection.headline === detectionFilter) &&
+      (fieldFilter.size === 0 || fieldFilter.has(field)) &&
+      (severityFilter.size === 0 || severityFilter.has(detection.severity))
+    );
+  });
 
   // Push the surviving set up to the map. Deliberately mirrors `filtered`
   // rather than `sorted`: sort order is a reading preference for this list
@@ -406,9 +507,11 @@ export default function InspectionTriageList({
       <div className="px-4 pt-3 pb-2 border-b border-[#dedee3] shrink-0 flex flex-col gap-[8px]">
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-[14px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
-            Flagged farms{" "}
+            Farm notifications{" "}
             <span className="font-normal text-[#5b5b66]">
-              ({sorted.length === allEntries.length ? allEntries.length : `${sorted.length} of ${allEntries.length}`})
+              {sorted.length + visibleDetections.length === allEntries.length + Object.keys(FARM_DETECTIONS).length
+                ? `(${allEntries.length + Object.keys(FARM_DETECTIONS).length})`
+                : `(${sorted.length + visibleDetections.length} of ${allEntries.length + Object.keys(FARM_DETECTIONS).length})`}
             </span>
           </span>
           <div className="flex items-center gap-[2px] bg-[#f6f6f8] border border-[#dedee3] rounded-[10px] p-[2px] shrink-0">
@@ -429,6 +532,27 @@ export default function InspectionTriageList({
         </div>
 
         <div className="flex flex-wrap gap-[6px]">
+          {Object.entries(FARM_DETECTIONS).map(([field, detection]) => (
+            <button
+              key={field}
+              type="button"
+              onClick={() => {
+                const next = detectionFilter === detection.headline ? null : detection.headline;
+                setDetectionFilter(next);
+                if (next) {
+                  setFieldFilter(new Set([field]));
+                  onFocusField?.(field);
+                }
+                setDetectionModalField(field);
+              }}
+              aria-pressed={detectionFilter === detection.headline}
+              className={chipClass(detectionFilter === detection.headline)}
+            >
+              {detection.headline}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-[6px]">
           {violationTypes.map((t) => (
             <button key={t} type="button" onClick={() => toggle(typeFilter, setTypeFilter, t)} className={chipClass(typeFilter.has(t))}>
               {t}
@@ -447,9 +571,10 @@ export default function InspectionTriageList({
                 // more again", not "take me somewhere else".
                 if (turningOn) onFocusField?.(f);
               }}
+              aria-pressed={fieldFilter.has(f)}
               className={chipClass(fieldFilter.has(f))}
             >
-              Field {f}
+              Farm {f}
             </button>
           ))}
           {severities.map((s) => (
@@ -474,12 +599,39 @@ export default function InspectionTriageList({
         {view === "map" ? (
           <SpatialCluster entries={sorted} onSelect={(entry) => onSelectEvent?.(entry.event)} />
         ) : view === "cards" ? (
-          sorted.length === 0 ? (
+          sorted.length === 0 && visibleDetections.length === 0 ? (
             <p className="text-[12px] text-[#71717a] font-['Outfit',sans-serif] py-6 text-center">
               No flags match the current filters.
             </p>
           ) : (
             <div className="h-full overflow-y-auto scroll-slim flex flex-col gap-[8px] p-[2px] -m-[2px]">
+              {visibleDetections.length > 0 && (
+                <div className="flex flex-col gap-[8px] pb-[2px]">
+                  <div className="flex items-center justify-between px-[2px]">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#71717a] font-['Outfit',sans-serif]">
+                      Satellite detections
+                    </span>
+                    <span className="text-[10px] font-semibold tabular-nums text-[#a1a1aa] font-['Outfit',sans-serif]">
+                      {visibleDetections.length}
+                    </span>
+                  </div>
+                  {visibleDetections.map((field) => (
+                    <FarmDetectionNotification
+                      key={field}
+                      field={field}
+                      active={detectionFilter === FARM_DETECTIONS[field].headline && fieldFilter.has(field)}
+                      onSelect={() => {
+                        setDetectionFilter(FARM_DETECTIONS[field].headline);
+                        setFieldFilter(new Set([field]));
+                        setTypeFilter(new Set());
+                        setSeverityFilter(new Set());
+                        onFocusField?.(field);
+                        setDetectionModalField(field);
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
               {sorted.map((entry, i) => (
                 <TriageCard
                   key={entry.event.id}
@@ -523,6 +675,9 @@ export default function InspectionTriageList({
                     </th>
                   ))}
                   <th className="text-left px-[10px] py-[8px] text-[11px] font-semibold text-[#8a8a94] font-['Outfit',sans-serif] uppercase tracking-[0.04em] whitespace-nowrap">
+                    Source
+                  </th>
+                  <th className="text-left px-[10px] py-[8px] text-[11px] font-semibold text-[#8a8a94] font-['Outfit',sans-serif] uppercase tracking-[0.04em] whitespace-nowrap">
                     Outcome
                   </th>
                 </tr>
@@ -549,6 +704,9 @@ export default function InspectionTriageList({
                     <td className="px-[10px] py-[9px]">
                       <SeverityPill label={entry.severityLabel} />
                     </td>
+                    <td className="px-[10px] py-[9px] text-[12px] font-semibold text-[#5b5b66] font-['Outfit',sans-serif] whitespace-nowrap">
+                      {entry.dataSource}
+                    </td>
                     <td className="px-[10px] py-[9px]">
                       <FindingOutcomeActions
                         id={entry.event.id}
@@ -562,7 +720,7 @@ export default function InspectionTriageList({
                 ))}
                 {sorted.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-[10px] py-[24px] text-center text-[12px] text-[#8a8a94] font-['Outfit',sans-serif]">
+                    <td colSpan={7} className="px-[10px] py-[24px] text-center text-[12px] text-[#8a8a94] font-['Outfit',sans-serif]">
                       No flags match the current filters.
                     </td>
                   </tr>
@@ -572,6 +730,9 @@ export default function InspectionTriageList({
           </div>
         )}
       </div>
+      {detectionModalField && (
+        <FarmDetectionModal field={detectionModalField} onClose={() => setDetectionModalField(null)} />
+      )}
     </div>
   );
 }

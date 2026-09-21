@@ -184,7 +184,7 @@ const SPECIES_KEY_BY_LABEL: Record<string, SpeciesKey> = Object.fromEntries(
  *  saltmarsh reduction, and forcing one through that card would be exactly
  *  the kind of contradiction this app's numbers otherwise refuse to carry.
  *  See `generateCropEvents`. */
-const CROP_AREAS = new Set(["liwa-oasis"]);
+const CROP_AREAS = new Set(["liwa-oasis", "liwa-crop-monitor"]);
 
 export function isCropFarm(areaId: string | undefined): boolean {
   return !!areaId && CROP_AREAS.has(areaId);
@@ -202,8 +202,18 @@ export function isCropFarm(areaId: string | undefined): boolean {
  * second independent judgement: CRITICAL is always flagged, INFO never is,
  * and WARNING is a coin flip.
  */
-function randomComplianceDetection(rand: () => number) {
-  const object = COMPLIANCE_DETECTION_OBJECTS[Math.floor(rand() * COMPLIANCE_DETECTION_OBJECTS.length)];
+function randomComplianceDetection(rand: () => number, monthIndex: number) {
+  const priorityObjects = COMPLIANCE_DETECTION_OBJECTS.filter((object) => object.monitoringPriority);
+  const supportingObjects = COMPLIANCE_DETECTION_OBJECTS.filter((object) => !object.monitoringPriority);
+  // Three priority monitoring outcomes for every one supporting compliance
+  // finding keeps the feed centred on cultivation, structures and irrigation.
+  // Priority slots rotate rather than sample randomly, so all four requested
+  // identification classes remain represented instead of one repeating.
+  const priorityIndex = monthIndex - Math.floor(monthIndex / 4);
+  const object =
+    monthIndex % 4 === 3
+      ? supportingObjects[Math.floor(rand() * supportingObjects.length)]
+      : priorityObjects[priorityIndex % priorityObjects.length];
   const flagged = object.severityLabel === "CRITICAL" ? true : object.severityLabel === "INFO" ? false : rand() < 0.5;
   return {
     title: `${object.label} ${object.severityLabel === "INFO" ? "confirmed" : "detected"}`,
@@ -516,7 +526,7 @@ function generateCropEvents(overlay: MapOverlay, snapshots: MonthSnapshot[], are
     const monthRecords = byMonth[monthIndex];
     if (monthRecords.length === 0) return;
 
-    const compliance = randomComplianceDetection(rand);
+    const compliance = randomComplianceDetection(rand, monthIndex);
     const complianceTree = pickTreeForEvent(
       monthRecords,
       rand,

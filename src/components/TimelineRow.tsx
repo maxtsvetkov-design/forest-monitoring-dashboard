@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import CalendarRangePicker from "./CalendarRangePicker";
 import HabitatMonthTimeline from "./HabitatMonthTimeline";
 import LayersDropdown from "./LayersDropdown";
@@ -18,6 +19,8 @@ export default function TimelineRow({
   range,
   onRangeChange,
   habitat,
+  centerContent,
+  rightContent,
 }: {
   months: string[];
   range: DateRange;
@@ -30,9 +33,29 @@ export default function TimelineRow({
     compareIndex?: number | null;
     onCompareToggle?: (index: number) => void;
   };
+  /** Extra content centred in this row, alongside the picker rather than
+   *  replacing it — Crop Monitor's own cycle heading (App.tsx), which used
+   *  to open its own Insights panel's top bar and now reads better as part
+   *  of the shared calendar row every tab already has. Absolutely
+   *  positioned against the row's own left edge at 50% width, not a flex
+   *  child between two equal spacers — a flex split centres against
+   *  whatever's left over *after* the picker's own width, which reads
+   *  visibly off-centre against the row as a whole; this centres against
+   *  the full row, the picker's width included, ignoring it entirely. */
+  centerContent?: ReactNode;
+  /** Extra content pinned to this row's own right edge, alongside the
+   *  centred heading — Crop Monitor's own "Last scan" note (App.tsx), which
+   *  used to sit at the far end of the same panel `centerContent`'s
+   *  heading came from. `ml-auto` pushes it there regardless of whether
+   *  `centerContent` is present, the same trick the header's own
+   *  Filters/Customize/Export cluster uses. */
+  rightContent?: ReactNode;
 }) {
   return (
-    <div className="flex items-center px-2 py-2 gap-3 animate-fade-in-up" style={{ animationDelay: "190ms" }}>
+    <div
+      className="relative flex items-center px-2 py-2 gap-3 animate-fade-in-up"
+      style={{ animationDelay: "190ms" }}
+    >
       {habitat && <LayersDropdown />}
       {habitat ? (
         <HabitatMonthTimeline
@@ -47,6 +70,10 @@ export default function TimelineRow({
       ) : (
         <CalendarRangePicker months={months} range={range} onChange={onRangeChange} />
       )}
+      {centerContent && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">{centerContent}</div>
+      )}
+      {rightContent && <div className="ml-auto shrink-0">{rightContent}</div>}
     </div>
   );
 }

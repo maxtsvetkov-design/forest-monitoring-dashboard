@@ -66,7 +66,8 @@ export type PendingAssetFilter =
   | { kind: "crown"; value: string }
   | { kind: "diameter"; value: string }
   | { kind: "height"; value: string }
-  | { kind: "canopyLoss" };
+  | { kind: "canopyLoss" }
+  | { kind: "farmDetection"; field: string };
 
 /** Applies a handed-over filter to a live TreeFilters instance. Lives here,
  * next to the setters it dispatches to, so a new `kind` can't be added to the
@@ -87,6 +88,9 @@ export function applyPendingFilter(filters: TreeFilters, pending: PendingAssetFi
       return;
     case "canopyLoss":
       filters.setCanopyLossOnly();
+      return;
+    case "farmDetection":
+      filters.clear();
       return;
   }
 }

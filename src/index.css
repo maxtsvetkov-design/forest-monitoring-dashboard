@@ -1,6 +1,67 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap');
 @import 'tailwindcss';
 
+/* Assets map: first-class farm detections, visually distinct from tree pins. */
+.farm-detection-pin {
+  position: relative;
+  width: 46px;
+  height: 54px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 8px 12px rgb(24 24 28 / 0.24));
+}
+
+.farm-detection-pin__body {
+  position: absolute;
+  inset: 0 3px 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  place-items: center;
+  padding: 0 8px;
+  border: 2px solid white;
+  border-radius: 14px 14px 14px 3px;
+  color: white;
+  font-family: "Outfit", sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  transform: rotate(-4deg);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.farm-detection-pin__body span,
+.farm-detection-pin__body strong {
+  transform: rotate(4deg);
+}
+
+.farm-detection-pin__body strong { font-size: 17px; }
+.farm-detection-pin--warning .farm-detection-pin__body { background: #c98a1a; }
+.farm-detection-pin--critical .farm-detection-pin__body { background: #c0392b; }
+.farm-detection-pin:hover .farm-detection-pin__body,
+.farm-detection-pin:focus-visible .farm-detection-pin__body {
+  transform: rotate(0deg) translateY(-3px) scale(1.06);
+  box-shadow: 0 10px 24px rgb(24 24 28 / 0.28);
+}
+
+.farm-detection-pin__pulse {
+  position: absolute;
+  inset: 7px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  animation: farm-detection-pulse 2.2s ease-out infinite;
+}
+.farm-detection-pin--warning { color: #c98a1a; }
+.farm-detection-pin--critical { color: #c0392b; }
+
+@keyframes farm-detection-pulse {
+  from { opacity: 0.55; transform: scale(0.65); }
+  to { opacity: 0; transform: scale(1.5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .farm-detection-pin__pulse { animation: none; }
+}
+
 @font-face {
   font-family: "DM Sans:Medium";
   src: url("https://static.figma.com/font/DMSans_opsz_wght__1") format("woff2");
@@ -260,7 +321,8 @@ html, body, #root {
   pointer-events: none;
 }
 .tree-pin--hidden .tree-pin__body,
-.tree-pin--hidden .tree-pin__blob {
+.tree-pin--hidden .tree-pin__blob,
+.tree-pin--hidden .tree-pin__glass {
   transform: scale(0.4);
 }
 
@@ -399,8 +461,161 @@ html, body, #root {
 .map--blob-mode .tree-pin__pulse {
   visibility: hidden;
 }
-.tree-pin:hover .tree-pin__body {
+.tree-pin:hover .tree-pin__body,
+.tree-pin:hover .tree-pin__glass {
   transform: scale(1.15);
+}
+
+/* ---------------------------------------------------------------------------
+   Glass pins — a DOM simulation of Anderson Mancini's WebGPU glass material
+   (webgpu-glass-material.vercel.app), which is the WebGPU/TSL port of drei's
+   MeshTransmissionMaterial. Applied to RED pins only (see GLASS_PIN_COLORS in
+   MapCanvas): "Sparse" canopy condition and CRITICAL compliance findings.
+
+   That material cannot be ported literally — it is a WebGPU transmission
+   shader that resolves a backdrop render target per frame, and these pins are
+   DOM markers over MapLibre's WebGL2 canvas, not geometry inside it. What IS
+   portable is the physics it models, term by term. Its own published config
+   and the analogue used here:
+
+     transmission: 1        -> backdrop-filter: the satellite imagery behind
+                               the pin is genuinely sampled and shows through.
+                               This is real transmission, not a painted fake.
+     anisotropicBlur: 0.47  -> the blur() radius of that backdrop sample
+     ior: 1.25 / thickness  -> saturate()+brightness() lift on the transmitted
+                               light, plus the inset depth shading below —
+                               a lens concentrates what passes through it
+     dispersion: 6.5        -> the paired warm/cool inset rims: long
+                               wavelengths bend less than short ones, so a
+                               thick edge splits them to opposite sides
+     fresnelIntensity: 0.12 -> the 1px fresnelColor (#f2f7ff) edge ring
+     iridescence: 0.45      -> the thin-film hue sweep across the body
+     clearcoat + specular   -> the small bright highlight on the head
+     attenuationColor/color -> var(--pin-color): the pin's own red, which is
+                               what "respect the colour" means here — the
+                               tree still reads by its condition band, it is
+                               just now reading THROUGH glass rather than off
+                               a flat fill.
+
+   Sibling of .tree-pin__body rather than a child, deliberately — see the
+   backdrop-root note in MapCanvas's buildPinElement. */
+.tree-pin__glass {
+  display: none;
+  position: absolute;
+  inset: 0;
+  /* The same teardrop the SVG strokes, in the same 26x34 coordinate space —
+     the marker is unscaled, so path units are CSS px 1:1 and the glass body
+     lands exactly inside the white outline drawn over it. */
+  clip-path: path("M13 33.5C13 33.5 24.5 20.8 24.5 13A11.5 11.5 0 1 0 1.5 13C1.5 20.8 13 33.5 13 33.5Z");
+  pointer-events: none;
+  /* Mirrors .tree-pin__body's own crossfade to the zoomed-out blob exactly —
+     the two have to fade as one object, or the glass outlives the icon it is
+     supposed to be made of. */
+  opacity: clamp(0, calc((0.55 - var(--pin-t, 0)) / 0.15), 1);
+  transition: transform 150ms ease-out, opacity 200ms ease-out;
+}
+
+.tree-pin--glass .tree-pin__glass {
+  display: block;
+}
+
+/* CSS `fill` beats the SVG's own `fill="var(--pin-color)"` presentation
+   attribute, so the teardrop's flat fill drops out and the glass body behind
+   it becomes what you actually see. The white stroke stays — a transmissive
+   object still needs a silhouette to read against busy imagery. */
+.tree-pin--glass .tree-pin__body svg path {
+  fill: transparent;
+}
+
+.tree-pin--glass .tree-pin__glass {
+  backdrop-filter: blur(2.6px) saturate(1.75) brightness(1.07);
+  -webkit-backdrop-filter: blur(2.6px) saturate(1.75) brightness(1.07);
+  background:
+    /* clearcoat 0.2 + specularIntensity 1 — one tight highlight, up and to
+       the left, where the demo's key light sits. */
+    radial-gradient(5.5px 4.5px at 35% 25%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 72%),
+    /* iridescence 0.45 / iridescenceIOR 1.14 — thin-film interference reads
+       as a hue sweep across the body, not a single tint. */
+    linear-gradient(
+      145deg,
+      rgba(122, 202, 255, 0.3) 0%,
+      rgba(255, 143, 222, 0.17) 38%,
+      rgba(255, 231, 122, 0.19) 68%,
+      rgba(122, 255, 212, 0.26) 100%
+    ),
+    /* color / attenuationColor — the pin's own band colour, carried as a
+       tint through the glass rather than painted on it. */
+    radial-gradient(
+      120% 90% at 50% 60%,
+      color-mix(in srgb, var(--pin-color) 58%, transparent),
+      color-mix(in srgb, var(--pin-color) 24%, transparent) 72%
+    );
+  box-shadow:
+    /* fresnelIntensity 0.12, fresnelColor #f2f7ff — grazing-angle rim */
+    inset 0 0 0 1px rgba(242, 247, 255, 0.5),
+    /* dispersion 6.5 — warm and cool split to opposite edges */
+    inset 1.6px 0 2.5px rgba(255, 64, 48, 0.36),
+    inset -1.6px 0 2.5px rgba(64, 150, 255, 0.36),
+    /* backside / backsideThickness 1.5 — light that made it through the far
+       wall pools against the top of the near one */
+    inset 0 2.5px 5px rgba(255, 255, 255, 0.42),
+    /* thickness 3.5 — the body gets optically deeper toward the tip */
+    inset 0 -3px 6px rgba(9, 30, 22, 0.28);
+}
+
+/* Zoomed out the teardrop has already crossfaded into .tree-pin__blob, so
+   the glass is invisible — but a backdrop-filter still costs a full backdrop
+   resolve per pin per frame whether or not anyone can see it. Dropping it in
+   blob mode is what keeps a red-heavy plot from paying for dozens of
+   invisible transmission samples while the map is being panned. */
+.map--blob-mode .tree-pin__glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Drift-focus glow — toggled on a pin (`.tree-pin--drift-glow`, set from
+   MapCanvas's pin-visibility effect) only while a Drift list card has
+   isolated a field AND the pin's own colour is one GLASS_PIN_COLORS marks
+   red. Every OTHER pin on the isolated field keeps its ordinary look; this
+   is what says "here specifically" on top of "this field generally" (the
+   basemap dim + the other fields hidden).
+
+   Reuses `.tree-pin__pulse` — the ring already marking the pin's ground
+   point — rather than adding a new element: it already sits at the right
+   spot (bottom-anchored, sibling of the floating body) and already carries
+   `background: var(--pin-color)`, so scaling its size/opacity up is a real
+   glow from the pin's own red, not a second colour introduced just for this
+   mode. `--pin-color` IS red for every pin this class ever applies to (see
+   GLASS_PIN_COLORS), so nothing here hardcodes a colour of its own. */
+.tree-pin--drift-glow .tree-pin__pulse {
+  width: 30px;
+  height: 30px;
+  margin-left: -15px;
+  bottom: -16px;
+  opacity: 0.55;
+  filter: blur(2px);
+  animation: driftGlowPulse 1.6s var(--ease-soft) infinite;
+}
+
+.tree-pin--drift-glow .tree-pin__anchor {
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9), 0 0 14px 3px var(--pin-color);
+}
+
+.tree-pin--drift-glow .tree-pin__body {
+  filter: blur(calc(var(--pin-t, 0) * 1px)) drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35))
+    drop-shadow(0 0 4px var(--pin-color)) drop-shadow(0 0 12px var(--pin-color));
+}
+
+@keyframes driftGlowPulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.15);
+  }
 }
 
 .tree-pin__label {
@@ -1275,6 +1490,143 @@ body.is-dragging-resize {
   transform: translateY(-1px);
 }
 
+/* Hi-res capture CTA (EstateDashboard's "Area by crop type" header) — the one
+   button in that toolbar that commits real spend (see PRICE_ROW), so it gets
+   a treatment no other toolbar button here has: a brand-gradient fill, an
+   ambient glow that breathes at rest, a cursor-following spotlight
+   (`--mx`/`--my`, set from EstateDashboard's own `mousemove` handler), and a
+   magnetic pointer-follow. The translate/scale itself is written straight to
+   this element's `transform` by that same handler's own rAF loop (a lerp
+   toward the cursor, not a CSS transition) — a CSS `transition: transform`
+   here would double-smooth a value that's already being eased in JS, which
+   reads as sluggish drag rather than a snappy magnet, so this class
+   deliberately transitions everything BUT transform.
+   Written unlayered so it wins over the element's own Tailwind
+   `disabled:*` classes (see DESIGN-SYSTEM.md §1) — the disabled/pending
+   looks live here instead, right next to the enabled one, rather than
+   losing silently to the cascade-layer rule. */
+.capture-cta {
+  --mx: 50%;
+  --my: 50%;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #14b57e, #096151);
+  box-shadow: 0 2px 6px rgba(9, 97, 81, 0.35), 0 8px 22px -6px rgba(9, 97, 81, 0.55);
+  transition: box-shadow var(--dur-3) var(--ease-out), background var(--dur-3) var(--ease-out);
+  will-change: transform;
+}
+
+.capture-cta:hover:not(:disabled) {
+  box-shadow: 0 4px 14px rgba(9, 97, 81, 0.4), 0 18px 36px -8px rgba(9, 97, 81, 0.55);
+}
+
+/* The cursor-following highlight — a soft light source under the pointer,
+   the detail that separates a button that merely lifts on hover from one
+   that feels alive under the cursor. Only visible on hover: at rest `--mx`/
+   `--my` sit at their unset 50%/50% default anyway, but hiding it also
+   means EstateDashboard's handler doesn't need to reset the variables on
+   mouseleave — the transition just fades it back out. */
+.capture-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(90px circle at var(--mx) var(--my), rgba(255, 255, 255, 0.38), transparent 65%);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+
+.capture-cta:hover:not(:disabled)::after {
+  opacity: 1;
+}
+
+.capture-cta:disabled {
+  background: #e6f2ec;
+  color: #096151;
+  box-shadow: none;
+}
+
+/* Pending — a request in flight, not a dead end. Amber rather than the flat
+   grey a plain `:disabled` gets elsewhere: this state is still "something is
+   happening", just not something this session controls the pace of (the
+   real HI_RES_TURNAROUND is measured in days, not clicks). */
+.capture-cta--pending:disabled {
+  background: linear-gradient(135deg, #f0b563, #c98a1a);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(201, 138, 26, 0.32), 0 8px 20px -6px rgba(201, 138, 26, 0.45);
+}
+
+.capture-cta::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: inherit;
+  background: inherit;
+  filter: blur(11px);
+  opacity: 0.5;
+  z-index: -1;
+  animation: captureCtaBreathe 2.6s var(--ease-soft) infinite;
+}
+
+.capture-cta:disabled::before {
+  display: none;
+}
+
+.capture-cta--pending:disabled::before {
+  display: block;
+}
+
+@keyframes captureCtaBreathe {
+  0%, 100% {
+    opacity: 0.32;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.06);
+  }
+}
+
+/* The small pulsing dot inside the button's "Waiting to be delivered"
+   label — same breathing language as the glow, scaled down to read as "in
+   progress" rather than a decorative bullet. */
+.capture-pending-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #fff;
+  animation: capturePendingPulse 1.4s var(--ease-soft) infinite;
+}
+
+@keyframes capturePendingPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* The pending tick on CaptureTimeline itself — a soft amber ring pulse so
+   the still-hollow dot doesn't read as inert while the request is in
+   flight. */
+.capture-dot-pending {
+  animation: captureDotPendingPulse 1.8s var(--ease-soft) infinite;
+}
+
+@keyframes captureDotPendingPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(201, 138, 26, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(201, 138, 26, 0.12);
+  }
+}
+
 /* --- Type ----------------------------------------------------------------- */
 /* Card titles were 14px/medium in a #4b4b54 grey, which put them at roughly
    the same visual weight as the data underneath them. Bumping weight and
@@ -1366,20 +1718,34 @@ body.is-dragging-resize {
 
 /* --- View transitions ----------------------------------------------------- */
 /* Keyed on the active tab, so switching replays the entrance. */
+/* A liquid settle, not a fade-up: the same squash-and-stretch language the
+   tab pill's own `tabPillLiquid` already established (bulge wide+flat off
+   the start, overshoot narrow+tall, settle) — applied to the whole content
+   area instead of a 9px pill, plus the blur-to-focus a pill has no need for.
+   Three explicit stops, each with its own timing function, is what actually
+   reads as liquid rather than one eased curve: it decelerates hard into the
+   overshoot, then eases back out of it, rather than tracing one smooth arc. */
 .view-enter {
-  animation: viewEnter var(--dur-5) var(--ease-lux) backwards;
+  animation: viewEnter 760ms var(--ease-lux) backwards;
 }
 
 @keyframes viewEnter {
-  from {
+  0% {
     opacity: 0;
-    transform: translate3d(0, 10px, 0) scale(0.994);
-    filter: blur(5px);
+    filter: blur(14px);
+    transform: translate3d(0, 26px, 0) scale(0.965) skewY(1deg);
+    animation-timing-function: var(--ease-spring);
   }
-  to {
+  62% {
     opacity: 1;
-    transform: none;
+    filter: blur(0.5px);
+    transform: translate3d(0, -4px, 0) scale(1.012) skewY(-0.3deg);
+    animation-timing-function: var(--ease-lux);
+  }
+  100% {
+    opacity: 1;
     filter: none;
+    transform: none;
   }
 }
 
@@ -1397,6 +1763,38 @@ body.is-dragging-resize {
   }
   to {
     opacity: 1;
+  }
+}
+
+/* The exit half of a tab switch — see App.tsx's `switchTab`. The outgoing
+   tab keeps rendering for `VIEW_LEAVE_MS` after a click (React doesn't
+   unmount it until that timer commits the real `setActiveTab`), which is
+   what gives this something real to animate: a fast downscale-and-blur-away
+   rather than just vanishing. Its duration must match `VIEW_LEAVE_MS`
+   exactly, or the swap either cuts this off mid-flight or leaves a dead gap
+   after it finishes.
+
+   (An earlier pass tried the browser's own View Transitions API instead —
+   snapshot the old DOM via `document.startViewTransition`, animate the
+   snapshot via `::view-transition-old(root)` — which needs no extra render
+   state at all. It blanked the whole content pane for the transition's full
+   duration in testing, though, a worse regression than no exit animation;
+   this hand-rolled version trades that elegance for something verified to
+   actually show the content it's animating.) */
+.view-leave {
+  animation: viewLeaveDownscale var(--view-leave-ms, 320ms) var(--ease-glide) both;
+}
+
+@keyframes viewLeaveDownscale {
+  0% {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    filter: blur(9px);
+    transform: scale(0.96) translate3d(0, -10px, 0);
   }
 }
 

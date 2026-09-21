@@ -118,6 +118,68 @@ export const AREA_ROWS: SiteRowData[] = areas.map((area) => {
   };
 });
 
+interface SiteAlert {
+  /** The bold top line — a real figure, same convention as the health/canopy
+   *  chips this renders alongside (`HealthIndicatorChip`, below). */
+  value: string;
+  label: "Expansion" | "Structural change";
+  /** Sign only, not a literal computed delta: drives the same
+   *  green-rising/orange-falling read `HealthIndicatorChip` already gives
+   *  the health-score and canopy-cover chips, so an "Expansion" alert reads
+   *  as the good-news green those chips use for a rising number and
+   *  "Structural change" reads as the same amber caution a falling one
+   *  gets — not because either is literally more or less of anything. */
+  deltaPct: number;
+}
+
+/**
+ * A site's own real, already-reported changes, surfaced right in the site
+ * table rather than only one click deeper — drawn from that persona's
+ * existing hand-authored content (the Drift list's field register for Crop
+ * Monitor, the Insights tab's "what changed since last cycle" log for the
+ * Date Farm) so a chip here can never quote a different figure than what
+ * that site's own tabs already say. Keyed by area id, present only for the
+ * two Liwa Oasis Farms sites that actually have this kind of change to
+ * report this cycle — every other site's row renders with no chips, exactly
+ * as before.
+ */
+const SITE_ALERTS: Record<string, SiteAlert[]> = {
+  "liwa-crop-monitor": [
+    // Field C's own real drift figure (fieldDrift.ts) — filed as fallow
+    // since 2024, now fully under cultivation.
+    { value: "100%", label: "Expansion", deltaPct: 1 },
+    // Field B's own real drift figure — the unregistered forage strip.
+    { value: "22%", label: "Structural change", deltaPct: -1 },
+  ],
+  "liwa-oasis": [
+    // EstateDashboard's own Field C extent delta this cycle.
+    { value: "+2.6 ha", label: "Expansion", deltaPct: 1 },
+    // EstateDashboard's own Field D tree-stock delta after this cycle's
+    // stand thinning.
+    { value: "-64", label: "Structural change", deltaPct: -1 },
+  ],
+};
+
+/** A single-line marker for `SiteAlert` — deliberately not `HealthIndicator
+ *  Chip`'s two-line card, and not even a text-bearing pill: this name
+ *  column resolves to a hard 114px (its grid track's own minimum — the
+ *  other four columns' fixed widths leave `1fr` nothing to actually grow
+ *  into), so a badge with `alert.value` spelled out in it left the site
+ *  name itself zero width to truncate into, invisible rather than merely
+ *  short. A small colour-coded dot fits both alerts in ~20px total, real
+ *  room left for the name — the value and full label still read on hover
+ *  (`title`), the same trade every compact indicator in this app makes. */
+function SiteAlertDot({ alert }: { alert: SiteAlert }) {
+  const rising = alert.deltaPct >= 0;
+  return (
+    <span
+      title={`${alert.label}: ${alert.value}`}
+      className="inline-block w-[8px] h-[8px] rounded-full shrink-0 border border-white shadow-[0_0_0_1px_rgba(0,0,0,0.06)]"
+      style={{ background: rising ? "#0f9d68" : "#c98a1a" }}
+    />
+  );
+}
+
 interface SiteColumn {
   key: "name" | SortableKey;
   label: string;
@@ -126,6 +188,11 @@ interface SiteColumn {
    * inside what's already a sidebar overlay. */
   defaultWidth?: number;
   minWidth?: number;
+  /** Narrower floor/default used only in the "compact" sidebar variant — see
+   * HealthIndicatorChip's own `compact` prop. Falls back to defaultWidth/
+   * minWidth when absent, so most columns need no second set of numbers. */
+  compactDefaultWidth?: number;
+  compactMinWidth?: number;
   sortValue: (row: SiteRowData) => number | string;
   defaultDir: SortDir;
   /** Hidden in the sidebar's "compact" variant — see the file header. */
@@ -156,11 +223,16 @@ const SITE_COLUMNS: SiteColumn[] = [
   {
     key: "health",
     label: "Health indicators",
-    // 196 is the floor for the two chips side by side; below it they wrap and
-    // every row in the table doubles in height. Measured, not guessed — 182
-    // looked like it should fit and did not.
+    // 196 is the floor for the two full two-line chips side by side; below it
+    // they wrap and every row in the table doubles in height. Measured, not
+    // guessed — 182 looked like it should fit and did not. The compact
+    // sidebar variant renders the label-less HealthIndicatorChip instead
+    // (value + arrow only), which fits both chips in much less room, so it
+    // gets its own, smaller floor here rather than borrowing this one.
     defaultWidth: 196,
     minWidth: 190,
+    compactDefaultWidth: 122,
+    compactMinWidth: 112,
     // The column shows two chips (health score, canopy trend); health score is
     // the more load-bearing of the two, so it's what a click on this header
     // sorts by.
@@ -208,6 +280,16 @@ const SITE_COLUMNS: SiteColumn[] = [
 const RESIZABLE_COLUMNS = SITE_COLUMNS.filter((c): c is SiteColumn & { defaultWidth: number; minWidth: number } =>
   Boolean(c.defaultWidth),
 );
+
+/** The effective default/min width for a resizable column, given which
+ * variant it's rendering in — see SiteColumn's compactDefaultWidth/
+ * compactMinWidth fields. */
+function defaultWidthFor(column: SiteColumn & { defaultWidth: number }, variant: "compact" | "full"): number {
+  return variant === "compact" && column.compactDefaultWidth !== undefined ? column.compactDefaultWidth : column.defaultWidth;
+}
+function minWidthFor(column: SiteColumn & { minWidth: number }, variant: "compact" | "full"): number {
+  return variant === "compact" && column.compactMinWidth !== undefined ? column.compactMinWidth : column.minWidth;
+}
 
 const KEYBOARD_RESIZE_STEP = 16;
 
@@ -366,8 +448,41 @@ function TierTag() {
  * Deliberately NOT `u-press` or `cursor-pointer`: those signal something
  * clickable, and this chip has no action of its own — the row it sits in owns
  * the click. */
-function HealthIndicatorChip({ label, value, deltaPct }: { label: string; value: string; deltaPct: number }) {
+function HealthIndicatorChip({
+  label,
+  value,
+  deltaPct,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  deltaPct: number;
+  /** The sidebar's 566px width leaves no room for two full two-line chips
+   *  beside a readable site name (see NAME_MIN_WIDTH's own comment on the
+   *  114px floor) — this collapses the chip to value + trend arrow only,
+   *  dropping the label text, and lets the full-width Table tab keep the
+   *  two-line reference layout. The label still reads on hover (`title`). */
+  compact?: boolean;
+}) {
   const rising = deltaPct >= 0;
+  if (compact) {
+    return (
+      <div
+        title={label}
+        className="shrink-0 flex items-center gap-[3px] px-[7px] py-[4px] rounded-[10px] border border-[#e2e4d9] bg-[#f2f4ec]"
+      >
+        <span className="text-[11px] font-bold text-[#18181c] font-['Outfit',sans-serif] leading-[14px] tabular-nums whitespace-nowrap">
+          {value}
+        </span>
+        <img
+          src={imgIcTrendingUp}
+          alt=""
+          className={`w-[8px] h-[8px] ${rising ? "" : "-scale-y-100"}`}
+          style={{ filter: rising ? "none" : "hue-rotate(-45deg)" }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="shrink-0 flex flex-col gap-[2px] px-[10px] py-[8px] rounded-[16px] border border-[#e2e4d9] bg-[#f2f4ec]">
       <span className="text-[12px] font-bold text-[#18181c] font-['Outfit',sans-serif] leading-[16px] tabular-nums">
@@ -511,16 +626,72 @@ function TreeCountCell({
   );
 }
 
+/** A small labelled stat pill for the compact card layout — same shape as
+ * `HealthIndicatorChip`'s own `compact` mode (value + optional trend arrow,
+ * no room for a two-line label), generalized to any of the row's metrics
+ * rather than just health score/canopy cover, so the sidebar card can surface
+ * every metric the full table has instead of the five the old column set
+ * allowed room for.
+ *
+ * A metric with a negative `deltaPct` (declining, not merely "the smaller
+ * number") tints reddish rather than the neutral grey every other chip
+ * gets — the same sign convention `HealthIndicatorChip` already uses for its
+ * arrow colour, just extended to the whole chip so a declining metric reads
+ * as a flag at a glance instead of only on close reading of a tiny arrow. */
+function MetricChip({ label, value, deltaPct }: { label: string; value: string; deltaPct?: number }) {
+  const hasTrend = deltaPct !== undefined;
+  const rising = hasTrend && deltaPct >= 0;
+  const declining = hasTrend && !rising;
+  return (
+    <div
+      title={label}
+      className={`shrink-0 flex items-center gap-[4px] px-[7px] py-[4px] rounded-[10px] border ${
+        declining ? "border-[#e8b09c] bg-[#fbe9e3]" : "border-[#e2e4d9] bg-[#f2f4ec]"
+      }`}
+    >
+      <span
+        className="text-[9.5px] font-medium font-['Outfit',sans-serif] uppercase tracking-[0.03em] whitespace-nowrap"
+        style={{ color: declining ? "#b3542f" : "#8a8a94" }}
+      >
+        {label}
+      </span>
+      <span
+        className="text-[11px] font-bold font-['Outfit',sans-serif] leading-[14px] tabular-nums whitespace-nowrap"
+        style={{ color: declining ? "#96371a" : "#18181c" }}
+      >
+        {value}
+      </span>
+      {hasTrend && (
+        <img
+          src={imgIcTrendingUp}
+          alt=""
+          className={`w-[8px] h-[8px] ${rising ? "" : "-scale-y-100"}`}
+          style={{ filter: rising ? "none" : "hue-rotate(-45deg)" }}
+        />
+      )}
+    </div>
+  );
+}
+
 /** One monitored site under its project group — the actual data row, indented
- * slightly under the group heading above it. Renders one cell per column in
- * `columns`, the same variant-filtered list the header uses, so the two can
- * never drift out of alignment. */
+ * slightly under the group heading above it.
+ *
+ * The "full" (Table tab) variant renders one cell per column in `columns`,
+ * the same variant-filtered list the header uses, so the two can never drift
+ * out of alignment.
+ *
+ * The "compact" (566px sidebar) variant instead renders a card: a header line
+ * (name, alerts, tier) over a wrapped row of every metric as a `MetricChip` —
+ * not just the five columns the old column-grid had room for. A card can wrap
+ * its content to fit the sidebar's width; a single grid row can't, which is
+ * what made columns disappear behind `fullOnly` in the first place. */
 function SiteRow({
   site,
   columns,
   delay,
   onClick,
   columnsTemplate,
+  compact,
 }: {
   site: SiteRowData;
   columns: SiteColumn[];
@@ -528,9 +699,88 @@ function SiteRow({
   /** Opens this site's own dashboard. */
   onClick: () => void;
   /** The header's live column widths, so a resized column and its rows never
-   * fall out of alignment mid-drag. */
+   * fall out of alignment mid-drag. Unused in the compact card layout. */
   columnsTemplate: string;
+  /** True in the 566px sidebar variant — renders the card layout below
+   * instead of the column grid. */
+  compact: boolean;
 }) {
+  const alerts = SITE_ALERTS[site.id];
+
+  // Which of this site's real metrics are declining (not just "the lower
+  // number" — the same sign MetricChip already tints red). Health score,
+  // canopy cover and tree stock are the three metrics this dataset actually
+  // links causally — a thinning canopy is close to definitionally a drop in
+  // both tree stock and the health score computed from it — so two or more
+  // of them declining together isn't a coincidence worth burying in three
+  // separately-read chips; it's grouped below so the correlation reads as
+  // one signal instead of three.
+  const healthDeclining = site.healthScore - 75 < 0;
+  const canopyDeclining = site.trendPct < 0;
+  const treesDeclining = (site.totalTreesChange ?? 0) < 0;
+  const correlatedDecline = [healthDeclining, canopyDeclining, treesDeclining].filter(Boolean).length >= 2;
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="u-press w-full flex flex-col gap-[10px] px-[14px] py-[14px] text-left cursor-pointer hover:bg-[#fbfbfa] animate-fade-in-up"
+        style={{ animationDelay: `${delay}ms` }}
+      >
+        <div className="flex items-center gap-[8px]">
+          <span className="min-w-0 flex-1 text-[14px] text-[#18181c] font-semibold font-['Outfit',sans-serif] leading-[19px] truncate">
+            {site.name}
+          </span>
+          {alerts && (
+            <span className="flex items-center gap-[4px] shrink-0">
+              {alerts.map((alert) => (
+                <SiteAlertDot key={alert.label} alert={alert} />
+              ))}
+            </span>
+          )}
+          <span className="shrink-0">
+            <TierTag />
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-[6px]">
+          <MetricChip label="Ha" value={site.hectares.toLocaleString()} />
+          {/* Health, canopy and tree stock render inside one bordered group,
+              not as three loose chips, whenever two or more of them are
+              declining together — the shared reddish frame is what signals
+              "these are one correlated trend," which three individually red
+              chips scattered through the flex-wrap wouldn't. */}
+          <div
+            title={correlatedDecline ? "Declining together this cycle" : undefined}
+            className={`flex flex-wrap gap-[6px] ${
+              correlatedDecline ? "p-[4px] rounded-[12px] border border-[#e8987a] bg-[#fce1d7]" : ""
+            }`}
+          >
+            <MetricChip
+              label="Health"
+              value={`${Math.round(site.healthScore)}%`}
+              deltaPct={site.healthScore - 75}
+            />
+            <MetricChip
+              label="Canopy"
+              value={`${site.trendPct > 0 ? "+" : ""}${site.trendPct}%`}
+              deltaPct={site.trendPct}
+            />
+            <MetricChip
+              label="Trees"
+              value={site.totalTrees.toLocaleString()}
+              deltaPct={site.totalTreesChange ?? undefined}
+            />
+          </div>
+          <MetricChip label="Insights" value={site.flaggedTrees > 0 ? site.flaggedTrees.toLocaleString() : "—"} />
+          <MetricChip label="NDVI" value={site.avgNdvi.toFixed(2)} />
+          <MetricChip label="Activity" value={site.lastActivityLabel} />
+          <MetricChip label="Since" value={site.monitoredSinceLabel} />
+        </div>
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -548,12 +798,31 @@ function SiteRow({
               // used to sit here is gone: it carried no information (alt=""),
               // repeated identically down every row, and cost 28px of the one
               // column that had none to spare.
-              <span key={column.key} className="flex items-center min-w-0 pl-[6px]">
-                {/* Two lines rather than an ellipsis: a truncated site name is
-                    not a shorter label, it is a different one. */}
-                <span className="text-[14px] text-[#464650] font-['Outfit',sans-serif] leading-[19px] line-clamp-2">
+              //
+              // A site's own real, already-reported changes ride right along
+              // the name, small pills rather than the taller HealthIndicator-
+              // Chip look the health/canopy cells use — that shape reads fine
+              // as its own measured band below the row, but stacking it here
+              // instead grew this cell taller than the row around it, which
+              // is what actually needs one row, not two, to read as a single
+              // site rather than a site plus a footnote.
+              <span key={column.key} className="flex items-center min-w-0 gap-[8px] pl-[6px]">
+                {/* `min-w-0` here too, not just the parent — a flex item's
+                    default `min-width: auto` holds it to its content's own
+                    intrinsic width regardless of the parent's own min-w-0,
+                    which is what let this overflow the pills right out of
+                    the column instead of actually truncating to fit
+                    alongside them. */}
+                <span className="min-w-0 flex-1 text-[14px] text-[#464650] font-['Outfit',sans-serif] leading-[19px] truncate">
                   {site.name}
                 </span>
+                {alerts && (
+                  <span className="flex items-center gap-[4px] shrink-0">
+                    {alerts.map((alert) => (
+                      <SiteAlertDot key={alert.label} alert={alert} />
+                    ))}
+                  </span>
+                )}
               </span>
             );
           case "hectares":
@@ -587,11 +856,13 @@ function SiteRow({
                   label="Health score"
                   value={`${Math.round(site.healthScore)}%`}
                   deltaPct={site.healthScore - 75}
+                  compact={compact}
                 />
                 <HealthIndicatorChip
                   label="Canopy cover"
                   value={`${site.trendPct > 0 ? "+" : ""}${site.trendPct}%`}
                   deltaPct={site.trendPct}
+                  compact={compact}
                 />
               </span>
             );
@@ -661,7 +932,7 @@ export default function AreaTable({
   // no business resizing the other.
   const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "name", dir: "asc" });
   const [widths, setWidths] = useState<Record<string, number>>(() =>
-    Object.fromEntries(RESIZABLE_COLUMNS.map((c) => [c.key, c.defaultWidth])),
+    Object.fromEntries(RESIZABLE_COLUMNS.map((c) => [c.key, defaultWidthFor(c, variant)])),
   );
   const [resizingKey, setResizingKey] = useState<string | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
@@ -705,7 +976,7 @@ export default function AreaTable({
     max: 320,
     onChange: (next) => {
       const column = resizeColRef.current;
-      if (column) applyWidth(column.key, Math.max(column.minWidth, next));
+      if (column) applyWidth(column.key, Math.max(minWidthFor(column, variant), next));
     },
     onEnd: () => {
       resizeColRef.current = null;
@@ -763,12 +1034,12 @@ export default function AreaTable({
           setResizingKey(column.key);
           resize.begin(e, widths[column.key]);
         }}
-        onResizeReset={(column) => applyWidth(column.key, column.defaultWidth)}
+        onResizeReset={(column) => applyWidth(column.key, defaultWidthFor(column, variant))}
         onResizeKey={(column, e) => {
           if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
           e.preventDefault();
           const delta = e.key === "ArrowRight" ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP;
-          applyWidth(column.key, Math.max(column.minWidth, widths[column.key] + delta));
+          applyWidth(column.key, Math.max(minWidthFor(column, variant), widths[column.key] + delta));
         }}
         columnsTemplate={columnsTemplate}
       />
@@ -797,6 +1068,7 @@ export default function AreaTable({
                       delay={160 + groupIndex * 60 + (siteIndex + 1) * 40}
                       onClick={() => onSelectSite(site.id)}
                       columnsTemplate={columnsTemplate}
+                      compact={variant === "compact"}
                     />
                   ))}
                   {onOpenHabitatChange && (

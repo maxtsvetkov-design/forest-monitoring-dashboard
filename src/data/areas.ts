@@ -89,4 +89,21 @@ export const areas: Area[] = [
     defaultBasemapIndex: 1, // Esri World Imagery — see the field's own comment.
     snapshots: generateMonthlySnapshots(0.8, "liwa-oasis"),
   },
+  {
+    // A second lens on the same physical farm above — same real ground, same
+    // `isCropFarm` compliance-workflow UI (see `CROP_AREAS` in events.ts),
+    // deliberately duplicated rather than shared: every generator this app
+    // has is seeded off the area's own id string
+    // (`generateMonthlySnapshots`, `generateCropEvents`'s
+    // `seededRandom("events:" + areaId)`, per-tree placement), so a distinct
+    // id here is what keeps this area's data independent of Liwa Oasis Date
+    // Farm's — editing one's data going forward will never move the other's,
+    // with no extra plumbing required to guarantee that.
+    id: "liwa-crop-monitor",
+    name: "Agricultural Monitoring Officer — Crop Monitor",
+    projectName: "Liwa Oasis Farms (Pilot)",
+    center: [54.71275799623225, 24.505954381777737],
+    defaultBasemapIndex: 1,
+    snapshots: generateMonthlySnapshots(0.8, "liwa-crop-monitor"),
+  },
 ];

@@ -567,6 +567,7 @@ export default function LayerPanel({
   areaId,
   months,
   layerTime,
+  initiallyCollapsed = false,
 }: {
   projectName?: string;
   areaName: string;
@@ -603,6 +604,8 @@ export default function LayerPanel({
   areaId: string;
   months: string[];
   layerTime: LayerTime;
+  /** Initial presentation only; the reader can still expand/collapse freely. */
+  initiallyCollapsed?: boolean;
   aerialSubtitle: string;
   canopySubtitle: string;
   pinCounts: Record<PinSeverity, number> | null;
@@ -610,7 +613,7 @@ export default function LayerPanel({
   onBasemapPrev: () => void;
   onBasemapNext: () => void;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(initiallyCollapsed);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [tierModalRowId, setTierModalRowId] = useState<string | null>(null);
 

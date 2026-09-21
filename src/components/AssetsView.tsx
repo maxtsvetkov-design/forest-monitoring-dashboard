@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
-import { eventsInRange, generateEvents, type TreeEvent } from "../data/events";
+import { eventsInRange, type TreeEvent } from "../data/events";
 import {
   areaDyingTreeOverlays,
   areaGenerativeOverlays,
@@ -26,6 +26,7 @@ import MapCanvas from "./MapCanvas";
 import RecentEventsList from "./RecentEventsList";
 import CrabPloverTable from "./CrabPloverTable";
 import CropFieldsTable from "./CropFieldsTable";
+import CropMonitorFarmRecords from "./CropMonitorFarmRecords";
 import InspectionTriageList from "./InspectionTriageList";
 import { buildTriageEntries, type TriageEntry } from "../data/inspectionTriage";
 import type { FindingOutcome } from "../data/findingOutcome";
@@ -120,9 +121,93 @@ const MAX_SPLIT_PCT = 70;
 const DEFAULT_SPLIT_PCT = 50;
 const KEYBOARD_SPLIT_STEP = 5;
 
+function MonthlyCadenceTimeline({
+  months,
+  range,
+  events,
+  onChange,
+}: {
+  months: string[];
+  range: DateRange;
+  events: TreeEvent[];
+  onChange: (range: DateRange) => void;
+}) {
+  const currentIndex = Math.min(range.endIndex, months.length - 1);
+  const currentMonth = months[currentIndex] ?? "";
+  const eventCounts = useMemo(() => {
+    const counts = Array.from({ length: months.length }, () => 0);
+    for (const event of events) {
+      if (event.monthIndex >= 0 && event.monthIndex < counts.length) counts[event.monthIndex] += 1;
+    }
+    return counts;
+  }, [events, months.length]);
+
+  return (
+    <section
+      aria-label="Monthly monitoring cadence"
+      className="rounded-[16px] border border-white/55 bg-white/92 px-[14px] py-[11px] shadow-[0_18px_40px_-22px_rgba(24,24,28,0.48)] backdrop-blur-md"
+    >
+      <div className="flex items-center justify-between gap-[12px]">
+        <div className="flex min-w-0 items-center gap-[8px]">
+          <span className="text-[11px] font-extrabold text-[#18181c] font-['Outfit',sans-serif] whitespace-nowrap">
+            Monthly change
+          </span>
+          <span className="inline-flex h-[20px] items-center rounded-full bg-[#e6f2ec] px-[8px] text-[9px] font-bold uppercase tracking-[0.06em] text-[#096151] font-['Outfit',sans-serif] whitespace-nowrap">
+            Monthly cadence
+          </span>
+          <span className="text-[9.5px] text-[#71717a] font-['Outfit',sans-serif] whitespace-nowrap">
+            1 cycle / month
+          </span>
+        </div>
+        <span className="shrink-0 text-[10px] font-bold text-[#18181c] font-['Outfit',sans-serif] tabular-nums">
+          Showing {currentMonth}
+        </span>
+      </div>
+
+      <div className="mt-[10px] pb-[2px]">
+        <div className="relative grid w-full grid-cols-12 gap-0" role="group" aria-label="Select monitoring month">
+          <span className="absolute left-[4.1%] right-[4.1%] top-[6px] h-px bg-[#cfd3cb]" aria-hidden="true" />
+          {months.map((month, index) => {
+            const active = index === currentIndex;
+            const count = eventCounts[index] ?? 0;
+            return (
+              <button
+                key={month}
+                type="button"
+                onClick={() => onChange({ startIndex: index, endIndex: index })}
+                aria-pressed={active}
+                aria-label={`Show ${month}, ${count} ${count === 1 ? "notification" : "notifications"}`}
+                className="u-press group/month relative z-[1] flex min-w-0 flex-col items-center gap-[5px] cursor-pointer"
+              >
+                <span
+                  className={`block rounded-full border-[2px] border-white transition-[transform,background-color,box-shadow] duration-200 group-hover/month:scale-125 ${
+                    active
+                      ? "h-[13px] w-[13px] bg-[#096151] shadow-[0_0_0_4px_rgba(9,97,81,0.18)]"
+                      : "mt-[2px] h-[9px] w-[9px] bg-[#aeb5aa] shadow-[0_0_0_2px_rgba(255,255,255,0.8)]"
+                  }`}
+                  aria-hidden="true"
+                />
+                <span
+                  className={`max-w-full truncate text-[8.5px] font-['Outfit',sans-serif] tabular-nums ${
+                    active ? "font-extrabold text-[#096151]" : "font-semibold text-[#71717a]"
+                  }`}
+                >
+                  {index === 0 || month.startsWith("Jan") ? month : month.split(" ")[0]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function AssetsView({
   area,
+  events,
   range,
+  onRangeChange,
   layerTime,
   isTimelinePlaying,
   pendingFilter,
@@ -135,7 +220,15 @@ export default function AssetsView({
   onBasemapIndexChange,
 }: {
   area: Area;
+  /** The area's full, unfiltered event history — computed once in App.tsx
+   *  (`generateEvents`) and handed down here rather than regenerated, so
+   *  this panel's own "Recent events" can never quote a different set than
+   *  the top-level "Recent events" tab shows for the same area. Range-
+   *  filtered locally (below) since this tab reads its own `range`, not the
+   *  Insights tab's calendar. */
+  events: TreeEvent[];
   range: DateRange;
+  onRangeChange?: (range: DateRange) => void;
   /** Per-layer ranges, forwarded to the layer panel's coverage strips. */
   layerTime: LayerTime;
   /** Whether the timeline's play button is currently stepping through
@@ -199,11 +292,12 @@ export default function AssetsView({
 
   const filters = useTreeFilters(inRange);
 
-  // Same source and range-filtering as the Insights sidebar's own Recent
-  // Events list (App.tsx) — generated off the base (non-timelapse-swapped)
-  // overlay there too, so switching to this panel here shows the identical
-  // set rather than a second, independently-rolled one.
-  const areaEvents = useMemo(() => generateEvents(baseOverlay, area.snapshots, area.id), [baseOverlay, area.snapshots, area.id]);
+  // `events` is App.tsx's own already-generated full history for this area
+  // (see the prop's own comment) — only the range-filtering happens here,
+  // so this panel and the top-level "Recent events" tab can never disagree
+  // about which events exist, only about which of them the current range
+  // shows.
+  const areaEvents = events;
   const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
 
   // Every compliance violation ever logged for this farm, all months — not
@@ -292,6 +386,10 @@ export default function AssetsView({
   // stale filter the user never asked for on that visit.
   useEffect(() => {
     if (!pendingFilter) return;
+    if (pendingFilter.kind === "farmDetection") {
+      setRightPanel("events");
+      return;
+    }
     applyPendingFilter(filters, pendingFilter);
     onPendingFilterApplied?.();
     // filters and onPendingFilterApplied are stable across renders of this
@@ -453,6 +551,18 @@ export default function AssetsView({
         focusTree={focusTree}
         inspectTree={inspectTree}
         violationEntries={violationEntries}
+        showFarmDetectionPins={area.id === "liwa-crop-monitor"}
+        layerPanelInitiallyCollapsed={area.id === "liwa-crop-monitor"}
+        timelineOverlay={
+          area.id === "liwa-crop-monitor" && onRangeChange ? (
+            <MonthlyCadenceTimeline
+              months={area.snapshots.map((snapshot) => snapshot.label)}
+              range={range}
+              events={areaEvents}
+              onChange={onRangeChange}
+            />
+          ) : undefined
+        }
         findingOutcomes={findingOutcomes}
         onSetFindingOutcome={setFindingOutcome}
         onRequestHiRes={setEvidencePackEntry}
@@ -508,7 +618,13 @@ export default function AssetsView({
             value={rightPanel}
             onChange={setRightPanel}
             tableLabel={
-              hasCrabPloverCensus(area.id) ? "Crab-plover census" : isCropFarm(area.id) ? "Crop fields" : "Trees table"
+              hasCrabPloverCensus(area.id)
+                ? "Crab-plover census"
+                : area.id === "liwa-crop-monitor"
+                  ? "Farm records"
+                  : isCropFarm(area.id)
+                    ? "Crop fields"
+                    : "Trees table"
             }
             eventsFirst={isCropFarm(area.id)}
             inProgressCount={inProgressEntries?.length ?? null}
@@ -528,6 +644,13 @@ export default function AssetsView({
               selectedId={selectedId}
               onSelect={(b) => setSelectedId(b.id)}
             />
+          ) : rightPanel === "table" && area.id === "liwa-crop-monitor" ? (
+            // Crop Monitor's own rearrangement of the same field-band data
+            // CropFieldsTable presents as a flat table — a farm record per
+            // field (crop & area, trees & species, canopy trend), checked
+            // one farm or the whole district at a time. Liwa Oasis keeps the
+            // flat table below unchanged; this is that persona's own slot.
+            <CropMonitorFarmRecords area={area} records={inRange} onFocusField={focusField} />
           ) : rightPanel === "table" && isCropFarm(area.id) ? (
             // Liwa Oasis is managed by field, not by individual palm — see
             // CropFieldsTable's own comment. Same slot CrabPloverTable takes
@@ -578,6 +701,8 @@ export default function AssetsView({
             // see InspectionTriageList's own comment.
             <InspectionTriageList
               events={visibleEvents}
+              pendingDetection={pendingFilter?.kind === "farmDetection" ? pendingFilter : null}
+              onPendingDetectionApplied={onPendingFilterApplied}
               onSelectEvent={handleSelectEvent}
               outcomes={findingOutcomes}
               onSetOutcome={setFindingOutcome}

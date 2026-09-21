@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import type { TreeRecord } from "../data/trees";
 import { isFlaggedCondition } from "../data/taxonomy";
-import { areaHectares } from "../data/overlays";
-import { FIELD_COUNT, FIELD_LETTERS, fieldIndexForU } from "../data/farmFields";
+import { FIELD_COUNT, fieldIndexForU } from "../data/farmFields";
+import { FARM_DETECTIONS } from "../data/farmDetections";
+import { FIELD_ROWS } from "./EstateDashboard";
 
 /**
  * The crop-field summary, in place of the per-tree table — Liwa Oasis's own
@@ -22,8 +23,10 @@ import { FIELD_COUNT, FIELD_LETTERS, fieldIndexForU } from "../data/farmFields";
  */
 
 interface CropField {
+  fieldLetter: string;
   name: string;
   crop: string;
+  detection: string;
   treeCount: number;
   areaHa: number;
   flaggedCount: number;
@@ -32,35 +35,23 @@ interface CropField {
 }
 
 function buildFields(records: TreeRecord[], areaId: string): CropField[] {
-  const totalHa = areaHectares(areaId);
   const buckets: TreeRecord[][] = Array.from({ length: FIELD_COUNT }, () => []);
   for (const t of records) buckets[fieldIndexForU(t.u)].push(t);
 
-  return buckets.map((trees, i) => {
-    const speciesCounts = new Map<string, number>();
-    for (const t of trees) speciesCounts.set(t.species, (speciesCounts.get(t.species) ?? 0) + 1);
-    let topSpecies = "—";
-    let topCount = 0;
-    for (const [species, count] of speciesCounts) {
-      if (count > topCount) {
-        topSpecies = species;
-        topCount = count;
-      }
-    }
-    // A field only reads as a single crop if one species actually dominates
-    // it — otherwise "Mixed planting" is the honest label, not a majority
-    // species that happens to have the most trees in a near-even split.
-    const crop = trees.length > 0 && topCount / trees.length >= 0.5 ? topSpecies : "Mixed planting";
+  return FIELD_ROWS.slice(0, 3).map((farm, i) => {
+    const trees = buckets[i];
     const flaggedCount = trees.filter((t) => isFlaggedCondition(t.condition)).length;
     const avgCanopyLossPct = trees.length
       ? Math.round(trees.reduce((sum, t) => sum + t.canopyLossPct, 0) / trees.length)
       : 0;
 
     return {
-      name: `Field ${FIELD_LETTERS[i]}`,
-      crop,
+      fieldLetter: farm.field,
+      name: `Farm ${farm.field}`,
+      crop: farm.cropType,
+      detection: FARM_DETECTIONS[farm.field]?.headline ?? "No new detection",
       treeCount: trees.length,
-      areaHa: Math.round((totalHa / FIELD_COUNT) * 10) / 10,
+      areaHa: Math.round((farm.extentHa + farm.fallowHa) * 10) / 10,
       flaggedCount,
       avgCanopyLossPct,
       lastSurveyed: trees[0]?.lastSurveyed ?? "—",
@@ -84,17 +75,18 @@ export default function CropFieldsTable({
   const fields = useMemo(() => buildFields(records, areaId), [records, areaId]);
   const totalTrees = fields.reduce((sum, f) => sum + f.treeCount, 0);
   const totalFlagged = fields.reduce((sum, f) => sum + f.flaggedCount, 0);
+  const totalAreaHa = fields.reduce((sum, f) => sum + f.areaHa, 0);
 
   return (
     <div className="h-full flex flex-col surface-card overflow-hidden">
       <div className="px-4 pt-3 pb-2 border-b border-[#dedee3] shrink-0 flex flex-col gap-[4px]">
         <span className="text-[14px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
-          Crop fields at {areaName}{" "}
+          Farms at {areaName}{" "}
           <span className="font-normal text-[#5b5b66]">({fields.length})</span>
         </span>
         <p className="text-[11px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[16px]">
-          {totalTrees.toLocaleString()} palms across four fields — field boundaries are approximated evenly across
-          the plot's own surveyed area; tree counts and condition are real counts for each band.
+          {totalTrees.toLocaleString()} mapped trees across three farms — boundaries and crop identities match Fields at a glance;
+          tree counts and condition are calculated from each corresponding map band.
         </p>
       </div>
 
@@ -102,7 +94,7 @@ export default function CropFieldsTable({
         <table className="w-full border-collapse">
           <thead className="sticky top-0 bg-[#fbfbfa] z-[1]">
             <tr className="border-b border-[#eeeef1]">
-              {["Field", "Crop", "Trees", "Area (ha)", "Flagged", "Avg. canopy loss", "Last surveyed"].map(
+              {["Farm", "Crop", "Latest satellite detection", "Trees", "Area (ha)", "Flagged", "Avg. canopy loss", "Last surveyed"].map(
                 (label) => (
                   <th
                     key={label}
@@ -115,10 +107,10 @@ export default function CropFieldsTable({
             </tr>
           </thead>
           <tbody>
-            {fields.map((f, i) => (
+            {fields.map((f) => (
               <tr
                 key={f.name}
-                onClick={() => onFocusField?.(FIELD_LETTERS[i])}
+                onClick={() => onFocusField?.(f.fieldLetter)}
                 className={`border-b border-[#eeeef1] last:border-b-0 hover:bg-[#fbfbfa] ${onFocusField ? "cursor-pointer" : ""}`}
               >
                 <td className="px-4 py-[10px] text-[12.5px] font-semibold text-[#18181c] font-['Outfit',sans-serif] whitespace-nowrap">
@@ -126,6 +118,9 @@ export default function CropFieldsTable({
                 </td>
                 <td className="px-4 py-[10px] text-[12.5px] text-[#464650] font-['Outfit',sans-serif] whitespace-nowrap">
                   {f.crop}
+                </td>
+                <td className="px-4 py-[10px] text-[12px] text-[#464650] font-['Outfit',sans-serif] min-w-[220px]">
+                  {f.detection}
                 </td>
                 <td className="px-4 py-[10px] text-[12.5px] text-[#464650] font-['Outfit',sans-serif] tabular-nums">
                   {f.treeCount.toLocaleString()}
@@ -155,11 +150,12 @@ export default function CropFieldsTable({
                 Total
               </td>
               <td />
+              <td />
               <td className="px-4 py-[9px] text-[11.5px] font-bold text-[#18181c] font-['Outfit',sans-serif] tabular-nums">
                 {totalTrees.toLocaleString()}
               </td>
               <td className="px-4 py-[9px] text-[11.5px] font-bold text-[#18181c] font-['Outfit',sans-serif] tabular-nums">
-                {areaHectares(areaId).toFixed(0)}
+                {totalAreaHa.toFixed(1)}
               </td>
               <td className="px-4 py-[9px] text-[11.5px] font-bold text-[#c0392b] font-['Outfit',sans-serif] tabular-nums">
                 {totalFlagged}

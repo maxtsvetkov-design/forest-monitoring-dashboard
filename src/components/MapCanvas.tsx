@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { createPortal } from "react-dom";
@@ -14,6 +15,9 @@ import type { DateRange } from "../data/aggregate";
 import { areaHasOwnImagery, isInsideQuad, plotWidthMeters, pointInQuad, type MapOverlay } from "../data/overlays";
 import { loadCanopies, MAX_CROWN_RADIUS_M, type Canopy } from "../data/canopies";
 import TreeCanopyLayer from "../map/TreeCanopyLayer";
+import PinAreaLayer from "../map/PinAreaLayer";
+import FieldBorderLayer from "../map/FieldBorderLayer";
+import { driftStatus, FIELD_DRIFT } from "../data/fieldDrift";
 import { generateTreePins, pinSeverityAt, SEVERITY_COLOR, type PinSeverity, type TreePin } from "../data/treePins";
 import { generateTreeRecords, type TreeRecord } from "../data/trees";
 import type { MonthSnapshot } from "../data/types";
@@ -37,12 +41,14 @@ import ComplianceLegend from "./ComplianceLegend";
 import TreeHistoryModal from "./TreeHistoryModal";
 import ViolationRecordModal from "./ViolationRecordModal";
 import type { TriageEntry } from "../data/inspectionTriage";
+import { isCropFarm } from "../data/events";
 import type { FindingOutcome } from "../data/findingOutcome";
 import TreeTwinCard from "./TreeTwinCard";
 import { CONDITION_KEYS, CONDITION_LABEL, conditionLabelFor, type ConditionKey } from "../data/taxonomy";
 import { smootherstep, underlayOpacity } from "../lib/crossfade";
-import { fieldBoundsUV } from "../data/farmFields";
+import { fieldBoundsUV, fieldCenterUV, fieldLetterForU, FIELD_LETTERS } from "../data/farmFields";
 import { SEVERITY_STYLE } from "../data/severity";
+import { FARM_DETECTIONS } from "../data/farmDetections";
 
 // OpenStreetMap data served as vector tiles by OpenFreeMap: free, unlimited,
 // no API key, and intended for embedding in third-party apps (unlike raw
@@ -83,20 +89,43 @@ const FIELD_HIGHLIGHT_SOURCE_ID = "field-highlight";
 const FIELD_HIGHLIGHT_FILL_ID = "field-highlight-fill";
 const FIELD_HIGHLIGHT_LINE_ID = "field-highlight-line";
 
+// A separate source/layers from the click-focus highlight above: hovering a
+// KPI card (EstateDashboard) previews one or more field bands at once, with
+// no camera movement — a click still flies and outlines exactly one field,
+// this glows a set of them in place, and the two need to be able to coexist
+// (hovering a KPI while a field-focus outline is already showing) without
+// one clobbering the other's source data.
+const HOVER_HIGHLIGHT_SOURCE_ID = "field-hover-highlight";
+const HOVER_HIGHLIGHT_GLOW_ID = "field-hover-highlight-glow";
+const HOVER_HIGHLIGHT_FILL_ID = "field-hover-highlight-fill";
+const HOVER_HIGHLIGHT_LINE_ID = "field-hover-highlight-line";
+
+// A Drift list card's selection (`driftFieldFocus`) — real GL geometry, not
+// a CSS filter on the whole map container. A container-wide `brightness()`
+// (the first version of this feature) dims the selected field along with
+// everything else, since a CSS filter can't tell pixels apart by what's
+// drawn under them; a fill layer with a HOLE cut over the selected field's
+// own ground quad dims only the world outside it, leaving the field itself
+// at full brightness. Two separate sources/layer sets, not one: the mask
+// (below) and the highlight outline (above) need to re-top in that specific
+// order — the outline must never end up UNDER the dimming fill, or "the
+// selected field is highlighted" would be lying half the time.
+const DRIFT_MASK_SOURCE_ID = "drift-field-mask";
+const DRIFT_MASK_FILL_ID = "drift-field-mask-fill";
+const DRIFT_FOCUS_SOURCE_ID = "drift-field-focus-highlight";
+const DRIFT_FOCUS_GLOW_ID = "drift-field-focus-glow";
+const DRIFT_FOCUS_FILL_ID = "drift-field-focus-fill";
+const DRIFT_FOCUS_LINE_ID = "drift-field-focus-line";
+
 const PIN_AREA_SOURCE_ID = "pin-area";
 const PIN_AREA_LINE_ID = "pin-area-line";
-const PIN_AREA_CROPS_SOURCE_ID = "pin-area-crops";
-const PIN_AREA_CROPS_BASE_LAYER_ID = "pin-area-crops-base";
-const PIN_AREA_CROPS_TOP_LAYER_ID = "pin-area-crops-top";
+const PIN_AREA_GL_LAYER_ID = "pin-area-gl";
+const FIELD_BORDER_GL_LAYER_ID = "field-border-gl";
 // The ground each violation pin is read against — not the tree's real crown
-// radius (MAX_CROWN_RADIUS_M, 14m), a plaza big enough that a single organic
-// mass reads as a patch of field rather than a footprint marker.
-const PIN_AREA_FIELD_HALF_SIZE_M = 18;
-const BLOB_RADIUS_M = 14;
-const BLOB_VERTICES = 16;
-const BLOB_JITTER = 0.32;
-const BLOB_MIN_HEIGHT_M = 22;
-const BLOB_MAX_HEIGHT_M = 48;
+// radius (MAX_CROWN_RADIUS_M, 14m), a plaza big enough that the real 3D mass
+// `PinAreaLayer` draws reads as a patch of field rather than a footprint
+// marker.
+const PIN_AREA_FIELD_HALF_SIZE_M = 34;
 /** A "marching ants" dash sequence for the plaza's own boundary — stepping
  *  through it on a timer is the standard trick for a *flowing* border with
  *  plain `line-dasharray` (MapLibre has no dash-phase/offset paint property
@@ -137,109 +166,6 @@ function squareRingAround(lng: number, lat: number, halfSizeMeters: number): [nu
     [lng - dLng, lat + dLat],
     [lng - dLng, lat - dLat],
   ];
-}
-
-/** A single irregular, closed polygon around a ground point — `vertices`
- *  points at even angles, each pushed in/out from `baseRadiusMeters` by up to
- *  `jitter` (0..1) using the caller's own seeded `rand`. One organic mass per
- *  pin instead of a grid of uniform boxes — still an abstraction (this app
- *  has no real per-plant planting record at pin scale), just one whose
- *  silhouette doesn't read as a stack of identical crates. */
-function organicBlobRing(
-  lng: number,
-  lat: number,
-  baseRadiusMeters: number,
-  rand: () => number,
-  vertices = BLOB_VERTICES,
-  jitter = BLOB_JITTER,
-): [number, number][] {
-  const metresPerDegLat = 111_320;
-  const metresPerDegLng = 111_320 * Math.cos((lat * Math.PI) / 180);
-  const ring: [number, number][] = [];
-  for (let i = 0; i < vertices; i++) {
-    const angle = (i / vertices) * Math.PI * 2;
-    const r = baseRadiusMeters * (1 + (rand() - 0.5) * 2 * jitter);
-    const dx = Math.cos(angle) * r;
-    const dy = Math.sin(angle) * r;
-    ring.push([lng + dx / metresPerDegLng, lat + dy / metresPerDegLat]);
-  }
-  ring.push(ring[0]);
-  return ring;
-}
-
-/** A tiny, dependency-free seeded PRNG (mulberry32) so each crop cell's own
- *  height is random-*looking* but stable across re-renders — seeded off the
- *  finding's own event id plus its row/column, not `Math.random()`, which
- *  would reshuffle every "crop" on every re-render. */
-function seededRandom(seed: string): () => number {
-  let state = 0;
-  for (let i = 0; i < seed.length; i++) state = (Math.imul(31, state) + seed.charCodeAt(i)) | 0;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = Math.imul(state ^ (state >>> 15), 1 | state);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** Linear RGB blend between two `#rrggbb` colours, `t` 0 (all `from`) to 1
- *  (all `to`) — the one bit of colour maths the plaza's gradient and its
- *  procedural shimmer both build on. */
-function mixHexColor(from: string, to: string, t: number): string {
-  const clampT = Math.max(0, Math.min(1, t));
-  const parse = (hex: string) => [
-    parseInt(hex.slice(1, 3), 16),
-    parseInt(hex.slice(3, 5), 16),
-    parseInt(hex.slice(5, 7), 16),
-  ];
-  const [r1, g1, b1] = parse(from);
-  const [r2, g2, b2] = parse(to);
-  const channel = (a: number, b: number) =>
-    Math.round(a + (b - a) * clampT)
-      .toString(16)
-      .padStart(2, "0");
-  return `#${channel(r1, r2)}${channel(g1, g2)}${channel(b1, b2)}`;
-}
-
-/** This pin's own vertical colour gradient plus its procedural shimmer, both
- *  built from the same seed as its shape (`organicBlobRing`) so height,
- *  silhouette and colour all stay one consistent, stable "random" per
- *  finding. Fill-extrusion has no true per-vertex gradient paint property, so
- *  the gradient is faked the way these things usually are on the web: two
- *  stacked bands sharing one footprint, a darker one low and a lighter one
- *  high (`fill-extrusion-vertical-gradient` then adds its own lighting shade
- *  on top of that). The "procedural" half is the top band's colour drifting
- *  between its lit and its glowing tone on a slow sine, phase-offset per pin
- *  (off the same seed) so a field of these never pulses in lockstep. Called
- *  fresh every animation frame — cheap enough at this feature count that
- *  regenerating the tiny GeoJSON beats trying to express "elapsed time"
- *  inside a MapLibre paint expression, which has no clock to read. */
-function buildCropFeatures(entries: TriageEntry[], elapsedSec: number) {
-  return entries.flatMap((entry) => {
-    const accent = SEVERITY_STYLE[entry.severityLabel].accent;
-    const rand = seededRandom(entry.event.id);
-    const ring = organicBlobRing(entry.lng, entry.lat, BLOB_RADIUS_M, rand);
-    const height = BLOB_MIN_HEIGHT_M + rand() * (BLOB_MAX_HEIGHT_M - BLOB_MIN_HEIGHT_M);
-    const phaseOffset = rand() * Math.PI * 2;
-    const baseColor = mixHexColor(accent, "#000000", 0.34);
-    const litColor = mixHexColor(accent, "#ffffff", 0.28);
-    const glowColor = mixHexColor(accent, "#ffffff", 0.62);
-    const shimmer = (Math.sin(elapsedSec * 1.3 + phaseOffset) + 1) / 2;
-    const topColor = mixHexColor(litColor, glowColor, shimmer);
-    const bandHeight = height * 0.55;
-    return [
-      {
-        type: "Feature" as const,
-        properties: { color: baseColor, base: 0, height: bandHeight, band: "base" },
-        geometry: { type: "Polygon" as const, coordinates: [ring] },
-      },
-      {
-        type: "Feature" as const,
-        properties: { color: topColor, base: bandHeight, height, band: "top" },
-        geometry: { type: "Polygon" as const, coordinates: [ring] },
-      },
-    ];
-  });
 }
 
 /** Bounds for the derived inspect zoom. The ceiling is above MapLibre's own
@@ -536,6 +462,39 @@ function ensureGenerativeOnTop(map: maplibregl.Map) {
   if (hasAerial && map.getLayer(TREES_3D_LAYER_ID)) {
     map.moveLayer(TREES_3D_LAYER_ID);
   }
+  // The compliance plazas go up last of all, above even the 3D trees: a
+  // violation marker outranks decorative canopy. Same reasoning as
+  // TREES_3D_LAYER_ID just above — both the boundary (a plain GeoJSON line
+  // layer) and the custom GL layer need re-topping here, or the very next
+  // basemap swap/timeline scrub silently buries them under a freshly
+  // re-topped raster with no error anywhere.
+  if (hasAerial && map.getLayer(PIN_AREA_LINE_ID)) {
+    map.moveLayer(PIN_AREA_LINE_ID);
+  }
+  if (hasAerial && map.getLayer(PIN_AREA_GL_LAYER_ID)) {
+    map.moveLayer(PIN_AREA_GL_LAYER_ID);
+  }
+  // Field borders outrank even the compliance plazas — the same re-topping
+  // need as everything else above, or the next raster swap buries the
+  // boundary Crop Monitor's map is built around.
+  if (hasAerial && map.getLayer(FIELD_BORDER_GL_LAYER_ID)) {
+    map.moveLayer(FIELD_BORDER_GL_LAYER_ID);
+  }
+  // The KPI-hover glow outranks the standing field borders too — it's a
+  // deliberate, momentary "look here" over whatever's already on the map.
+  if (hasAerial && map.getLayer(HOVER_HIGHLIGHT_GLOW_ID)) map.moveLayer(HOVER_HIGHLIGHT_GLOW_ID);
+  if (hasAerial && map.getLayer(HOVER_HIGHLIGHT_FILL_ID)) map.moveLayer(HOVER_HIGHLIGHT_FILL_ID);
+  if (hasAerial && map.getLayer(HOVER_HIGHLIGHT_LINE_ID)) map.moveLayer(HOVER_HIGHLIGHT_LINE_ID);
+  // The Drift list's field isolation outranks everything above it — the mask
+  // has to dim every other layer this function just re-topped, or a re-top
+  // (any raster swap, any timeline scrub) would silently bury the dimming
+  // fill back under whatever it was supposed to be dimming. The highlight
+  // outline goes up LAST of all, after its own mask: it has to survive on
+  // top of the very fill that would otherwise dim it too.
+  if (hasAerial && map.getLayer(DRIFT_MASK_FILL_ID)) map.moveLayer(DRIFT_MASK_FILL_ID);
+  if (hasAerial && map.getLayer(DRIFT_FOCUS_GLOW_ID)) map.moveLayer(DRIFT_FOCUS_GLOW_ID);
+  if (hasAerial && map.getLayer(DRIFT_FOCUS_FILL_ID)) map.moveLayer(DRIFT_FOCUS_FILL_ID);
+  if (hasAerial && map.getLayer(DRIFT_FOCUS_LINE_ID)) map.moveLayer(DRIFT_FOCUS_LINE_ID);
 }
 
 /**
@@ -649,6 +608,23 @@ function renderGlowHalo(img: HTMLImageElement, maxWidth: number): string {
   return canvas.toDataURL("image/png");
 }
 
+/**
+ * Which pin colours get the glass-transmission treatment (see
+ * `.tree-pin__glass`): the red ones only. Read off the same two palettes the
+ * pins themselves are coloured from rather than spelled out as hex literals
+ * here, so re-toning either scale can never leave this set pointing at a
+ * colour no pin uses any more — and the amber, grey and green bands keep the
+ * flat fill they have always had, which is the point: glass is reserved for
+ * the band that most needs to be picked out of a cluster.
+ */
+const GLASS_PIN_COLORS = new Set<string>([
+  // "Sparse" canopy condition — the red-orange band.
+  SEVERITY_COLOR.sparse,
+  // A compliance finding filed CRITICAL, which overrides the condition
+  // colour on its own pin (see the violation branch below).
+  SEVERITY_STYLE.CRITICAL.accent,
+]);
+
 /** Builds the floating pin element for one flagged tree. */
 function buildPinElement(pin: TreePin, index: number): HTMLDivElement {
   const el = document.createElement("div");
@@ -673,11 +649,19 @@ function buildPinElement(pin: TreePin, index: number): HTMLDivElement {
   // inherited the bob and drifted a few pixels off its tree. The float
   // animation lives on the inner wrapper only — MapLibre owns `transform` on
   // the root element.
+  // The glass body is a SIBLING of .tree-pin__body, not a child, and that is
+  // load-bearing: .tree-pin__body carries a `filter`, and per the Filter
+  // Effects spec any element with a filter becomes a *backdrop root* — a
+  // `backdrop-filter` on a descendant of it would sample that empty root
+  // instead of the map canvas behind the marker, i.e. transmit nothing. As a
+  // sibling it samples the real backdrop (see .tree-pin__glass in index.css).
+  // Only ever visible on red pins; `display: none` for every other band.
   el.innerHTML = `
     <div class="tree-pin__pulse" style="animation-delay:${pulseDelay}s"></div>
     <div class="tree-pin__anchor"></div>
     <div class="tree-pin__blob"></div>
     <div class="tree-pin__float" style="animation-delay:${floatDelay}s">
+      <div class="tree-pin__glass"></div>
       <div class="tree-pin__body">
         <svg width="26" height="34" viewBox="0 0 26 34" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M13 33.5C13 33.5 24.5 20.8 24.5 13A11.5 11.5 0 1 0 1.5 13C1.5 20.8 13 33.5 13 33.5Z"
@@ -701,6 +685,64 @@ interface PinTooltipState {
   /** Viewport pixels — this is portaled to `document.body`, not map-relative. */
   x: number;
   y: number;
+}
+
+interface FarmDetectionPopupState {
+  field: string;
+  x: number;
+  y: number;
+}
+
+function FarmDetectionPopup({
+  state,
+  onOpen,
+  onClose,
+}: {
+  state: FarmDetectionPopupState;
+  onOpen?: (field: string) => void;
+  onClose: () => void;
+}) {
+  const detection = FARM_DETECTIONS[state.field];
+  if (!detection) return null;
+  const accent = detection.tone === "red" ? "#c0392b" : "#c98a1a";
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-label={`Farm ${state.field} detection details`}
+      className="fixed z-[950] w-[290px] max-w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-full rounded-[14px] border bg-white/95 px-[14px] py-[12px] text-left shadow-[0_18px_44px_-18px_rgba(0,0,0,0.45)] backdrop-blur-md font-['Outfit',sans-serif] cursor-pointer transition-[transform,box-shadow] duration-(--dur-3) ease-(--ease-lux) hover:shadow-[0_22px_48px_-16px_rgba(0,0,0,0.52)] animate-fade-in-up"
+      style={{ left: state.x, top: state.y - 18, borderColor: `${accent}55` }}
+    >
+      <div className="flex items-center justify-between gap-[10px]">
+        <span className="text-[10px] font-extrabold uppercase tracking-[0.08em]" style={{ color: accent }}>
+          Farm {state.field} · satellite detection
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close detection details"
+          className="u-press flex h-[24px] w-[24px] items-center justify-center rounded-full bg-[#f4f5f2] text-[15px] leading-none text-[#5b5b66] hover:bg-[#e7e8e2]"
+        >
+          ×
+        </button>
+      </div>
+      <p className="mt-[5px] text-[13px] font-extrabold leading-[17px] text-[#18181c]">{detection.headline}</p>
+      <p className="mt-[3px] text-[11px] leading-[15px] text-[#5b5b66]">{detection.detail}</p>
+      <div className="mt-[8px] flex items-center justify-between gap-[8px]">
+        <span className="text-[10px] font-semibold text-[#71717a]">Source · Satellite</span>
+        {onOpen && (
+          <button type="button" onClick={() => onOpen(state.field)} className="u-press text-[10px] font-bold text-[#096151]">
+            Open filtered Assets →
+          </button>
+        )}
+      </div>
+      <div
+        className="absolute left-1/2 top-full -translate-x-1/2 -mt-px w-[9px] h-[9px] rotate-45 border-r border-b bg-white"
+        style={{ borderColor: `${accent}55` }}
+      />
+    </div>,
+    document.body,
+  );
 }
 
 /**
@@ -875,6 +917,8 @@ export default function MapCanvas({
   onPinClick,
   onPinHover,
   onOverlayQuadChange,
+  focusPoints,
+  onFocusPointsChange,
   storyView,
   chrome = true,
   skipAutoFit = false,
@@ -883,6 +927,12 @@ export default function MapCanvas({
   onSetFindingOutcome,
   onRequestHiRes,
   fieldFocusRequest,
+  highlightFieldLetters,
+  driftFieldFocus,
+  onOpenFarmDetection,
+  showFarmDetectionPins = false,
+  layerPanelInitiallyCollapsed = false,
+  timelineOverlay,
   resetViewRequest,
 }: {
   center: [number, number];
@@ -1001,6 +1051,16 @@ export default function MapCanvas({
    * lets a caller (LandingScreen) draw its own outline over the plot's real
    * footprint and detect hovering near it, without owning a map instance. */
   onOverlayQuadChange?: (quad: { x: number; y: number }[] | null) => void;
+  /** Arbitrary `[lng, lat]` points a caller wants tracked on screen —
+   *  LandingScreen's own schematic farm squares, pinned to a real ground
+   *  location rather than a fixed spot on the viewport. Same
+   *  project()-plus-container-rect mechanism as `onOverlayQuadChange` just
+   *  above, generalised past a single overlay's own four corners. */
+  focusPoints?: [number, number][];
+  /** Reports `focusPoints` reprojected to on-screen pixels (viewport-
+   *  relative, like `onOverlayQuadChange`) on load and on every subsequent
+   *  pan/zoom/rotate, or `null` once `focusPoints` is absent. */
+  onFocusPointsChange?: (points: { x: number; y: number }[] | null) => void;
   /**
    * The map state the Story panel's currently-read block asks for — camera
    * frame, which layers to light, colour treatment. See data/storyMap.ts.
@@ -1044,6 +1104,34 @@ export default function MapCanvas({
    *  single tree/pin to ring or open a tooltip for, just a place — and now a
    *  boundary — on the map to look at. */
   fieldFocusRequest?: { fieldIndex: number; lng: number; lat: number; nonce: number } | null;
+  /** Field letters ("A"-"D") to glow in place, no camera movement — Crop
+   *  Monitor's own KPI cards (EstateDashboard) hovering to preview which
+   *  field(s) a metric is about. `null`/empty clears the glow. */
+  highlightFieldLetters?: string[] | null;
+  /** A Drift list card selected ("A"-"D"), or `null` for none — isolates the
+   *  map to that one field: every other field's pins hide, the basemap dims,
+   *  and this field's own RED pins (the ones GLASS_PIN_COLORS marks — the
+   *  same flagged condition/CRITICAL-finding colours the transmissive glass
+   *  treatment applies to) get an intensified glow so the reader's eye lands
+   *  on exactly what the selected card is about. Distinct from
+   *  `highlightFieldLetters`: that one glows a field's ground *outline* on
+   *  hover with the camera untouched; this one is a click-driven isolation
+   *  of the pins themselves, paired with `fieldFocusRequest` flying the
+   *  camera there. */
+  driftFieldFocus?: string | null;
+  /** Opens Assets with the selected farm and this popup's detection context
+   * already applied to its worklist filters. */
+  onOpenFarmDetection?: (field: string) => void;
+  /** Shows one persistent, clickable marker for each shared Farm A-C
+   * satellite detection. Assets enables this; Fields at a glance continues
+   * to reveal its popup through card selection instead. */
+  showFarmDetectionPins?: boolean;
+  /** Keeps map controls available while opening with more ground visible. */
+  layerPanelInitiallyCollapsed?: boolean;
+  /** Caller-owned map timeline, rendered above map controls without changing
+   * the fixed split-pane height. Crop Monitor Assets uses this for its
+   * explicit monthly monitoring cadence. */
+  timelineOverlay?: ReactNode;
   /** Bumped (any changing number) to close whatever pin popover/modal is open
    *  and fly the camera back to this area's own default `center`/`zoom` —
    *  what "Push to inspection system" resolves to, so finishing that flow
@@ -1058,10 +1146,7 @@ export default function MapCanvas({
   // state: rebuilding it doesn't need a re-render, only the separate
   // range-visibility effect (below) reading it does.
   const pinsRef = useRef<{ pin: TreePin; marker: maplibregl.Marker }[]>([]);
-  // The violation entries the pin-area plaza was last built from — read back
-  // by its own animation loop every frame to regenerate the shimmering top
-  // band without that effect needing `violationByTreeId` in its own deps.
-  const cropEntriesRef = useRef<TriageEntry[]>([]);
+  const farmDetectionMarkersRef = useRef<maplibregl.Marker[]>([]);
   // The ring drawn over a tree selected in the Assets table.
   const focusMarkerRef = useRef<maplibregl.Marker | null>(null);
   // The specific finding a Recent Events click asked for (see `focusTree`'s
@@ -1171,6 +1256,7 @@ export default function MapCanvas({
   const [pinCounts, setPinCounts] = useState<Record<PinSeverity, number> | null>(null);
   const [bearing, setBearing] = useState(0);
   const [activePin, setActivePin] = useState<PinTooltipState | null>(null);
+  const [farmDetectionPopup, setFarmDetectionPopup] = useState<FarmDetectionPopupState | null>(null);
   // The month the pins are currently painted for. Held in a ref because the
   // marker click handlers are bound once when the pool is built and would
   // otherwise close over a stale month for the rest of the session.
@@ -1179,6 +1265,8 @@ export default function MapCanvas({
   // filter change (stagger the pins) from a timeline change (don't) — see
   // that effect's own note.
   const prevVisibleTreeIdsRef = useRef<Set<string> | undefined>(undefined);
+  /** Same reasoning as `prevVisibleTreeIdsRef`, for `driftFieldFocus`. */
+  const prevDriftFieldFocusRef = useRef<string | null | undefined>(undefined);
   // The panel's strips need month labels, and MapCanvas holds snapshots rather
   // than labels — memoized so the chips' own coverage memo isn't invalidated by
   // a fresh array on every render.
@@ -2835,7 +2923,7 @@ export default function MapCanvas({
     // reporting canopy stress; `canopyLossByMonth` repeats its one real
     // current `canopyLossPct`, the only per-tree loss figure this app keeps.
     let pins = allPins;
-    if (areaId === "liwa-oasis" && violationByTreeId) {
+    if (isCropFarm(areaId) && violationByTreeId) {
       const flaggedPins = allPins.filter((pin) => violationByTreeId.has(pin.id));
       const flaggedIds = new Set(flaggedPins.map((pin) => pin.id));
       const backfilled: TreePin[] = [];
@@ -2940,45 +3028,30 @@ export default function MapCanvas({
     };
   }, [overlay, overlayReady, loaded, areaId, snapshots, violationByTreeId, monthLabelsForPanel]);
 
-  // Draws every violation pin's own plaza as an abstract little 3D field: a
-  // dashed boundary at ground level (the same read as `field-highlight`'s own
-  // outline, just per-pin and always the finding's severity colour, and wide
-  // enough to hold the shape it frames) around a single organic mass standing
-  // in for the crop itself — not a real planting record (this app has none at
-  // pin scale), so its irregular silhouette and height are a stable, seeded
-  // "random" rather than invented real data, closer to how an uneven patch of
-  // field actually reads than a uniform box would. Colour still carries the
-  // actual meaning (severity); shape and height are texture. Only meaningful
-  // once the camera is actually pitched (see the visibility effect right below
-  // this one) — a fill-extrusion layer viewed perfectly flat from above is
-  // indistinguishable from a plain fill.
+  // Every violation pin's own ground-level plaza boundary — a dashed outline
+  // (the same read as `field-highlight`'s own outline, just per-pin and
+  // always the finding's severity colour) around the real 3D mass, which is
+  // drawn separately by `PinAreaLayer` below. This part stays a plain
+  // MapLibre line layer: a flat dashed ring has no need for a fragment
+  // shader, and keeping it declarative means it survives a basemap swap
+  // (`styleVersion`) the same way every other GeoJSON layer here does,
+  // rather than needing re-adding like the custom layer does.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
     if (!violationByTreeId || violationByTreeId.size === 0) {
-      cropEntriesRef.current = [];
-      if (map.getLayer(PIN_AREA_CROPS_TOP_LAYER_ID)) map.removeLayer(PIN_AREA_CROPS_TOP_LAYER_ID);
-      if (map.getLayer(PIN_AREA_CROPS_BASE_LAYER_ID)) map.removeLayer(PIN_AREA_CROPS_BASE_LAYER_ID);
       if (map.getLayer(PIN_AREA_LINE_ID)) map.removeLayer(PIN_AREA_LINE_ID);
-      if (map.getSource(PIN_AREA_CROPS_SOURCE_ID)) map.removeSource(PIN_AREA_CROPS_SOURCE_ID);
       if (map.getSource(PIN_AREA_SOURCE_ID)) map.removeSource(PIN_AREA_SOURCE_ID);
       return;
     }
 
     // Narrowed by the same set that hides the pins, so a finding filtered out
-    // of the worklist doesn't leave its 3D plaza standing on the ground with
-    // no pin above it.
-    //
-    // Filtered HERE rather than by narrowing `violationByTreeId` upstream:
-    // that map is in the marker-pool build effect's deps (see its dep array),
-    // so changing it would tear down and re-add every marker on every chip
-    // click — which would both flash the map and destroy the staggered
-    // reveal the visibility effect above is doing. This effect only ever
-    // setData()s an existing source, so it is the cheap place to filter.
+    // of the worklist doesn't leave its plaza boundary standing on the ground
+    // with no pin above it. See the matching filter on `PinAreaLayer`'s own
+    // effect below for why this is filtered here rather than upstream.
     const entries = [...violationByTreeId.entries()]
       .filter(([treeId]) => visibleTreeIds === undefined || visibleTreeIds.has(treeId))
       .map(([, entry]) => entry);
-    cropEntriesRef.current = entries;
 
     const boundaryFeatures = entries.map((entry) => ({
       type: "Feature" as const,
@@ -2989,13 +3062,10 @@ export default function MapCanvas({
       },
     }));
     const boundaryGeojson = { type: "FeatureCollection" as const, features: boundaryFeatures };
-    const cropsGeojson = { type: "FeatureCollection" as const, features: buildCropFeatures(entries, 0) };
 
     const existingBoundary = map.getSource(PIN_AREA_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    const existingCrops = map.getSource(PIN_AREA_CROPS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (existingBoundary && existingCrops) {
+    if (existingBoundary) {
       existingBoundary.setData(boundaryGeojson);
-      existingCrops.setData(cropsGeojson);
       return;
     }
 
@@ -3007,96 +3077,161 @@ export default function MapCanvas({
       layout: { visibility: is3DRef.current ? "visible" : "none" },
       paint: { "line-color": ["get", "color"], "line-width": 2, "line-dasharray": [2, 1.4], "line-opacity": 0.85 },
     });
+    // A freshly added layer lands at the top of the stack as it is, but only
+    // until the next raster re-add moves back above it — see
+    // ensureGenerativeOnTop's own comment on why it has to know about this
+    // layer too, not just why it's called here.
+    ensureGenerativeOnTop(map);
+  }, [violationByTreeId, visibleTreeIds, loaded, styleVersion]);
 
-    // Two fill-extrusion layers reading the same source, filtered by each
-    // feature's own "band" — a darker base and a lighter top sharing one
-    // footprint is how a vertical colour gradient gets faked on a paint
-    // property (fill-extrusion-color) that only ever takes one colour per
-    // feature. See `buildCropFeatures` for where the two tones — and the
-    // top band's procedural shimmer — actually get computed.
-    map.addSource(PIN_AREA_CROPS_SOURCE_ID, { type: "geojson", data: cropsGeojson });
-    const sharedCropsPaint: maplibregl.FillExtrusionLayerSpecification["paint"] = {
-      "fill-extrusion-color": ["get", "color"],
-      "fill-extrusion-height": ["get", "height"],
-      "fill-extrusion-base": ["get", "base"],
-      "fill-extrusion-opacity": 0.88,
-      "fill-extrusion-opacity-transition": { duration: 300 },
-      // Shades each face darker toward its base and brighter toward its
-      // top on top of the two-tone gradient below — the built-in stand-in
-      // for real lighting on an extrusion. (fill-extrusion-opacity itself
-      // is constant-only in this MapLibre version — a data expression here
-      // throws and takes the whole map down, so this stays a plain number.)
-      "fill-extrusion-vertical-gradient": true,
-    };
-    map.addLayer({
-      id: PIN_AREA_CROPS_BASE_LAYER_ID,
-      type: "fill-extrusion",
-      source: PIN_AREA_CROPS_SOURCE_ID,
-      filter: ["==", ["get", "band"], "base"],
-      layout: { visibility: is3DRef.current ? "visible" : "none" },
-      paint: sharedCropsPaint,
-    });
-    map.addLayer({
-      id: PIN_AREA_CROPS_TOP_LAYER_ID,
-      type: "fill-extrusion",
-      source: PIN_AREA_CROPS_SOURCE_ID,
-      filter: ["==", ["get", "band"], "top"],
-      layout: { visibility: is3DRef.current ? "visible" : "none" },
-      paint: sharedCropsPaint,
-    });
-  }, [violationByTreeId, visibleTreeIds, loaded]);
-
-  // Ties the pin-area field's visibility to the 3D toggle — same on/off
-  // switch every other 3D-only layer here already follows.
+  // Ties the boundary's visibility to the 3D toggle — same on/off switch
+  // every other 3D-only layer here already follows.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
-    const visibility = is3D ? "visible" : "none";
-    if (map.getLayer(PIN_AREA_CROPS_BASE_LAYER_ID)) map.setLayoutProperty(PIN_AREA_CROPS_BASE_LAYER_ID, "visibility", visibility);
-    if (map.getLayer(PIN_AREA_CROPS_TOP_LAYER_ID)) map.setLayoutProperty(PIN_AREA_CROPS_TOP_LAYER_ID, "visibility", visibility);
-    if (map.getLayer(PIN_AREA_LINE_ID)) map.setLayoutProperty(PIN_AREA_LINE_ID, "visibility", visibility);
+    if (map.getLayer(PIN_AREA_LINE_ID)) map.setLayoutProperty(PIN_AREA_LINE_ID, "visibility", is3D ? "visible" : "none");
   }, [is3D, loaded]);
 
-  // The plaza's own procedural "shader" touches, since none of this is a
-  // static paint value MapLibre can express on its own (there's no clock a
-  // paint expression can read): the boundary's dashes step through
-  // `PIN_AREA_FLOW_DASH_SEQUENCE` so the border reads as flowing rather than
-  // fixed, the mass's own opacity breathes on a slow sine, and — the one that
-  // actually needs regenerating the geometry, not just reassigning a paint
-  // value — the top band's own gradient colour drifts between its lit and
-  // glowing tone (see `buildCropFeatures`). All driven by one rAF loop, and
-  // all stopped whenever 3D is off, so nothing ticks for a pin no one is
-  // looking at.
+  // The boundary's own flowing-border touch — stepping through
+  // `PIN_AREA_FLOW_DASH_SEQUENCE` on a timer, since MapLibre has no
+  // dash-phase paint property to animate directly (see the sequence's own
+  // doc comment). Stopped whenever 3D is off.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded || !is3D) return;
     let rafId: number;
     let lastDashStep = -1;
-    const start = performance.now();
     function tick(now: number) {
       const step = Math.floor((now / 90) % PIN_AREA_FLOW_DASH_SEQUENCE.length);
       if (step !== lastDashStep && map!.getLayer(PIN_AREA_LINE_ID)) {
         lastDashStep = step;
         map!.setPaintProperty(PIN_AREA_LINE_ID, "line-dasharray", PIN_AREA_FLOW_DASH_SEQUENCE[step]);
       }
-      const elapsedSec = (now - start) / 1000;
-      if (map!.getLayer(PIN_AREA_CROPS_BASE_LAYER_ID)) {
-        const breathingOpacity = 0.78 + Math.sin(elapsedSec * 1.4) * 0.1;
-        map!.setPaintProperty(PIN_AREA_CROPS_BASE_LAYER_ID, "fill-extrusion-opacity", breathingOpacity);
-        map!.setPaintProperty(PIN_AREA_CROPS_TOP_LAYER_ID, "fill-extrusion-opacity", breathingOpacity);
-      }
-      const cropsSource = map!.getSource(PIN_AREA_CROPS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-      if (cropsSource && cropEntriesRef.current.length > 0) {
-        cropsSource.setData({
-          type: "FeatureCollection",
-          features: buildCropFeatures(cropEntriesRef.current, elapsedSec),
-        });
-      }
       rafId = requestAnimationFrame(tick);
     }
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [is3D, loaded]);
+
+  // The plaza's own real 3D mass — a `PinAreaLayer` custom layer (see that
+  // file's header) rendering an actual GPU-shaded gradient, fresnel rim and
+  // flowing energy band per finding, the same way `TreeCanopyLayer` stands
+  // the 3D forest. Added and removed whole with the 3D toggle, exactly like
+  // that layer, rather than toggled by layout visibility: a `fill-extrusion`
+  // can sit hidden for nothing, but there is no reason to keep three.js
+  // driving a per-frame render loop for a plaza no one can see.
+  const pinAreaLayerRef = useRef<PinAreaLayer | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !is3D || !violationByTreeId || violationByTreeId.size === 0) return;
+
+    const entries = [...violationByTreeId.entries()]
+      .filter(([treeId]) => visibleTreeIds === undefined || visibleTreeIds.has(treeId))
+      .map(([, entry]) => entry);
+    if (entries.length === 0) return;
+
+    const layer = new PinAreaLayer({
+      id: PIN_AREA_GL_LAYER_ID,
+      entries,
+      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    });
+    map.addLayer(layer);
+    pinAreaLayerRef.current = layer;
+    ensureGenerativeOnTop(map);
+
+    return () => {
+      pinAreaLayerRef.current = null;
+      const m = mapRef.current;
+      // Guarded: a style swap may already have discarded it, and removing a
+      // layer that isn't there throws rather than no-opping.
+      if (m && m.getLayer(PIN_AREA_GL_LAYER_ID)) m.removeLayer(PIN_AREA_GL_LAYER_ID);
+    };
+  }, [violationByTreeId, visibleTreeIds, loaded, is3D, styleVersion]);
+
+  // Crop Monitor's own explicit field boundaries — a `FieldBorderLayer`
+  // custom layer (see that file's header) tracing each of the four field
+  // bands with a flowing, liquid-shaded ribbon tinted by that field's own
+  // drift status, so "which parcel doesn't match its filing" reads straight
+  // off the map, not just off the Drift list table. Independent of the 3D
+  // toggle (unlike PinAreaLayer's plazas) — a boundary is a 2D concept, not
+  // an extra mass that only makes sense once terrain relief is on — and
+  // shown on both Insights and Drift list, since both share this one map.
+  const fieldBorderLayerRef = useRef<FieldBorderLayer | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !overlay || areaId !== "liwa-crop-monitor") return;
+
+    const layer = new FieldBorderLayer({
+      id: FIELD_BORDER_GL_LAYER_ID,
+      overlay,
+      fields: FIELD_DRIFT,
+      reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    });
+    map.addLayer(layer);
+    fieldBorderLayerRef.current = layer;
+    ensureGenerativeOnTop(map);
+
+    return () => {
+      fieldBorderLayerRef.current = null;
+      const m = mapRef.current;
+      if (m && m.getLayer(FIELD_BORDER_GL_LAYER_ID)) m.removeLayer(FIELD_BORDER_GL_LAYER_ID);
+    };
+  }, [overlay, areaId, loaded, styleVersion]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    farmDetectionMarkersRef.current.forEach((marker) => marker.remove());
+    farmDetectionMarkersRef.current = [];
+    if (!map || !loaded || !overlay || !showFarmDetectionPins) return;
+
+    farmDetectionMarkersRef.current = Object.keys(FARM_DETECTIONS).map((field) => {
+      const fieldIndex = FIELD_LETTERS.indexOf(field);
+      const { u, v } = fieldCenterUV(fieldIndex);
+      const [lng, lat] = pointInQuad(overlay.coordinates, u, v);
+      const detection = FARM_DETECTIONS[field];
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = `farm-detection-pin farm-detection-pin--${detection.severity.toLowerCase()}`;
+      element.setAttribute("aria-label", `${detection.headline} at Farm ${field}`);
+      element.innerHTML = `<span class="farm-detection-pin__pulse"></span><span class="farm-detection-pin__body"><span>${field}</span><strong>!</strong></span>`;
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const point = map.project([lng, lat]);
+        const rect = map.getContainer().getBoundingClientRect();
+        setFarmDetectionPopup({ field, x: rect.left + point.x, y: rect.top + point.y });
+      });
+      return new maplibregl.Marker({ element, anchor: "bottom" }).setLngLat([lng, lat]).addTo(map);
+    });
+
+    return () => {
+      farmDetectionMarkersRef.current.forEach((marker) => marker.remove());
+      farmDetectionMarkersRef.current = [];
+    };
+  }, [loaded, overlay, showFarmDetectionPins, styleVersion]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !farmDetectionPopup || !showFarmDetectionPins || !overlay) return;
+    const fieldIndex = FIELD_LETTERS.indexOf(farmDetectionPopup.field);
+    if (fieldIndex < 0) return;
+    const { u, v } = fieldCenterUV(fieldIndex);
+    const [lng, lat] = pointInQuad(overlay.coordinates, u, v);
+    const update = () => {
+      const point = map.project([lng, lat]);
+      const rect = map.getContainer().getBoundingClientRect();
+      setFarmDetectionPopup((current) =>
+        current?.field === farmDetectionPopup.field
+          ? { field: current.field, x: rect.left + point.x, y: rect.top + point.y }
+          : current,
+      );
+    };
+    map.on("move", update);
+    map.on("resize", update);
+    return () => {
+      map.off("move", update);
+      map.off("resize", update);
+    };
+  }, [farmDetectionPopup?.field, overlay, showFarmDetectionPins]);
 
   // Shows/hides pins to match the selected date range and, in the Assets view,
   // the table's active filters — this is what makes dragging the timeline or
@@ -3118,10 +3253,15 @@ export default function MapCanvas({
     // random set each frame.
     const month = Math.max(0, Math.min(effectiveRange.endIndex, snapshots.length - 1));
     displayMonthRef.current = month;
-    const visible = pinsRef.current.filter(
-      ({ pin }) =>
-        pinSeverityAt(pin, month) !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id)),
-    );
+    // A Drift list card selected (`driftFieldFocus`) narrows this on top of
+    // the ordinary range/table filters, not instead of them — isolating
+    // Field B still respects whichever month is on screen and whatever the
+    // Assets table's own filters already hid.
+    const isShown = (pin: TreePin) =>
+      pinSeverityAt(pin, month) !== null &&
+      (visibleTreeIds === undefined || visibleTreeIds.has(pin.id)) &&
+      (!driftFieldFocus || fieldLetterForU(pin.u) === driftFieldFocus);
+    const visible = pinsRef.current.filter(({ pin }) => isShown(pin));
     const visibleIds = new Set(visible.map(({ pin }) => pin.id));
 
     // ---- Staggered reveal ------------------------------------------------
@@ -3152,11 +3292,14 @@ export default function MapCanvas({
     // filter changes and holds steady while only the month moves. The first
     // run counts as a change too, which gives the map a choreographed first
     // entrance rather than a flat pop-in.
-    const filterChanged = prevVisibleTreeIdsRef.current !== visibleTreeIds;
+    // Selecting/clearing a Drift list card is a filter change too — the
+    // isolation sweeps across the map the same choreographed way a table
+    // filter does, rather than the other fields' pins just vanishing.
+    const filterChanged =
+      prevVisibleTreeIdsRef.current !== visibleTreeIds || prevDriftFieldFocusRef.current !== driftFieldFocus;
     prevVisibleTreeIdsRef.current = visibleTreeIds;
+    prevDriftFieldFocusRef.current = driftFieldFocus;
 
-    const isShown = (pin: TreePin) =>
-      pinSeverityAt(pin, month) !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id));
     // Capped, the way the card list caps its own (`Math.min(i, 10) * 40`):
     // uncapped, a 40-pin sweep at one beat each would run for nearly two
     // seconds after a single click.
@@ -3187,7 +3330,7 @@ export default function MapCanvas({
     pinsRef.current.forEach(({ pin, marker }) => {
       const severity = pinSeverityAt(pin, month);
       const el = marker.getElement();
-      const show = severity !== null && (visibleTreeIds === undefined || visibleTreeIds.has(pin.id));
+      const show = isShown(pin);
       // Delay goes on the root (which transitions `opacity`) AND on the two
       // inner elements that carry the scale, because transition-delay does
       // not inherit — left off the children, a pin would pop to full size
@@ -3201,7 +3344,7 @@ export default function MapCanvas({
       // up a later, un-staggered update.
       const delay = delayMs ? `${delayMs}ms` : "";
       el.style.transitionDelay = delay;
-      el.querySelectorAll<HTMLElement>(".tree-pin__body, .tree-pin__blob").forEach((inner) => {
+      el.querySelectorAll<HTMLElement>(".tree-pin__body, .tree-pin__blob, .tree-pin__glass").forEach((inner) => {
         inner.style.transitionDelay = delay;
       });
       el.classList.toggle("tree-pin--hidden", !show);
@@ -3212,7 +3355,33 @@ export default function MapCanvas({
         // pin on this map still uses, which is a different scale and would
         // disagree with the rest of that finding's own UI.
         const violation = violationByTreeId?.get(pin.id);
-        el.style.setProperty("--pin-color", violation ? SEVERITY_STYLE[violation.severityLabel].accent : SEVERITY_COLOR[severity]);
+        let pinColor = violation ? SEVERITY_STYLE[violation.severityLabel].accent : SEVERITY_COLOR[severity];
+        // Crop Monitor only: a reddish (Sparse) pin reads as "this needs
+        // correction" here, the same alarm colour the Drift list badge
+        // uses — so it should only actually appear on the two fields the
+        // Drift list itself flags "Needs correction" (driftStatus ===
+        // "correction"). A sparse tree sitting in a field the drift register
+        // is fine with isn't wrong information to hide; it downgrades one
+        // band to the next (amber, "Moderate") rather than disappearing,
+        // since the tree is still real and still flagged, just not the
+        // thing this screen's red is pointing at.
+        if (isCropFarm(areaId) && pinColor === SEVERITY_COLOR.sparse) {
+          const drift = FIELD_DRIFT.find((f) => f.field === fieldLetterForU(pin.u));
+          if (!drift || driftStatus(drift.driftPct) !== "correction") {
+            pinColor = SEVERITY_COLOR.moderate;
+          }
+        }
+        el.style.setProperty("--pin-color", pinColor);
+        // Decided from the colour actually applied, not from the condition
+        // key, so a pin that a CRITICAL finding has just recoloured red picks
+        // the glass up in the same pass that turns it red — the two can never
+        // disagree about what "the red ones" means.
+        el.classList.toggle("tree-pin--glass", GLASS_PIN_COLORS.has(pinColor));
+        // The intensified red halo only while a field is actually isolated
+        // — outside that mode a red pin already reads fine among its
+        // neighbours; the glow is what says "this is what you selected,"
+        // not a permanent treatment every red pin would otherwise carry.
+        el.classList.toggle("tree-pin--drift-glow", Boolean(driftFieldFocus) && GLASS_PIN_COLORS.has(pinColor));
         el.setAttribute(
           "aria-label",
           violation ? `${violation.severityLabel} finding — ${violation.violationType}` : `${CONDITION_LABEL[severity]} tree ${pin.id}`,
@@ -3230,7 +3399,7 @@ export default function MapCanvas({
 
     // A pin that just faded out of range shouldn't leave its tooltip dangling.
     setActivePin((prev) => (prev && !visibleIds.has(prev.pin.id) ? null : prev));
-  }, [overlay, overlayReady, loaded, areaId, snapshots, range, pinsRange, visibleTreeIds, violationByTreeId]);
+  }, [overlay, overlayReady, loaded, areaId, snapshots, range, pinsRange, visibleTreeIds, violationByTreeId, driftFieldFocus]);
 
   // Flies to the tree selected in the Assets table and rings it. Runs after the
   // visibility effect above so that, for a flagged tree, the marker it wants to
@@ -3365,7 +3534,18 @@ export default function MapCanvas({
       [Math.min(...lngs), Math.min(...lats)],
       [Math.max(...lngs), Math.max(...lats)],
     ];
-    map.fitBounds(bounds, { padding: 56, duration: 900, essential: true });
+    const fieldPadding = driftFieldFocus
+      ? {
+          top: 72,
+          right: 72,
+          bottom: 72,
+          // The Fields-at-a-glance rail occupies roughly 62% of the map.
+          // Reserve that space so the selected ground, its pins and popup
+          // are framed in the unobstructed map area rather than underneath it.
+          left: Math.min(780, map.getContainer().clientWidth * 0.64),
+        }
+      : 56;
+    map.fitBounds(bounds, { padding: fieldPadding, duration: 900, essential: true });
 
     const geojson = {
       type: "Feature" as const,
@@ -3395,6 +3575,223 @@ export default function MapCanvas({
     // would either re-run needlessly or miss a repeat click on the same field.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldFocusRequest?.nonce, loaded, overlay]);
+
+  // Crop Monitor's own KPI-hover preview — glows every field band a hovered
+  // metric (EstateDashboard's KpiCards) is actually about, in place, no
+  // camera movement. Real ground quads (`fieldBoundsUV` + `pointInQuad`),
+  // the same projection every field highlight/pin in this app already uses,
+  // not a screen-space effect over wherever the map happens to be pointed.
+  // The "glow" is a wide, heavily-blurred line (`line-blur`) under a crisp
+  // one — MapLibre has no native glow paint property, so two line layers at
+  // different widths/blurs is what actually reads as a soft halo rather
+  // than a hard-edged outline.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+
+    if (!highlightFieldLetters || highlightFieldLetters.length === 0 || !overlay) {
+      if (map.getLayer(HOVER_HIGHLIGHT_GLOW_ID)) map.removeLayer(HOVER_HIGHLIGHT_GLOW_ID);
+      if (map.getLayer(HOVER_HIGHLIGHT_FILL_ID)) map.removeLayer(HOVER_HIGHLIGHT_FILL_ID);
+      if (map.getLayer(HOVER_HIGHLIGHT_LINE_ID)) map.removeLayer(HOVER_HIGHLIGHT_LINE_ID);
+      if (map.getSource(HOVER_HIGHLIGHT_SOURCE_ID)) map.removeSource(HOVER_HIGHLIGHT_SOURCE_ID);
+      return;
+    }
+
+    const features = highlightFieldLetters
+      .map((letter) => FIELD_LETTERS.indexOf(letter))
+      .filter((fieldIndex) => fieldIndex >= 0)
+      .map((fieldIndex) => {
+        const corners = fieldBoundsUV(fieldIndex).map(([u, v]) => pointInQuad(overlay.coordinates, u, v) as [number, number]);
+        return {
+          type: "Feature" as const,
+          properties: {},
+          geometry: { type: "Polygon" as const, coordinates: [[...corners, corners[0]]] },
+        };
+      });
+    const geojson = { type: "FeatureCollection" as const, features };
+
+    const existingSource = map.getSource(HOVER_HIGHLIGHT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (existingSource) {
+      existingSource.setData(geojson);
+    } else {
+      map.addSource(HOVER_HIGHLIGHT_SOURCE_ID, { type: "geojson", data: geojson });
+      map.addLayer({
+        id: HOVER_HIGHLIGHT_GLOW_ID,
+        type: "line",
+        source: HOVER_HIGHLIGHT_SOURCE_ID,
+        paint: { "line-color": "#3fd39a", "line-width": 18, "line-blur": 14, "line-opacity": 0.55 },
+      });
+      map.addLayer({
+        id: HOVER_HIGHLIGHT_FILL_ID,
+        type: "fill",
+        source: HOVER_HIGHLIGHT_SOURCE_ID,
+        paint: { "fill-color": "#3fd39a", "fill-opacity": 0.16 },
+      });
+      map.addLayer({
+        id: HOVER_HIGHLIGHT_LINE_ID,
+        type: "line",
+        source: HOVER_HIGHLIGHT_SOURCE_ID,
+        paint: { "line-color": "#0f9d68", "line-width": 2.5 },
+      });
+    }
+    ensureGenerativeOnTop(map);
+
+    return () => {
+      const m = mapRef.current;
+      if (!m) return;
+      if (m.getLayer(HOVER_HIGHLIGHT_GLOW_ID)) m.removeLayer(HOVER_HIGHLIGHT_GLOW_ID);
+      if (m.getLayer(HOVER_HIGHLIGHT_FILL_ID)) m.removeLayer(HOVER_HIGHLIGHT_FILL_ID);
+      if (m.getLayer(HOVER_HIGHLIGHT_LINE_ID)) m.removeLayer(HOVER_HIGHLIGHT_LINE_ID);
+      if (m.getSource(HOVER_HIGHLIGHT_SOURCE_ID)) m.removeSource(HOVER_HIGHLIGHT_SOURCE_ID);
+    };
+  }, [highlightFieldLetters, loaded, overlay]);
+
+  // A Drift list card's selection (`driftFieldFocus`) isolating the map to
+  // one field: a dark fill over the whole world WITH A HOLE cut over that
+  // field's own real ground quad, plus a bright outline tracing the hole's
+  // edge (the same glow-line-under-crisp-line language `highlightFieldLetters`
+  // above already uses, just a different colour so a selected field and a
+  // hovered KPI's preview never look identical even in the unlikely case
+  // both somehow fired at once).
+  //
+  // A GL fill layer, not a CSS `filter` on the map container — a CSS filter
+  // is a per-pixel transform with no idea what it's dimming, so an earlier
+  // version of this feature (`brightness()` on the whole canvas) dimmed the
+  // selected field right along with everything else. Real geometry keyed to
+  // the field's own coordinates is the only way to dim "outside" without
+  // also dimming "the thing being pointed at".
+  //
+  // The outer ring is a generous span of the whole Mercator-safe world
+  // (±85°, past which Web Mercator itself breaks down) rather than the
+  // current viewport bounds — recomputing it on every pan/zoom would mean
+  // another `map.on("move")` listener, and MapLibre already keeps a fill
+  // layer's geometry correctly clipped and positioned under an moving camera
+  // for free. GL JS classifies a polygon's rings by enclosure rather than
+  // strict winding order, so the hole doesn't need to be wound opposite the
+  // outer ring for this to render correctly.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+
+    if (!driftFieldFocus || !overlay) {
+      if (map.getLayer(DRIFT_FOCUS_GLOW_ID)) map.removeLayer(DRIFT_FOCUS_GLOW_ID);
+      if (map.getLayer(DRIFT_FOCUS_FILL_ID)) map.removeLayer(DRIFT_FOCUS_FILL_ID);
+      if (map.getLayer(DRIFT_FOCUS_LINE_ID)) map.removeLayer(DRIFT_FOCUS_LINE_ID);
+      if (map.getSource(DRIFT_FOCUS_SOURCE_ID)) map.removeSource(DRIFT_FOCUS_SOURCE_ID);
+      if (map.getLayer(DRIFT_MASK_FILL_ID)) map.removeLayer(DRIFT_MASK_FILL_ID);
+      if (map.getSource(DRIFT_MASK_SOURCE_ID)) map.removeSource(DRIFT_MASK_SOURCE_ID);
+      return;
+    }
+
+    const fieldIndex = FIELD_LETTERS.indexOf(driftFieldFocus);
+    if (fieldIndex < 0) return;
+    const corners = fieldBoundsUV(fieldIndex).map(([u, v]) => pointInQuad(overlay.coordinates, u, v) as [number, number]);
+    const ring = [...corners, corners[0]];
+
+    const maskGeojson = {
+      type: "Feature" as const,
+      properties: {},
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [
+          [
+            [-180, -85],
+            [180, -85],
+            [180, 85],
+            [-180, 85],
+            [-180, -85],
+          ],
+          ring,
+        ],
+      },
+    };
+    const highlightGeojson = {
+      type: "FeatureCollection" as const,
+      features: [{ type: "Feature" as const, properties: {}, geometry: { type: "Polygon" as const, coordinates: [ring] } }],
+    };
+
+    const maskSource = map.getSource(DRIFT_MASK_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const focusSource = map.getSource(DRIFT_FOCUS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (maskSource && focusSource) {
+      maskSource.setData(maskGeojson);
+      focusSource.setData(highlightGeojson);
+    } else {
+      map.addSource(DRIFT_MASK_SOURCE_ID, { type: "geojson", data: maskGeojson });
+      map.addLayer({
+        id: DRIFT_MASK_FILL_ID,
+        type: "fill",
+        source: DRIFT_MASK_SOURCE_ID,
+        paint: { "fill-color": "#05100c", "fill-opacity": 0.62 },
+      });
+      map.addSource(DRIFT_FOCUS_SOURCE_ID, { type: "geojson", data: highlightGeojson });
+      map.addLayer({
+        id: DRIFT_FOCUS_GLOW_ID,
+        type: "line",
+        source: DRIFT_FOCUS_SOURCE_ID,
+        paint: { "line-color": "#e9fff5", "line-width": 20, "line-blur": 16, "line-opacity": 0.5 },
+      });
+      map.addLayer({
+        id: DRIFT_FOCUS_FILL_ID,
+        type: "fill",
+        source: DRIFT_FOCUS_SOURCE_ID,
+        paint: { "fill-color": "#ffffff", "fill-opacity": 0.05 },
+      });
+      map.addLayer({
+        id: DRIFT_FOCUS_LINE_ID,
+        type: "line",
+        source: DRIFT_FOCUS_SOURCE_ID,
+        paint: { "line-color": "#ffffff", "line-width": 2.5 },
+      });
+    }
+    ensureGenerativeOnTop(map);
+
+    return () => {
+      const m = mapRef.current;
+      if (!m) return;
+      if (m.getLayer(DRIFT_FOCUS_GLOW_ID)) m.removeLayer(DRIFT_FOCUS_GLOW_ID);
+      if (m.getLayer(DRIFT_FOCUS_FILL_ID)) m.removeLayer(DRIFT_FOCUS_FILL_ID);
+      if (m.getLayer(DRIFT_FOCUS_LINE_ID)) m.removeLayer(DRIFT_FOCUS_LINE_ID);
+      if (m.getSource(DRIFT_FOCUS_SOURCE_ID)) m.removeSource(DRIFT_FOCUS_SOURCE_ID);
+      if (m.getLayer(DRIFT_MASK_FILL_ID)) m.removeLayer(DRIFT_MASK_FILL_ID);
+      if (m.getSource(DRIFT_MASK_SOURCE_ID)) m.removeSource(DRIFT_MASK_SOURCE_ID);
+    };
+  }, [driftFieldFocus, loaded, overlay]);
+
+  // Keeps the selected farm's RFP finding pinned to the centre of its real
+  // ground band while the camera flies, pans or zooms. Viewport coordinates
+  // match PinTooltip's portal strategy, escaping the map card's clipped edge.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !overlay || !driftFieldFocus) {
+      setFarmDetectionPopup(null);
+      return;
+    }
+
+    const fieldIndex = FIELD_LETTERS.indexOf(driftFieldFocus);
+    if (fieldIndex < 0 || !FARM_DETECTIONS[driftFieldFocus]) {
+      setFarmDetectionPopup(null);
+      return;
+    }
+    const { u, v } = fieldCenterUV(fieldIndex);
+    const fieldCenter = pointInQuad(overlay.coordinates, u, v);
+    const updatePosition = () => {
+      const currentMap = mapRef.current;
+      const container = containerRef.current;
+      if (!currentMap || !container) return;
+      const point = currentMap.project(fieldCenter);
+      const rect = container.getBoundingClientRect();
+      setFarmDetectionPopup({ field: driftFieldFocus, x: rect.left + point.x, y: rect.top + point.y });
+    };
+
+    setActivePin(null);
+    updatePosition();
+    map.on("move", updatePosition);
+    map.on("resize", updatePosition);
+    return () => {
+      map.off("move", updatePosition);
+      map.off("resize", updatePosition);
+    };
+  }, [driftFieldFocus, loaded, overlay]);
 
   // Closes any open pin popover/modal and flies back to the area's own
   // starting view — see `resetViewRequest`'s own comment.
@@ -3440,6 +3837,34 @@ export default function MapCanvas({
       onOverlayQuadChange?.(null);
     };
   }, [overlay, loaded, onOverlayQuadChange]);
+
+  // Reprojects `focusPoints` the same way, just for arbitrary caller-given
+  // ground points instead of an overlay's own corners — see that prop's own
+  // comment.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !focusPoints || focusPoints.length === 0 || !onFocusPointsChange) return;
+
+    function project() {
+      const m = mapRef.current;
+      if (!m || !focusPoints) return;
+      const rect = m.getContainer().getBoundingClientRect();
+      const points = focusPoints.map(([lng, lat]) => {
+        const p = m.project([lng, lat]);
+        return { x: rect.left + p.x, y: rect.top + p.y };
+      });
+      onFocusPointsChange?.(points);
+    }
+
+    project();
+    map.on("move", project);
+    window.addEventListener("resize", project);
+    return () => {
+      map.off("move", project);
+      window.removeEventListener("resize", project);
+      onFocusPointsChange?.(null);
+    };
+  }, [focusPoints, loaded, onFocusPointsChange]);
 
   // Keeps the open tooltip glued to its pin's screen position through pan,
   // zoom, rotate and tilt, and closes it once the pin scrolls outside the
@@ -3672,6 +4097,10 @@ export default function MapCanvas({
         style={{ filter: buildMapFilter(colorMode, mapContrast) }}
       />
 
+      {timelineOverlay && !inspectTree && (
+        <div className="absolute bottom-[66px] left-[14px] right-[14px] z-[12]">{timelineOverlay}</div>
+      )}
+
 
       {/* Flight is keyboard-only, so it needs saying — nothing on a black
           screen full of trees suggests pressing W. */}
@@ -3718,6 +4147,7 @@ export default function MapCanvas({
 
       {chrome && loaded && !error && layerTime && !inspectTree && (
         <LayerPanel
+          initiallyCollapsed={layerPanelInitiallyCollapsed}
           areaName={areaName ?? areaId ?? "Area"}
           areaId={areaId ?? "area"}
           months={monthLabelsForPanel}
@@ -3802,7 +4232,7 @@ export default function MapCanvas({
           per the reference it was supplied for. A reference key, not a claim
           that this map's own layers are classified into these exact codes. */}
       {chrome && loaded && !error && areaId === "al-maha" && <HabitatLegend />}
-      {chrome && loaded && !error && areaId === "liwa-oasis" && <ComplianceLegend />}
+      {chrome && loaded && !error && isCropFarm(areaId) && <ComplianceLegend />}
 
       {activePin &&
         (() => {
@@ -3834,6 +4264,7 @@ export default function MapCanvas({
                 outcome={findingOutcomes?.get(violation.event.id) ?? null}
                 onSetOutcome={(id, o) => onSetFindingOutcome?.(id, o)}
                 onRequestHiRes={(e) => onRequestHiRes?.(e)}
+                areaId={areaId}
               />
             );
           }
@@ -3848,7 +4279,7 @@ export default function MapCanvas({
                 }}
                 onCollapse={() => setPinExpanded(false)}
                 onFlyToPin={() => mapRef.current?.flyTo({ center: [record.lng, record.lat], zoom: 17, duration: 800 })}
-                isCropFarm={areaId === "liwa-oasis"}
+                isCropFarm={isCropFarm(areaId)}
               />
             );
           }
@@ -3859,13 +4290,21 @@ export default function MapCanvas({
               onExpand={record ? () => setPinExpanded(true) : undefined}
               violationType={violation?.violationType}
               speciesLabel={record?.species}
-              isCropFarm={areaId === "liwa-oasis"}
+              isCropFarm={isCropFarm(areaId)}
               confidencePct={violation?.confidencePct}
               dateDetected={violation?.dateDetected}
               severityLabel={violation?.severityLabel}
             />
           );
         })()}
+
+      {farmDetectionPopup && (
+        <FarmDetectionPopup
+          state={farmDetectionPopup}
+          onOpen={onOpenFarmDetection}
+          onClose={() => setFarmDetectionPopup(null)}
+        />
+      )}
 
       {loaded && !error && overlay && overlayMissing && (
         <div className="absolute bottom-4 left-4 z-10 bg-white border border-[#E0B4A0] rounded-[10px] px-[12px] py-[6px] shadow-[0px_4px_12px_-2px_rgba(0,0,0,0.08)] max-w-[420px]">
