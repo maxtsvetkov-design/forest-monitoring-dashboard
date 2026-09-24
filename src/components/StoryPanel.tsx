@@ -295,6 +295,15 @@ const FRAME_META: Record<StoryFrame, { label: string; icon: React.ReactNode }> =
       </svg>
     ),
   },
+  mangroveDemo: {
+    label: "Different site",
+    icon: (
+      <svg width="11" height="11" viewBox="0 0 16 16" {...stroke} strokeWidth={1.5}>
+        <path d="M2 12.5c1.4-3 3-3 4-1.4 1-2.8 2.6-2.8 3.6-.8 1-2 2.4-1.6 3-.2" />
+        <path d="M1.5 14.5h13" />
+      </svg>
+    ),
+  },
 };
 
 /**
@@ -1149,10 +1158,13 @@ export default function StoryPanel({
         </div>
       </div>
 
-      {/* Blocks. The tail padding is what lets the last block reach the top. */}
+      {/* Blocks, one to a screen — see story-block's own CSS for the slide
+          rules. No tail padding needed any more: a fixed-height last slide
+          already fills the viewport on its own. */}
       <div
         ref={scrollRef}
-        className="scroll-slim story-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-[14px] pb-[55%]"
+        tabIndex={0}
+        className="scroll-slim story-scroll story-slides flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-[14px] outline-none"
       >
         <TierUnlockBanner onOpen={() => setTierModalOpen(true)} />
 
@@ -1169,7 +1181,7 @@ export default function StoryPanel({
                 setRipple((prev) => ({ index: i, nonce: (prev?.nonce ?? 0) + 1 }));
               }}
               style={{ ["--i" as string]: Math.min(i, 8) }}
-              className={`story-block ${block.isSectionHead ? "story-block--sec" : ""} my-[14px] cursor-pointer`}
+              className={`story-block ${block.isSectionHead ? "story-block--sec" : ""} scroll-slim my-[14px] cursor-pointer`}
             >
               {/* Keyed on the nonce so it remounts — and therefore replays —
                   on every click, including a second click of the same card.
@@ -1204,11 +1216,14 @@ export default function StoryPanel({
                 </>
               ) : (
                 <>
-                  <h3 className="text-[18px] font-bold text-[#18181c] font-['Outfit',sans-serif] leading-[26px]">
+                  <span className="story-block__eyebrow">
+                    Chapter <span className="tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+                  </span>
+                  <h3 className="story-block__title font-bold text-[#18181c] font-['Outfit',sans-serif]">
                     {block.name}
                   </h3>
                   {block.description && (
-                    <p className="mt-[2px] mb-[2px] text-[12.5px] text-[#8a8a94] font-['Outfit',sans-serif] leading-[19px] max-w-[62ch]">
+                    <p className="mt-[4px] mb-[2px] text-[13.5px] text-[#6b6b76] font-['Outfit',sans-serif] leading-[21px] max-w-[62ch]">
                       {block.description}
                     </p>
                   )}

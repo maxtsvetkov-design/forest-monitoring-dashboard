@@ -1425,7 +1425,8 @@ export default function App() {
         // canopy-decline pitches for a real forest survey — Mangroves has
         // neither behind it (see areas.ts), so the tip would be quoting a
         // capability this area's demo data doesn't back.
-        proactiveTip={!hasMangroveForest(activeArea.id)}
+        // …and on Story the tip lands on top of the chapter being read.
+        proactiveTip={!hasMangroveForest(activeArea.id) && activeTab !== "Story"}
         onShowHiRes={() => {
           switchTab("Recent events");
           if (hiResDelivered) setHabitatFrameIndex(HABITAT_FRAMES.length);

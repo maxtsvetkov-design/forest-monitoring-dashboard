@@ -12,7 +12,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { DateRange } from "../data/aggregate";
-import { areaHasOwnImagery, isInsideQuad, plotWidthMeters, pointInQuad, type MapOverlay } from "../data/overlays";
+import {
+  areaHasOwnImagery,
+  areaOverlays,
+  isInsideQuad,
+  plotWidthMeters,
+  pointInQuad,
+  type MapOverlay,
+} from "../data/overlays";
 import { loadCanopies, MAX_CROWN_RADIUS_M, type Canopy } from "../data/canopies";
 import TreeCanopyLayer from "../map/TreeCanopyLayer";
 import MangroveLayer, { type GrowSchedule } from "../map/MangroveLayer";
@@ -25,7 +32,7 @@ import {
   playMangroveIntro,
   type CameraPose,
 } from "../map/mangroveIntro";
-import { generateMangroves, hasMangroveForest, type Mangrove } from "../data/mangroves";
+import { generateMangroves, hasMangroveForest, MANGROVE_AREA_ID, type Mangrove } from "../data/mangroves";
 import PinAreaLayer from "../map/PinAreaLayer";
 import FieldBorderLayer from "../map/FieldBorderLayer";
 import { driftStatus, FIELD_DRIFT } from "../data/fieldDrift";
@@ -245,7 +252,7 @@ function notifyFirstMapInteraction() {
  * error, so the table would claim a tilt the camera never takes.
  */
 const STORY_FRAMES: Record<
-  Exclude<StoryFrame, "twin">,
+  Exclude<StoryFrame, "twin" | "mangroveDemo">,
   { pitch: number; bearing: number; exaggeration: number | null; padding: number; zoomDelta: number }
 > = {
   context: { pitch: 0, bearing: 0, exaggeration: null, padding: 40, zoomDelta: -2.1 },
@@ -383,6 +390,11 @@ const TREES_3D_LAYER_ID = "area-trees-3d";
 // The Mangroves project's own 3D stand — the only content layer that area
 // draws (see `hasMangroveForest`). src/map/MangroveLayer.ts.
 const MANGROVES_3D_LAYER_ID = "area-mangroves-3d";
+/** The Story showcase cutaway's own layer — distinct from the id above so the
+ *  two can never collide, though in practice they can't coexist anyway: the
+ *  demo only mounts on a `storyView`, and the area-native layer only mounts
+ *  on the mangroves area itself, which has no Story tab. */
+const MANGROVE_DEMO_LAYER_ID = "story-mangrove-demo-3d";
 // A pale haze to match the greyed basemap — only ever seen when the camera
 // tilts past ~60°, which the intro's low pass does.
 const MANGROVE_SKY: NonNullable<Parameters<maplibregl.Map["setSky"]>[0]> = {
@@ -2526,6 +2538,108 @@ export default function MapCanvas({
     };
   }, [loaded, mangroveTrees]);
 
+  // The Story showcase cutaway (`mangroveDemo`, see storyMap.ts): the real
+  // mangrove stand, dropped onto whatever basemap the current area is already
+  // showing, for exactly the one block that asks for it. Deliberately its own
+  // small effect rather than a rebranch of the one above, which also forces
+  // that area's basemap flat, grey and skied — the right treatment for
+  // mangroves' *own* view, wrong for a guest appearance on someone else's map.
+  // This is a cameo: it adds one layer and one hover loop, and undoes exactly
+  // that on cleanup, leaving nothing else about the current area's rendering
+  // touched.
+  const mangroveDemoTrees = useMemo(() => generateMangroves(areaOverlays[MANGROVE_AREA_ID].coordinates), []);
+  const showMangroveDemo = storyView?.frame === "mangroveDemo";
+  const [mangroveDemoHover, setMangroveDemoHover] = useState<{ tree: Mangrove; x: number; y: number } | null>(null);
+  const mangroveDemoTipRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !showMangroveDemo) return;
+
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const layer = new MangroveLayer({ id: MANGROVE_DEMO_LAYER_ID, trees: mangroveDemoTrees, reducedMotion });
+    map.addLayer(layer);
+
+    let frame = 0;
+    let pointer: { x: number; y: number } | null = null;
+    let hoveredIndex: number | null = null;
+    const anchor = (index: number) => {
+      const a = layer.anchorOf(index);
+      if (!a) return null;
+      const rect = map.getCanvas().getBoundingClientRect();
+      return { x: rect.left + a.x, y: rect.top + a.y };
+    };
+    const resolve = () => {
+      frame = 0;
+      if (!pointer) return;
+      const index = layer.pick(pointer.x, pointer.y);
+      if (index === hoveredIndex) return;
+      hoveredIndex = index;
+      layer.setHovered(index);
+      map.getCanvas().style.cursor = index === null ? "" : "pointer";
+      const at = index === null ? null : anchor(index);
+      setMangroveDemoHover(index === null || !at ? null : { tree: mangroveDemoTrees[index], ...at });
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(resolve);
+    };
+    const clear = () => {
+      pointer = null;
+      hoveredIndex = null;
+      layer.setHovered(null);
+      map.getCanvas().style.cursor = "";
+      setMangroveDemoHover(null);
+    };
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      if (e.originalEvent.buttons !== 0) return clear();
+      pointer = { x: e.point.x, y: e.point.y };
+      schedule();
+    };
+    const onCameraMove = () => {
+      if (pointer) schedule();
+    };
+    let tipEl: HTMLDivElement | null = null;
+    let tipPos = { x: 0, y: 0 };
+    let tipAt = 0;
+    const onRender = () => {
+      const el = mangroveDemoTipRef.current;
+      if (!el || hoveredIndex === null) return;
+      const target = anchor(hoveredIndex);
+      if (!target) return;
+      const now = performance.now();
+      if (el !== tipEl || reducedMotion) {
+        tipEl = el;
+        tipPos = { ...target };
+      } else {
+        const k = 1 - Math.exp(-(now - tipAt) / 70);
+        tipPos.x += (target.x - tipPos.x) * k;
+        tipPos.y += (target.y - tipPos.y) * k;
+      }
+      tipAt = now;
+      el.style.left = `${tipPos.x}px`;
+      el.style.top = `${tipPos.y}px`;
+    };
+
+    map.on("mousemove", onMove);
+    map.on("mouseout", clear);
+    map.on("dragstart", clear);
+    map.on("move", onCameraMove);
+    map.on("render", onRender);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      map.off("mousemove", onMove);
+      map.off("mouseout", clear);
+      map.off("dragstart", clear);
+      map.off("move", onCameraMove);
+      map.off("render", onRender);
+      setMangroveDemoHover(null);
+      const m = mapRef.current;
+      if (!m) return;
+      m.getCanvas().style.cursor = "";
+      if (m.getLayer(MANGROVE_DEMO_LAYER_ID)) m.removeLayer(MANGROVE_DEMO_LAYER_ID);
+    };
+  }, [loaded, showMangroveDemo, mangroveDemoTrees, styleVersion]);
+
   // The opening flight — Mangroves' replacement for the passive auto-fit below
   // (which skips this area), ending on the same overview that fit would have
   // produced. Played once per mount; `introDone` is only set when the flight
@@ -3168,6 +3282,28 @@ export default function MapCanvas({
       // flyToNearestCrown for why each of those matters.
       setIs3D(true);
       flyToNearestCrown(pointInQuad(coords, 0.5, 0.5), MAX_CROWN_RADIUS_M / 2, STORY_TWIN_CROWN_FILL);
+      return;
+    }
+
+    if (storyView.frame === "mangroveDemo") {
+      // The one frame that isn't a reading of *this* site: fit to the real
+      // mangrove stand's own coordinates rather than `coords` (this area's
+      // footprint), same as `twin` diverts to a crown instead of a bounds fit.
+      setIs3D(true);
+      map.setTerrain(null);
+      if (map.getLayer(HILLSHADE_LAYER_ID)) map.removeLayer(HILLSHADE_LAYER_ID);
+      const demoFit = map.cameraForBounds(boundsOf(areaOverlays[MANGROVE_AREA_ID].coordinates), { padding: 60 });
+      if (!demoFit) return;
+      map.setMaxZoom(DEFAULT_MAX_ZOOM);
+      const camera = {
+        center: demoFit.center,
+        zoom: Math.max(1, (typeof demoFit.zoom === "number" ? demoFit.zoom : map.getZoom()) + 0.4),
+        pitch: 58,
+        bearing: -18,
+        essential: true,
+      } satisfies maplibregl.FlyToOptions;
+      if (reduced) map.jumpTo(camera);
+      else map.flyTo({ ...camera, duration: STORY_ARC_MS, curve: 1.3 });
       return;
     }
 
@@ -4517,6 +4653,7 @@ export default function MapCanvas({
       )}
 
       {!inspectTree && !error && <MangroveTooltip hover={mangroveHover} elRef={mangroveTipRef} />}
+      {!inspectTree && !error && <MangroveTooltip hover={mangroveDemoHover} elRef={mangroveDemoTipRef} />}
 
       {error && <StatusOverlay title="Map failed to load" message={error} diagnostics={diagnostics} />}
       {!error && collapsed && (

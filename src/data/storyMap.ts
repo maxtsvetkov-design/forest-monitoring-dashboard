@@ -51,7 +51,15 @@ export type StoryFrame =
   | "canopy"
   /** Eye level, beside one tree. The narrowest possible reading of the site,
    * for blocks that are about individual organisms rather than about area. */
-  | "twin";
+  | "twin"
+  /** A one-off cutaway to a *different* site: the modelled 3D mangrove stand
+   * (see src/map/MangroveLayer.ts), flown to on its own real coastal
+   * coordinates rather than fit to this area's footprint like every other
+   * frame. Exists for exactly one block — a "this pipeline also does this"
+   * showcase — not a reading of the current site, so it's the one frame
+   * `STORY_FRAMES` doesn't cover; MapCanvas special-cases it the same way it
+   * already special-cases `twin`. */
+  | "mangroveDemo";
 
 export interface StoryMapView {
   frame: StoryFrame;
@@ -116,6 +124,11 @@ export const STORY_MAP_VIEWS: Record<string, StoryMapView> = {
     layers: ["aerial"],
     colorMode: "grayscale",
     note: "The raw capture alone, desaturated and pulled back — nothing derived. This block scores how dependably the sensor sees the site, not what it found.",
+  },
+  "monitoring-mangroves": {
+    frame: "mangroveDemo",
+    layers: [],
+    note: "A different stand, on the coast — not this site. Same crown-by-crown pipeline, pointed at mangroves instead of a planted forest.",
   },
   metrics: {
     frame: "canopy",

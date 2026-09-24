@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
-import { buildStory, buildStoryHeader, type StoryBlock } from "../data/story";
+import { buildStory, buildStoryHeader, STORY_SECTIONS, type StoryBlock } from "../data/story";
 import {
   areaDyingTreeOverlays,
   areaGenerativeOverlays,
@@ -30,10 +30,27 @@ const VIEW_HEIGHT = `${CONTENT_HEIGHT_CLASS} min-h-[420px]`;
 // table does: at 82% the panel is still ~250px, enough for its cards.
 const MIN_SPLIT_PCT = 38;
 const MAX_SPLIT_PCT = 82;
-// ~420px of panel on a typical 1400px content width — the fixed width this
-// view used before the divider existed.
-const DEFAULT_SPLIT_PCT = 70;
+// ~40% of the row: wide enough that a chapter reads as a page, not a sidebar.
+const DEFAULT_SPLIT_PCT = 58;
 const KEYBOARD_SPLIT_STEP = 5;
+
+/**
+ * The chapter title set over the map, film-style: it names what the camera is
+ * looking at while it moves there, then gets out of the way. Keyed on the block
+ * by its caller, so each chapter remounts it and the entrance replays.
+ */
+function ChapterCaption({ index, total, section, title }: { index: number; total: number; section?: string; title: string }) {
+  return (
+    <div aria-live="polite" className="story-caption pointer-events-none absolute left-1/2 bottom-[56px] z-20 max-w-[70%]">
+      <span className="story-caption__eyebrow">
+        <span className="tabular-nums">{String(index).padStart(2, "0")}</span>
+        <span className="opacity-50">/ {total}</span>
+        {section && <span className="story-caption__sep">{section}</span>}
+      </span>
+      <span className="story-caption__title">{title}</span>
+    </div>
+  );
+}
 
 /**
  * The Story tab: the same map every other tab draws, with the site's narrative
@@ -144,7 +161,7 @@ export default function StoryView({
     // the separation between the panes, and a gap on either side of it would
     // put 12px of dead ground between the grip and the edges it moves.
     <div ref={containerRef} className={`flex gap-0 px-4 pb-6 mt-[10px] ${VIEW_HEIGHT}`}>
-      <div className="min-w-0 shrink-0 h-full" style={{ width: `${splitPct}%` }}>
+      <div className="relative min-w-0 shrink-0 h-full" style={{ width: `${splitPct}%` }}>
         <MapCanvas
           layerTime={layerTime}
           pinsRange={layerTime.rangeFor.pins}
@@ -168,8 +185,19 @@ export default function StoryView({
           basemapIndex={basemapIndex}
           onBasemapIndexChange={onBasemapIndexChange}
           storyView={activeBlock?.map ?? null}
+          // The chapters drive the layers, so the panel stays out of the shot.
+          layerPanelInitiallyCollapsed
           className="w-full h-full"
         />
+        {activeBlock && !activeBlock.isSectionHead && (
+          <ChapterCaption
+            key={activeBlock.id}
+            index={blocks.indexOf(activeBlock) + 1}
+            total={blocks.length}
+            section={STORY_SECTIONS.find((s) => s.id === activeBlock.section)?.label}
+            title={activeBlock.name}
+          />
+        )}
       </div>
 
       {/* Same divider the Assets view uses. MapCanvas watches its own container

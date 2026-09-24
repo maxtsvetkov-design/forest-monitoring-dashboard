@@ -1,4 +1,5 @@
 import type { Area } from "./areas";
+import { MANGROVE_COUNT } from "./mangroves";
 import { getTimelapseImages } from "./overlays";
 import { STORY_MAP_VIEWS, type StoryMapView } from "./storyMap";
 import { CURRENT_TIER_INDEX, PRICE_ROW, SPEC_ROWS, TIERS, TIER_SECTIONS, type TierCoverage } from "./tiers";
@@ -299,6 +300,35 @@ export function buildStory(area: Area): StoryBlock[] {
       content: {
         kind: "sectionIntro",
         body: "NabatOS Strategic Initiative № 2, owned by Product. Planted forests in arid climates die quietly — a stressed block looks fine until it isn't, and crews keep watering trees that are already dead. This module watches the forest from above, flags trouble early, sends a crew to the exact coordinates, and records that the fix worked. Anchor client: Al Ain Forestry & Landscaping → the Department of Municipalities & Transport, Abu Dhabi. This walkthrough is licensed at Tier 2 · Commercial satellite — 0.3–0.5 m resolution, refreshed monthly or on demand.",
+      },
+    },
+    // Slotted right after the section's own intro, before the case is even
+    // made for *this* forest — a "the pipeline generalises" aside rather than
+    // a claim about this site's own numbers. See `mangroveDemo` in
+    // storyMap.ts for why its camera answers to real coastal coordinates
+    // instead of this area's footprint like every other block's.
+    {
+      id: "monitoring-mangroves",
+      section: "monitoring",
+      name: "Also modelled: mangrove forests",
+      description:
+        "The same crown-by-crown pipeline this module runs on planted forests, pointed at a coastal mangrove stand instead.",
+      map: STORY_MAP_VIEWS["monitoring-mangroves"],
+      content: {
+        kind: "insights",
+        cards: [
+          {
+            label: "Modelled crowns",
+            value: `${MANGROVE_COUNT}`,
+            body: "Simplified 3D canopy, sized per tree and coloured by its own condition — not a uniform stand.",
+            accent: true,
+          },
+          {
+            label: "Per-tree health",
+            value: "Hover any crown",
+            body: "Vigour and condition on demand, the same read this module gives a planted forest — no ground visit needed.",
+          },
+        ],
       },
     },
     {

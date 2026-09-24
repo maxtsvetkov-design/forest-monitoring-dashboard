@@ -2257,6 +2257,44 @@ html {
   overscroll-behavior: contain;
 }
 
+/* --- Slide mode ------------------------------------------------------------
+   One chapter fills the frame at a time, like a slide deck rather than a
+   scrolling page: each block is pinned to exactly the panel's height, snaps
+   into place edge-to-edge, and a wheel notch advances exactly one (see the
+   `wheel` handler in useStoryScroll). Native drag-scroll and touch swipe are
+   left alone — they still free-scroll and then settle on the nearest snap
+   point — so a scrollbar or a trackpad swipe works the way every other
+   scrollable pane in the app does; only the discrete "next slide" gesture
+   (a wheel click) is paginated.
+   `scroll-snap-stop: always` is the part that makes a slide *fixed*: without
+   it a fast fling can sail straight past several slides before the browser
+   even considers stopping, which reads as the deck skipping pages. */
+.story-slides {
+  scroll-snap-type: y mandatory;
+}
+
+.story-block:not(.story-block--sec) {
+  /* 28px = this block's own my-[14px] top+bottom margin, so the slide plus
+     its margins together are exactly one panel height — not the panel height
+     plus a margin's worth of the next slide peeking in underneath it. */
+  min-height: calc(100% - 28px);
+  max-height: calc(100% - 28px);
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A section title is a divider between decks, not a slide of its own content
+   — pinning it to full height would put one line of text alone on an empty
+   screen. It still snaps, so paging through never leaves it half-visible. */
+.story-block--sec {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
 /* --- Blocks --------------------------------------------------------------- */
 /* Three layers on every block: a lift, a spotlight that tracks the pointer
    (--mx/--my written from JS), and an accent rule that wipes in. Transform and
@@ -2265,8 +2303,8 @@ html {
   --mx: 50%;
   --my: 0%;
   position: relative;
-  padding: 12px;
-  border-radius: 14px;
+  padding: 18px 20px 20px;
+  border-radius: 18px;
   border: 1px solid #f2f2f2;
   background: #ffffff;
   box-shadow: var(--elev-1);
@@ -2274,7 +2312,8 @@ html {
   animation: fadeInUp var(--dur-5) var(--ease-lux) backwards;
   animation-delay: calc(var(--i, 0) * var(--stagger));
   transition: transform var(--dur-4) var(--ease-lux), box-shadow var(--dur-4) var(--ease-soft),
-    border-color var(--dur-2) var(--ease-out), opacity var(--dur-4) var(--ease-out);
+    border-color var(--dur-2) var(--ease-out), opacity var(--dur-4) var(--ease-out),
+    filter var(--dur-4) var(--ease-out), background-color var(--dur-4) var(--ease-out);
   will-change: transform;
 }
 
@@ -2321,11 +2360,13 @@ html {
    makes stepping through feel like a story rather than a scroll — and it
    lifts back to full on hover, so nothing is ever hard to read. */
 .story-block[data-active="false"] {
-  opacity: 0.8;
+  opacity: 0.56;
+  filter: saturate(0.4);
 }
 
 .story-block[data-active="false"]:hover {
   opacity: 1;
+  filter: none;
 }
 
 .story-block:hover {
@@ -2439,7 +2480,100 @@ html {
 
 .story-block[data-active="true"] {
   border-color: #56b0a4;
-  box-shadow: 0 0 0 1px #56b0a4, 0 10px 30px -8px rgba(9, 97, 81, 0.22);
+  background: linear-gradient(180deg, #f3faf8 0, #ffffff 120px);
+  box-shadow: 0 0 0 1px #56b0a4, 0 22px 48px -16px rgba(9, 97, 81, 0.32), 0 4px 12px -4px rgba(9, 97, 81, 0.12);
+}
+
+/* The chapter being read wears a spine: the one mark that finds it at a
+   glance while the scroll is moving. */
+.story-block[data-active="true"]:not(.story-block--sec) .story-block__spine,
+.story-block[data-active="true"]:not(.story-block--sec)::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.story-block__eyebrow {
+  display: block;
+  font-family: "Outfit", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #a2a2ac;
+  margin-bottom: 4px;
+  transition: color var(--dur-3) var(--ease-out);
+}
+
+.story-block[data-active="true"] .story-block__eyebrow {
+  color: #0f7a6a;
+}
+
+.story-block__title {
+  font-size: 20px;
+  line-height: 27px;
+  letter-spacing: -0.012em;
+  transition: font-size var(--dur-4) var(--ease-lux);
+}
+
+.story-block[data-active="true"] .story-block__title {
+  font-size: 25px;
+  line-height: 32px;
+  letter-spacing: -0.02em;
+}
+
+/* --- Chapter caption over the map ---------------------------------------- */
+.story-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 22px 14px;
+  border-radius: 16px;
+  background: rgba(8, 36, 31, 0.8);
+  backdrop-filter: blur(14px) saturate(1.3);
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.35);
+  animation: storyCaption 4.2s var(--ease-lux) forwards;
+}
+
+.story-caption__eyebrow {
+  display: inline-flex;
+  gap: 6px;
+  font-family: "Outfit", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #9fe0d5;
+}
+
+.story-caption__sep::before {
+  content: "·";
+  margin-right: 6px;
+  opacity: 0.5;
+}
+
+.story-caption__title {
+  font-family: "Outfit", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: -0.015em;
+}
+
+/* In with the camera, hold while it settles, then fade to a quiet trace so
+   the map is the subject again. */
+@keyframes storyCaption {
+  0% { opacity: 0; transform: translate(-50%, 14px) scale(0.97); filter: blur(4px); }
+  12% { opacity: 1; transform: translate(-50%, 0) scale(1); filter: blur(0); }
+  72% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -6px) scale(0.99); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .story-caption { animation: none; opacity: 0; }
+  .story-block__title { transition: none; }
 }
 
 .story-block[data-active="true"]:hover {

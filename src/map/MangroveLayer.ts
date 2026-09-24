@@ -40,7 +40,7 @@
  * ## Ambient occlusion
  *
  * Screen-space (SSAO), recomputed every frame, since it depends on the view:
- * a half-resolution pre-pass renders the trees and the ground into depth +
+ * a full-resolution pre-pass renders the trees and the ground into depth +
  * normals (three `layers` channel 1, `MeshNormalMaterial` override), a
  * 16-sample hemisphere pass reconstructs positions in the layer's own
  * eye-relative space and counts what occludes each one, and a depth-aware
@@ -95,11 +95,11 @@ const ROOT_SPREAD = 0.3;
 const CROWN_HALF_HEIGHT = 0.2;
 /** Leaf clusters in unit-crown space: centre x, y, z, radius, subdivision. */
 const CROWN_LOBES: [number, number, number, number, number][] = [
-  [0, 0.12, 0, 0.74, 2],
-  [0.5, -0.04, 0.12, 0.52, 1],
-  [-0.46, 0.02, 0.26, 0.5, 1],
-  [0.06, 0.0, -0.52, 0.54, 1],
-  [-0.18, 0.3, -0.16, 0.46, 1],
+  [0, 0.12, 0, 0.74, 3],
+  [0.5, -0.04, 0.12, 0.52, 2],
+  [-0.46, 0.02, 0.26, 0.5, 2],
+  [0.06, 0.0, -0.52, 0.54, 2],
+  [-0.18, 0.3, -0.16, 0.46, 2],
 ];
 
 /** Late-afternoon Abu Dhabi sun: azimuth clockwise from north, and elevation. */
@@ -120,7 +120,7 @@ const SKY_GROUND = [0.62, 0.6, 0.55];
 /** Shadows are skylight-filled, not black: a cool tint at partial strength. */
 const SHADOW_COLOR = 0x1c2633;
 const SHADOW_OPACITY = 0.36;
-const SHADOW_MAP_SIZE = 2048;
+const SHADOW_MAP_SIZE = 4096;
 /** Darkest multiply at the centre of a crown's ground-occlusion pool (sRGB). */
 const GROUND_AO_DARKEST = 0.7;
 
@@ -398,24 +398,73 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
   }
 
   /**
-   * Patches a lit tree material with two things: the SSAO multiply, applied
-   * right after three's own `aomap_fragment` (so it occludes indirect light
-   * the way an AO map would, plus `SSAO_DIRECT` of the sun), and the
-   * per-instance haze mix — after tone mapping and colour-space conversion,
-   * so `FADE_COLOR` is the exact on-screen grey a faded tree approaches.
+   * Patches a lit tree material with its surface detail and the stand-wide
+   * effects. All procedural, keyed on the *object-space* position (so a
+   * leaf pattern belongs to its tree and doesn't swim as the camera moves),
+   * no textures or UVs:
+   * - **Bump**, via screen-space derivatives (Mikkelsen's `perturbNormalArb`
+   *   form): leaf clusters on crowns, vertical furrows on bark — detail far
+   *   finer than the mesh, at every zoom.
+   * - **Leaf colour variation** — value only, so the health hue survives.
+   * - **Translucency** (crowns): sunlight through the canopy when the eye
+   *   looks toward the sun, plus a wrap term on the shadowed side.
+   * - **Bark roughness** varies with the furrows.
+   * - SSAO after three's own `aomap_fragment`, and the per-instance haze mix
+   *   after tone mapping (so `FADE_COLOR` is the exact on-screen grey).
    */
-  private installFade(three: typeof THREE, material: THREE.Material) {
+  private installFade(three: typeof THREE, material: THREE.Material, kind: "leaf" | "bark") {
+    const sunDir = this.toSun(three);
+    const sunColor = new three.Color(SUN_COLOR).multiplyScalar(SUN_INTENSITY);
     material.onBeforeCompile = (shader) => {
       shader.uniforms.uFadeColor = { value: new three.Vector3(...FADE_COLOR) };
       shader.uniforms.uSSAO = this.ssaoTexture;
       shader.uniforms.uSSAOSize = this.ssaoSize;
+      shader.uniforms.uSunDir = { value: sunDir };
+      shader.uniforms.uSunColor = { value: new three.Vector3(sunColor.r, sunColor.g, sunColor.b) };
       shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\nattribute float instanceFade;\nvarying float vFade;")
-        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFade = instanceFade;");
+        .replace("#include <common>", "#include <common>\nattribute float instanceFade;\nvarying float vFade;\nvarying vec3 vObj;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFade = instanceFade;\nvObj = position;");
+      const leaf = kind === "leaf";
       shader.fragmentShader = shader.fragmentShader
         .replace(
           "#include <common>",
-          "#include <common>\nuniform vec3 uFadeColor;\nvarying float vFade;\nuniform sampler2D uSSAO;\nuniform vec2 uSSAOSize;",
+          `#include <common>
+          uniform vec3 uFadeColor; varying float vFade; varying vec3 vObj;
+          uniform sampler2D uSSAO; uniform vec2 uSSAOSize; uniform vec3 uSunDir; uniform vec3 uSunColor;
+          float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+          float vnoise(vec3 p) {
+            vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+            return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
+                       mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z);
+          }
+          float surfaceHeight(vec3 p) {
+            ${leaf
+              ? "return vnoise(p * 4.5) * 0.65 + vnoise(p * 10.0) * 0.35;"
+              : "float a = atan(p.z, p.x); return 0.6 * abs(sin(a * 9.0 + vnoise(p * 30.0) * 2.5)) + 0.4 * vnoise(p * vec3(60.0, 8.0, 60.0));"}
+          }`,
+        )
+        .replace(
+          "#include <color_fragment>",
+          leaf
+            ? "#include <color_fragment>\ndiffuseColor.rgb *= 0.86 + 0.26 * vnoise(vObj * 5.0);"
+            : "#include <color_fragment>\ndiffuseColor.rgb *= 0.8 + 0.35 * surfaceHeight(vObj);",
+        )
+        .replace(
+          "#include <roughnessmap_fragment>",
+          leaf ? "#include <roughnessmap_fragment>" : "#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + (0.5 - surfaceHeight(vObj)) * 0.12, 0.0, 1.0);",
+        )
+        .replace(
+          "#include <normal_fragment_maps>",
+          `#include <normal_fragment_maps>
+          {
+            vec3 dpdx = dFdx(-vViewPosition), dpdy = dFdy(-vViewPosition);
+            float hC = surfaceHeight(vObj);
+            float dhdx = dFdx(hC), dhdy = dFdy(hC);
+            vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
+            float det = dot(dpdx, r1);
+            vec3 grad = sign(det) * (dhdx * r1 + dhdy * r2);
+            normal = normalize(abs(det) * normal - grad * ${leaf ? "0.45" : "0.6"});
+          }`,
         )
         .replace(
           "#include <aomap_fragment>",
@@ -423,11 +472,17 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
           float ssao = texture2D(uSSAO, gl_FragCoord.xy / uSSAOSize).r;
           reflectedLight.indirectDiffuse *= ssao;
           reflectedLight.indirectSpecular *= ssao;
-          reflectedLight.directDiffuse *= mix(1.0, ssao, ${SSAO_DIRECT.toFixed(2)});`,
+          reflectedLight.directDiffuse *= mix(1.0, ssao, ${SSAO_DIRECT.toFixed(2)});
+          ${leaf ? `{
+            vec3 V = normalize(vViewPosition);
+            float through = pow(max(dot(-V, uSunDir), 0.0), 4.0) * 0.55;
+            float wrap = max(dot(-normal, uSunDir), 0.0) * 0.18;
+            reflectedLight.directDiffuse += diffuseColor.rgb * uSunColor * RECIPROCAL_PI * (through + wrap) * ssao;
+          }` : ""}`,
         )
         .replace("#include <dithering_fragment>", "gl_FragColor.rgb = mix(gl_FragColor.rgb, uFadeColor, vFade);\n#include <dithering_fragment>");
     };
-    material.customProgramCacheKey = () => "mangrove-surface";
+    material.customProgramCacheKey = () => `mangrove-${kind}`;
   }
 
   private build(three: typeof THREE, utils: GeometryUtils, map: maplibregl.Map, gl: WebGL2RenderingContext) {
@@ -471,7 +526,7 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
       metalness: 0,
       vertexColors: true,
     });
-    this.installFade(three, woodMaterial);
+    this.installFade(three, woodMaterial, "bark");
     this.woodMesh = new three.InstancedMesh(wood, woodMaterial, count);
     this.woodMesh.frustumCulled = false;
     this.woodMesh.castShadow = true;
@@ -489,7 +544,7 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
       sheenColor: new three.Color(0xe9ecdf),
       vertexColors: true,
     });
-    this.installFade(three, crownMaterial);
+    this.installFade(three, crownMaterial, "leaf");
     this.crownMesh = new three.InstancedMesh(crown, crownMaterial, count);
     this.crownMesh.frustumCulled = false;
     this.crownMesh.castShadow = true;
@@ -535,7 +590,7 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
     sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.04;
-    sun.shadow.radius = 2.5;
+    sun.shadow.radius = 2;
     scene.add(sun.target);
     scene.add(sun);
     this.sun = sun;
@@ -875,8 +930,8 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
     const scene = this.scene;
     if (!s || !scene) return;
     try {
-      const w = Math.max(1, Math.floor(canvas.width / 2));
-      const h = Math.max(1, Math.floor(canvas.height / 2));
+      const w = Math.max(1, canvas.width);
+      const h = Math.max(1, canvas.height);
       if (s.normalTarget.width !== w || s.normalTarget.height !== h) {
         s.normalTarget.setSize(w, h);
         s.aoTarget.setSize(w, h);
@@ -929,7 +984,7 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
 
   /** Trunk plus prop roots, for a tree of height 1 standing at the origin. */
   private buildWoodParts(three: typeof THREE): THREE.BufferGeometry[] {
-    const trunk = new three.CylinderGeometry(0.026, 0.038, TRUNK_TOP - TRUNK_BASE, 8, 3);
+    const trunk = new three.CylinderGeometry(0.026, 0.038, TRUNK_TOP - TRUNK_BASE, 14, 6);
     trunk.translate(0, (TRUNK_BASE + TRUNK_TOP) / 2, 0);
     const parts: THREE.BufferGeometry[] = [trunk];
     for (let k = 0; k < ROOT_COUNT; k++) {
@@ -943,7 +998,7 @@ export default class MangroveLayer implements maplibregl.CustomLayerInterface {
         new three.Vector3(cos * ROOT_SPREAD * 0.75, ROOT_JOIN * 0.95, sin * ROOT_SPREAD * 0.75),
         new three.Vector3(cos * ROOT_SPREAD, -0.02, sin * ROOT_SPREAD),
       );
-      parts.push(new three.TubeGeometry(curve, 8, 0.013, 5, false));
+      parts.push(new three.TubeGeometry(curve, 16, 0.013, 8, false));
     }
     // Wet tide line: the lowest tenth of every part is darker, fading in.
     for (const part of parts) {
