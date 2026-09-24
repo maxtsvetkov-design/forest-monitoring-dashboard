@@ -246,6 +246,58 @@ the layer off: no chip, and therefore no way back on.
 | `src/components/MapCanvas.tsx` | lifecycle, opacity, style-swap re-add |
 | `src/components/LayerPanel.tsx` | the `trees3d` chip |
 
+## 9b. The Mangroves stand (`MangroveLayer`)
+
+A second custom layer, for the one area whose map is basemap-plus-3D only
+(`hasMangroveForest` in `data/mangroves.ts`). It follows every rule in §3, but
+differs from the canopy layer in three ways:
+
+- **Its own data** — 300 seeded trees from `generateMangroves`, not traced
+  crowns; crown colour is the tree's `CONDITION_COLOR`, not a decline tint.
+- **Picking** — `pick(x, y)` inverts the frame's composed projection into a
+  ray and raycasts the two instanced meshes, so a hover hits the crown the
+  reader actually sees at any pitch. MapCanvas drives it (one pick per frame,
+  re-picked on camera `move`) and shows `MangroveTooltip`.
+- **Terrain anchoring, every frame.** `queryTerrainElevation` is relative to
+  the terrain under the *screen centre*, and so is the render matrix, so the
+  scene origin's altitude is re-read each frame and per-tree heights are not
+  latched (the first DEM tile to answer is coarse). Anchoring at altitude 0
+  with a one-time latch — §7's approach — was measured burying trees ~4 m
+  under the DEM on the Jubail coast, where the raycaster still "found" them.
+  The canopy layer has not been re-measured against this.
+- **PBR needs the real eye.** MapLibre hands over one combined matrix, so a
+  bare three `Camera` sits at the scene origin and every view-dependent term
+  (specular, fresnel) is shaded as if seen from the ground at the stand's
+  centre — invisible under Lambert, wrong under `MeshStandardMaterial`.
+  `eyeFromClip` recovers the eye as `inverse · (0, 0, 1, 0)` and the layer
+  folds that translation back out of the projection, so the draw is unchanged.
+- **Real shadow map, on demand.** A fixed sun plus `shadowMap.autoUpdate =
+  false` means the depth pass only reruns when a tree moves (grow-in, hover
+  wind); an idle stand is one pass. The framebuffer binding is saved and put
+  back around `render`, per §6b.
+- **SSAO, hand-driven.** No post-processing composer can run here (MapLibre
+  owns the framebuffer), so `renderSSAO` drives three passes itself: a
+  half-res depth+normals pre-pass (three `layers` channel 1), a 16-sample
+  pass, a depth-aware 4×4 blur. Materials sample the result at
+  `gl_FragCoord`; a ground plane multiplies it onto the basemap. Three traps,
+  each measured on this view before being fixed:
+  1. **`gl.depthRange`.** MapLibre squeezes 3D layers into a slice of the depth
+     range before calling `render`; depth written under it does not invert
+     through the projection (open ground reconstructed ~100 m from an eye
+     315 m away). The pre-pass sets `depthRange(0, 1)` and restores it.
+  2. **Texel mismatch.** Pairing a sample's exact UV with its nearest texel's
+     depth puts flat ground ~14 cm off its own plane at a grazing tilt. Snap
+     lookups to texel centres.
+  3. **Depth-difference AO self-occludes at grazing angles.** The estimator is
+     SAO's `v·N` (height above the tangent plane), which is exactly 0 on a
+     flat plane. With the depth-difference test, open ground read 0.90;
+     with `v·N` and fixes 1–2 it reads exactly 1.0.
+- **Intro flight** (`src/map/mangroveIntro.ts`). Keyframes are camera
+  *positions* turned into poses by `calculateCameraOptionsFromTo`, then
+  Catmull-Rom-interpolated. It ends on the exact pose the auto-fit would give
+  (which skips this area) and sets the grow schedule so trees sprout ahead of
+  the camera. Any input interrupts it.
+
 ## 10. Verifying a change
 
 The extraction is checkable without a browser — render the derived circles back

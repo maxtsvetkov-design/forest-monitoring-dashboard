@@ -4,7 +4,6 @@ import KpiCard from "./KpiCard";
 import TrendChip from "./TrendChip";
 import { GLASS } from "./glassPanel";
 import { PRICE_ROW } from "../data/tiers";
-import { useDragResize } from "../hooks/useDragResize";
 
 /**
  * The Crop Monitor persona's own Insights tab: an estate-cycle summary a UAE
@@ -66,10 +65,46 @@ export interface FieldRow {
  *  already shows, rather than a second hand-typed copy that could drift
  *  out of sync with this one. */
 export const FIELD_ROWS: FieldRow[] = [
-  { field: "A", cropType: "Date palms", extentHa: 24.6, extentDeltaHa: 1.8, treeStock: 4210, treeStockDelta: 142, fallowHa: 3.4, fallowDeltaHa: -1.8 },
-  { field: "B", cropType: "Date palms + forage", extentHa: 19.2, extentDeltaHa: 0.4, treeStock: 3105, treeStockDelta: 38, fallowHa: 1.0, fallowDeltaHa: -0.4 },
-  { field: "C", cropType: "Vegetable plots", extentHa: 11.8, extentDeltaHa: -2.1, treeStock: 890, treeStockDelta: 0, fallowHa: 2.2, fallowDeltaHa: 2.1 },
-  { field: "D", cropType: "Date palms", extentHa: 16.4, extentDeltaHa: -1.1, treeStock: 3980, treeStockDelta: -64, fallowHa: 4.6, fallowDeltaHa: 1.1 },
+  {
+    field: "A",
+    cropType: "Date palms",
+    extentHa: 24.6,
+    extentDeltaHa: 1.8,
+    treeStock: 4210,
+    treeStockDelta: 142,
+    fallowHa: 3.4,
+    fallowDeltaHa: -1.8,
+  },
+  {
+    field: "B",
+    cropType: "Date palms + forage",
+    extentHa: 19.2,
+    extentDeltaHa: 0.4,
+    treeStock: 3105,
+    treeStockDelta: 38,
+    fallowHa: 1.0,
+    fallowDeltaHa: -0.4,
+  },
+  {
+    field: "C",
+    cropType: "Vegetable plots",
+    extentHa: 11.8,
+    extentDeltaHa: -2.1,
+    treeStock: 890,
+    treeStockDelta: 0,
+    fallowHa: 2.2,
+    fallowDeltaHa: 2.1,
+  },
+  {
+    field: "D",
+    cropType: "Date palms",
+    extentHa: 16.4,
+    extentDeltaHa: -1.1,
+    treeStock: 3980,
+    treeStockDelta: -64,
+    fallowHa: 4.6,
+    fallowDeltaHa: 1.1,
+  },
 ];
 
 /** Which field band(s) a hovered KPI card is actually about — derived from
@@ -81,22 +116,51 @@ export const FIELD_ROWS: FieldRow[] = [
  *  "Estate footprint" is the one metric that's genuinely about every field
  *  at once, not a subset. */
 const METRIC_FIELDS: Record<string, string[]> = {
-  "Cultivation extent": FIELD_ROWS.filter((r) => r.extentDeltaHa > 0).map((r) => r.field),
-  "Tree stock": FIELD_ROWS.filter((r) => r.treeStockDelta !== 0).map((r) => r.field),
-  "Fallow land": FIELD_ROWS.filter((r) => r.fallowDeltaHa !== 0).map((r) => r.field),
+  "Cultivation extent": FIELD_ROWS.filter((r) => r.extentDeltaHa > 0).map(
+    (r) => r.field,
+  ),
+  "Tree stock": FIELD_ROWS.filter((r) => r.treeStockDelta !== 0).map(
+    (r) => r.field,
+  ),
+  "Fallow land": FIELD_ROWS.filter((r) => r.fallowDeltaHa !== 0).map(
+    (r) => r.field,
+  ),
   "Estate footprint": FIELD_ROWS.map((r) => r.field),
 };
 
-const SCAN_CHANGES: { text: string; field: string; kind: "growth" | "harvest" | "caution" }[] = [
-  { text: "3 new protected farm structures detected; area increased from 50 sqm to 150 sqm", field: "Farm A", kind: "caution" },
-  { text: "Cultivated area increased; alfalfa forage detected at 89% confidence and now covers 95%", field: "Farm B", kind: "growth" },
-  { text: "Cultivated area decreased; fallow land now covers 15% of the farm", field: "Farm C", kind: "harvest" },
+const SCAN_CHANGES: {
+  text: string;
+  field: string;
+  kind: "growth" | "harvest" | "caution";
+}[] = [
+  {
+    text: "3 new protected farm structures detected; area increased from 50 sqm to 150 sqm",
+    field: "Farm A",
+    kind: "caution",
+  },
+  {
+    text: "Cultivated area increased; alfalfa forage detected at 89% confidence and now covers 95%",
+    field: "Farm B",
+    kind: "growth",
+  },
+  {
+    text: "Cultivated area decreased; fallow land now covers 15% of the farm",
+    field: "Farm C",
+    kind: "harvest",
+  },
 ];
 
-const SCAN_ICON: Record<(typeof SCAN_CHANGES)[number]["kind"], { bg: string; fg: string; path: string }> = {
+const SCAN_ICON: Record<
+  (typeof SCAN_CHANGES)[number]["kind"],
+  { bg: string; fg: string; path: string }
+> = {
   growth: { bg: "#e6f2ec", fg: "#096151", path: "M8 3v10M4 7l4-4 4 4" },
   harvest: { bg: "#fdf1d8", fg: "#a5690a", path: "M3 13h10M5 13V6l3-3 3 3v7" },
-  caution: { bg: "#fde8e8", fg: "#c0392b", path: "M8 5v4M8 11h.01M2.5 13h11L8 2.5 2.5 13Z" },
+  caution: {
+    bg: "#fde8e8",
+    fg: "#c0392b",
+    path: "M8 5v4M8 11h.01M2.5 13h11L8 2.5 2.5 13Z",
+  },
 };
 
 /**
@@ -108,21 +172,20 @@ const SCAN_ICON: Record<(typeof SCAN_CHANGES)[number]["kind"], { bg: string; fg:
  * passes plus, once requested, an extra on-demand one — routine 10 m
  * passes, not the ±0.5 m an on-demand capture buys.
  */
-const ROUTINE_CAPTURES = ["Apr '26", "May '26", "Jun '26", "Jul '26", "Aug '26", "Sep '26"];
+const ROUTINE_CAPTURES = [
+  "Apr '26",
+  "May '26",
+  "Jun '26",
+  "Jul '26",
+  "Aug '26",
+  "Sep '26",
+];
 const HI_RES_RESOLUTION = "0.5 m";
 const HI_RES_TURNAROUND = "2 days";
 /** Same tier-table survey figure `HiResConfirmation` (Al Maha's own receipt)
  *  quotes — one real price, not two different numbers for the same pass. */
 const HI_RES_PRICE_PER_HA = PRICE_ROW.cells[2].split(" survey")[0];
 const ESTATE_AREA_HA = "87.3 ha";
-
-/** The crop-mix/changes/fields panel's resizable width — see `panelResize`
- * below. Floor keeps the fields-at-a-glance rows from wrapping; ceiling
- * leaves the KPI column beside it (self-start, own intrinsic width) room to
- * breathe rather than letting the panel swallow the whole overlay. */
-const PANEL_DEFAULT_WIDTH = 420;
-const PANEL_MIN_WIDTH = 320;
-const PANEL_MAX_WIDTH = 640;
 
 /** The receipt for an on-demand capture, styled in this persona's own glass/
  *  teal language rather than Al Maha's stark black `HiResConfirmation` card
@@ -164,30 +227,39 @@ export function CropHiResConfirmation({
           A new {HI_RES_RESOLUTION} capture has been queued
         </h2>
         <p className="text-[12.5px] text-[#5b5b66] font-['Outfit',sans-serif] leading-[18px] mt-[10px]">
-          A fresh high-resolution pass over {captureTarget}'s {captureArea} footprint — the crop-mix and field
-          breakdown below will re-run against it once it lands, nothing further to import.
+          A fresh high-resolution pass over {captureTarget}'s {captureArea}{" "}
+          footprint — the crop-mix and field breakdown below will re-run against
+          it once it lands, nothing further to import.
         </p>
         <div className="mt-[16px] rounded-[14px] border border-[rgba(0,0,0,0.08)] grid grid-cols-2 gap-[12px] p-[14px]">
           <div>
-            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">Resolution</span>
+            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">
+              Resolution
+            </span>
             <span className="block mt-[2px] text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
               {HI_RES_RESOLUTION}
             </span>
           </div>
           <div>
-            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">Est. turnaround</span>
+            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">
+              Est. turnaround
+            </span>
             <span className="block mt-[2px] text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
               {HI_RES_TURNAROUND}
             </span>
           </div>
           <div>
-            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">Area</span>
+            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">
+              Area
+            </span>
             <span className="block mt-[2px] text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
               {captureArea}
             </span>
           </div>
           <div>
-            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">Price per ha</span>
+            <span className="block text-[10px] text-[#8a8a94] font-['Outfit',sans-serif]">
+              Price per ha
+            </span>
             <span className="block mt-[2px] text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
               {HI_RES_PRICE_PER_HA}
             </span>
@@ -219,10 +291,14 @@ type CaptureStatus = "idle" | "pending" | "delivered";
  *  (absolutely positioned behind the dots, not a border on each dot) is what
  *  actually reads as "a timeline" rather than a row of disconnected markers. */
 function CaptureTimeline({ status }: { status: CaptureStatus }) {
-  const captures = status === "idle" ? ROUTINE_CAPTURES : [...ROUTINE_CAPTURES, "Hi-res"];
+  const captures =
+    status === "idle" ? ROUTINE_CAPTURES : [...ROUTINE_CAPTURES, "Hi-res"];
   return (
     <div className="relative mt-[4px] px-[2px]">
-      <div className="absolute left-[2px] right-[2px] top-[4.5px] h-[1.5px] bg-[#e2e4d9]" aria-hidden="true" />
+      <div
+        className="absolute left-[2px] right-[2px] top-[4.5px] h-[1.5px] bg-[#e2e4d9]"
+        aria-hidden="true"
+      />
       <div className="relative flex items-start justify-between">
         {captures.map((label, i) => {
           const isHiRes = status !== "idle" && i === captures.length - 1;
@@ -248,7 +324,11 @@ function CaptureTimeline({ status }: { status: CaptureStatus }) {
               />
               <span
                 className={`text-[9.5px] font-['Outfit',sans-serif] whitespace-nowrap ${
-                  delivered ? "font-bold text-[#096151]" : pending ? "font-bold text-[#c98a1a]" : "text-[#8a8a94]"
+                  delivered
+                    ? "font-bold text-[#096151]"
+                    : pending
+                      ? "font-bold text-[#c98a1a]"
+                      : "text-[#8a8a94]"
                 }`}
               >
                 {label}
@@ -265,7 +345,11 @@ function CropMixBar() {
   return (
     <div className="flex h-[10px] w-full rounded-full overflow-hidden bg-[#ebece7]">
       {CROP_MIX.map((c) => (
-        <span key={c.label} style={{ width: `${c.pct}%`, background: c.color }} title={`${c.label} — ${c.pct}%`} />
+        <span
+          key={c.label}
+          style={{ width: `${c.pct}%`, background: c.color }}
+          title={`${c.label} — ${c.pct}%`}
+        />
       ))}
     </div>
   );
@@ -273,12 +357,17 @@ function CropMixBar() {
 
 export default function EstateDashboard({
   onHoverFields,
+  onFocusField,
+  selectedField,
 }: {
   /** Which field band(s) a hovered KPI card is about — see `METRIC_FIELDS`.
    *  `null` clears the highlight on mouse-leave. Optional so this component
    *  still renders standalone (e.g. a future preview/story context) without
    *  a live map underneath it to report to. */
   onHoverFields?: (letters: string[] | null) => void;
+  /** Selects and flies to a farm on the shared map. */
+  onFocusField?: (field: string) => void;
+  selectedField?: string | null;
 }) {
   const [hiResModalOpen, setHiResModalOpen] = useState(false);
   const [captureStatus, setCaptureStatus] = useState<CaptureStatus>("idle");
@@ -297,7 +386,8 @@ export default function EstateDashboard({
   const magnetTarget = useRef({ x: 0, y: 0 });
   const magnetCurrent = useRef({ x: 0, y: 0 });
   const prefersReducedMotionRef = useRef(
-    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
 
   useEffect(() => {
@@ -329,8 +419,14 @@ export default function EstateDashboard({
         // The cursor-following highlight (`--mx`/`--my`, see .capture-cta in
         // index.css) — only worth updating this often while actually near
         // the button, not on every mousemove across the whole page.
-        btn.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`);
-        btn.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
+        btn.style.setProperty(
+          "--mx",
+          `${((e.clientX - r.left) / r.width) * 100}%`,
+        );
+        btn.style.setProperty(
+          "--my",
+          `${((e.clientY - r.top) / r.height) * 100}%`,
+        );
       } else {
         magnetTarget.current = { x: 0, y: 0 };
       }
@@ -339,15 +435,19 @@ export default function EstateDashboard({
     let raf = requestAnimationFrame(function tick() {
       const btn = captureBtnRef.current;
       const label = captureLabelRef.current;
-      magnetCurrent.current.x += (magnetTarget.current.x - magnetCurrent.current.x) * LERP;
-      magnetCurrent.current.y += (magnetTarget.current.y - magnetCurrent.current.y) * LERP;
+      magnetCurrent.current.x +=
+        (magnetTarget.current.x - magnetCurrent.current.x) * LERP;
+      magnetCurrent.current.y +=
+        (magnetTarget.current.y - magnetCurrent.current.y) * LERP;
       const { x, y } = magnetCurrent.current;
       const engaged = Math.abs(x) > 0.4 || Math.abs(y) > 0.4;
-      if (btn) btn.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) scale(${engaged ? 1.05 : 1})`;
+      if (btn)
+        btn.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) scale(${engaged ? 1.05 : 1})`;
       // The label drifts at a fraction of the button's own offset — a touch
       // of parallax between the button and its contents is what separates
       // "magnetic" from "the whole button just moved".
-      if (label) label.style.transform = `translate(${(x * 0.4).toFixed(2)}px, ${(y * 0.4).toFixed(2)}px)`;
+      if (label)
+        label.style.transform = `translate(${(x * 0.4).toFixed(2)}px, ${(y * 0.4).toFixed(2)}px)`;
       raf = requestAnimationFrame(tick);
     });
 
@@ -358,54 +458,18 @@ export default function EstateDashboard({
     };
   }, []);
 
-  // The crop-mix/changes/fields panel's width — dragged from its own right
-  // edge, same pattern as LandingScreen's own project sidebar (edge-resize-
-  // grip + useDragResize). Kept as plain px: the panel sits at a fixed left
-  // offset inside the map overlay, so there's no obviously "correct"
-  // denominator for a percentage to measure against.
-  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
-  const panelResize = useDragResize({
-    min: PANEL_MIN_WIDTH,
-    max: PANEL_MAX_WIDTH,
-    onChange: setPanelWidth,
-  });
-
   return (
-    <div className="h-full w-full pointer-events-none flex p-3 gap-3 overflow-hidden">
-      {/* Left-docked panel — crop mix, the scan's change log, and the
-          per-field table. Its own column now, stretching the map's full
-          height rather than sharing it with a KPI bar stacked above.
-          Width is user-resizable via the grip on its right edge (below) —
-          `shrink-0` plus an explicit `width` in `style` rather than the
-          `flex-1` this used before, since a flex-grow item ignores a fixed
-          pixel width and refills whatever space its siblings leave. */}
+    <div className="h-full w-[clamp(280px,30vw,384px)] max-w-[calc(100vw-72px)] pointer-events-auto flex flex-col items-stretch gap-2 overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <div
-        className={`${GLASS} relative pointer-events-auto max-w-full shrink-0 min-h-0 overflow-y-auto p-[16px] flex flex-col gap-[18px] animate-fade-in-up ${
-          panelResize.dragging ? "" : "transition-[width] duration-(--dur-4) ease-(--ease-lux)"
-        }`}
-        style={{ width: panelWidth, animationDelay: "120ms" }}
+        className="flex w-full shrink-0 flex-col items-stretch gap-2 animate-fade-in-up"
+        style={{ animationDelay: "120ms" }}
       >
-        <button
-          type="button"
-          aria-label="Resize crop monitor panel"
-          aria-valuemin={PANEL_MIN_WIDTH}
-          aria-valuemax={PANEL_MAX_WIDTH}
-          aria-valuenow={panelWidth}
-          onPointerDown={(e) => panelResize.begin(e, panelWidth)}
-          onDoubleClick={() => setPanelWidth(PANEL_DEFAULT_WIDTH)}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowLeft") setPanelWidth((w) => Math.max(PANEL_MIN_WIDTH, w - 16));
-            else if (e.key === "ArrowRight") setPanelWidth((w) => Math.min(PANEL_MAX_WIDTH, w + 16));
-            else return;
-            e.preventDefault();
-          }}
-          className={`edge-resize-grip pointer-events-auto ${panelResize.dragging ? "edge-resize-grip--active" : ""}`}
-          title="Drag to resize · double-click to reset"
-        />
         {/* Area by crop type */}
-        <div>
+        <section className={`${GLASS} pointer-events-auto p-3`}>
           <div className="flex items-center justify-between gap-[8px] mb-[10px]">
-            <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif]">Area by crop type</p>
+            <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif]">
+              Area by crop type
+            </p>
             <button
               ref={captureBtnRef}
               type="button"
@@ -415,7 +479,9 @@ export default function EstateDashboard({
                 captureStatus === "pending" ? "capture-cta--pending" : ""
               }`}
             >
-              {captureStatus === "pending" && <span className="capture-pending-dot" aria-hidden="true" />}
+              {captureStatus === "pending" && (
+                <span className="capture-pending-dot" aria-hidden="true" />
+              )}
               <span ref={captureLabelRef} className="inline-block">
                 {captureStatus === "delivered"
                   ? "Hi-res capture delivered"
@@ -428,9 +494,16 @@ export default function EstateDashboard({
           <CropMixBar />
           <div className="flex flex-wrap gap-x-[18px] gap-y-[6px] mt-[10px]">
             {CROP_MIX.map((c) => (
-              <span key={c.label} className="inline-flex items-center gap-[6px] text-[12px] text-[#464650] font-['Outfit',sans-serif]">
-                <span className="w-[8px] h-[8px] rounded-full shrink-0" style={{ background: c.color }} />
-                {c.label} <span className="font-semibold text-[#18181c]">{c.pct}%</span>
+              <span
+                key={c.label}
+                className="inline-flex items-center gap-[6px] text-[12px] text-[#464650] font-['Outfit',sans-serif]"
+              >
+                <span
+                  className="w-[8px] h-[8px] rounded-full shrink-0"
+                  style={{ background: c.color }}
+                />
+                {c.label}{" "}
+                <span className="font-semibold text-[#18181c]">{c.pct}%</span>
               </span>
             ))}
           </div>
@@ -445,12 +518,10 @@ export default function EstateDashboard({
             </p>
             <CaptureTimeline status={captureStatus} />
           </div>
-        </div>
-
-        <div className="border-t border-[rgba(0,0,0,0.08)]" />
+        </section>
 
         {/* What changed since last cycle */}
-        <div>
+        <section className={`${GLASS} pointer-events-auto p-3`}>
           <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-[10px]">
             What changed since last cycle
           </p>
@@ -458,42 +529,70 @@ export default function EstateDashboard({
             {SCAN_CHANGES.map((c) => {
               const icon = SCAN_ICON[c.kind];
               return (
-                <div key={c.text} className="flex items-start gap-[10px]">
+                <button
+                  key={c.text}
+                  type="button"
+                  onClick={() => onFocusField?.(c.field.replace("Farm ", ""))}
+                  className="u-press flex w-full items-start gap-[10px] rounded-[10px] p-1 text-left hover:bg-black/[0.04]"
+                >
                   <span
                     className="shrink-0 w-[24px] h-[24px] rounded-[7px] flex items-center justify-center mt-[1px]"
                     style={{ background: icon.bg, color: icon.fg }}
                   >
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                      <path d={icon.path} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path
+                        d={icon.path}
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                   </span>
                   <p className="text-[12.5px] text-[#464650] font-['Outfit',sans-serif] leading-[17px]">
                     {c.text} <span className="text-[#8a8a94]">· {c.field}</span>
                   </p>
-                </div>
+                </button>
               );
             })}
           </div>
-        </div>
-
-        <div className="border-t border-[rgba(0,0,0,0.08)]" />
+        </section>
 
         {/* Per-field breakdown */}
-        <div>
-          <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-[10px]">Farm register</p>
-          <div className="flex flex-col gap-[10px]">
+        <section className="pointer-events-auto">
+          <p className="text-[13px] font-bold text-[#18181c] font-['Outfit',sans-serif] mb-[10px]">
+            Farm register
+          </p>
+          <div className="flex flex-col gap-2">
             {FIELD_ROWS.slice(0, 3).map((row) => (
-              <div key={row.field} className="rounded-[12px] bg-black/[0.03] p-[10px]">
+              <button
+                key={row.field}
+                type="button"
+                onClick={() => onFocusField?.(row.field)}
+                onMouseEnter={() => onHoverFields?.([row.field])}
+                onMouseLeave={() => onHoverFields?.(null)}
+                aria-pressed={selectedField === row.field}
+                className={`${GLASS} u-press p-[10px] text-left transition-[transform,border-color,box-shadow] hover:-translate-y-0.5 ${
+                  selectedField === row.field
+                    ? "!border-[#096151] ring-2 ring-[#096151]/15"
+                    : ""
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-[12.5px] font-semibold text-[#18181c] font-['Outfit',sans-serif]">
-                    Farm {row.field} <span className="font-normal text-[#5b5b66]">· {row.cropType}</span>
+                    Farm {row.field}{" "}
+                    <span className="font-normal text-[#5b5b66]">
+                      · {row.cropType}
+                    </span>
                   </span>
                 </div>
                 <div className="flex flex-col gap-[4px] mt-[6px]">
                   <div className="flex items-center justify-between text-[11.5px] font-['Outfit',sans-serif]">
                     <span className="text-[#8a8a94]">Extent</span>
                     <span className="inline-flex items-center gap-[6px]">
-                      <span className="text-[#18181c] tabular-nums">{row.extentHa} ha</span>
+                      <span className="text-[#18181c] tabular-nums">
+                        {row.extentHa} ha
+                      </span>
                       {row.extentDeltaHa !== 0 && (
                         <TrendChip
                           change={`${row.extentDeltaHa > 0 ? "+" : ""}${row.extentDeltaHa} ha`}
@@ -505,7 +604,9 @@ export default function EstateDashboard({
                   <div className="flex items-center justify-between text-[11.5px] font-['Outfit',sans-serif]">
                     <span className="text-[#8a8a94]">Tree stock</span>
                     <span className="inline-flex items-center gap-[6px]">
-                      <span className="text-[#18181c] tabular-nums">{row.treeStock.toLocaleString()}</span>
+                      <span className="text-[#18181c] tabular-nums">
+                        {row.treeStock.toLocaleString()}
+                      </span>
                       {row.treeStockDelta !== 0 && (
                         <TrendChip
                           change={`${row.treeStockDelta > 0 ? "+" : ""}${row.treeStockDelta}`}
@@ -517,7 +618,9 @@ export default function EstateDashboard({
                   <div className="flex items-center justify-between text-[11.5px] font-['Outfit',sans-serif]">
                     <span className="text-[#8a8a94]">Fallow</span>
                     <span className="inline-flex items-center gap-[6px]">
-                      <span className="text-[#18181c] tabular-nums">{row.fallowHa} ha</span>
+                      <span className="text-[#18181c] tabular-nums">
+                        {row.fallowHa} ha
+                      </span>
                       {row.fallowDeltaHa !== 0 && (
                         <TrendChip
                           change={`${row.fallowDeltaHa > 0 ? "+" : ""}${row.fallowDeltaHa} ha`}
@@ -527,10 +630,10 @@ export default function EstateDashboard({
                     </span>
                   </div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
-        </div>
+        </section>
       </div>
 
       {/* Second column — the KPI row, the same shape as the Figma
@@ -542,8 +645,10 @@ export default function EstateDashboard({
           "Last scan" used to open this bar — both now sit in the calendar
           toolbar above the map instead (App.tsx's `TimelineRow`
           `centerContent`/`rightContent`), so this card is the KPI row alone. */}
-      <div className={`${GLASS} self-start pointer-events-auto p-[14px] animate-fade-in-up`}>
-        <div className="flex gap-[12px] flex-wrap">
+      <div
+        className={`${GLASS} w-full shrink-0 self-start pointer-events-auto p-[14px] animate-fade-in-up`}
+      >
+        <div className="flex flex-col gap-2">
           <KpiCard
             label="Cultivation extent"
             value="72.0 ha"
@@ -551,7 +656,9 @@ export default function EstateDashboard({
             trend="up"
             changeNote="since last cycle"
             delay={60}
-            onMouseEnter={() => onHoverFields?.(METRIC_FIELDS["Cultivation extent"])}
+            onMouseEnter={() =>
+              onHoverFields?.(METRIC_FIELDS["Cultivation extent"])
+            }
             onMouseLeave={() => onHoverFields?.(null)}
           />
           <KpiCard
@@ -579,7 +686,9 @@ export default function EstateDashboard({
             value="87.3 ha"
             secondaryValue="4 fields under management"
             delay={240}
-            onMouseEnter={() => onHoverFields?.(METRIC_FIELDS["Estate footprint"])}
+            onMouseEnter={() =>
+              onHoverFields?.(METRIC_FIELDS["Estate footprint"])
+            }
             onMouseLeave={() => onHoverFields?.(null)}
           />
         </div>

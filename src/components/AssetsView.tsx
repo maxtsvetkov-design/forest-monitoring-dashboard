@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import type { DateRange } from "../data/aggregate";
 import type { Area } from "../data/areas";
 import { eventsInRange, type TreeEvent } from "../data/events";
@@ -18,7 +25,11 @@ import EvidencePackModal from "./EvidencePackModal";
 import ManagerContactToast from "./ManagerContactToast";
 import InProgressList from "./InProgressList";
 import { clamp, useDragResize } from "../hooks/useDragResize";
-import { applyPendingFilter, useTreeFilters, type PendingAssetFilter } from "../hooks/useTreeFilters";
+import {
+  applyPendingFilter,
+  useTreeFilters,
+  type PendingAssetFilter,
+} from "../hooks/useTreeFilters";
 import type { ContentLayerId } from "./LayerPanel";
 import { useSlidingPill } from "../hooks/useSlidingPill";
 import type { LayerTime } from "../hooks/useLayerTime";
@@ -33,6 +44,7 @@ import type { FindingOutcome } from "../data/findingOutcome";
 import AreaImageStage from "./AreaImageStage";
 import { getCrabPlovers, hasCrabPloverCensus } from "../data/crabPlovers";
 import { isCropFarm } from "../data/events";
+import { hasMangroveForest } from "../data/mangroves";
 import TreeTable from "./TreeTable";
 import { CONTENT_HEIGHT_CLASS } from "../layout";
 
@@ -63,7 +75,10 @@ function rightPanelOptions(
   // and null (not 0) is what tells this apart from "Liwa with nothing
   // in progress right now", which still gets the tab.
   if (inProgressCount === null) return base;
-  return [...base, { key: "inProgress" as const, label: `In progress (${inProgressCount})` }];
+  return [
+    ...base,
+    { key: "inProgress" as const, label: `In progress (${inProgressCount})` },
+  ];
 }
 
 /** Small segmented control — the right pane's own view switch, distinct
@@ -104,7 +119,9 @@ function RightPanelSwitcher({
           onClick={() => onChange(opt.key)}
           aria-pressed={value === opt.key}
           className={`relative z-[1] px-[10px] py-[4px] rounded-[7px] text-[11px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer transition-colors duration-200 ${
-            value === opt.key ? "text-white" : "text-[#5b5b66] hover:text-[#18181c]"
+            value === opt.key
+              ? "text-white"
+              : "text-[#5b5b66] hover:text-[#18181c]"
           }`}
         >
           {opt.label}
@@ -121,93 +138,10 @@ const MAX_SPLIT_PCT = 70;
 const DEFAULT_SPLIT_PCT = 50;
 const KEYBOARD_SPLIT_STEP = 5;
 
-function MonthlyCadenceTimeline({
-  months,
-  range,
-  events,
-  onChange,
-}: {
-  months: string[];
-  range: DateRange;
-  events: TreeEvent[];
-  onChange: (range: DateRange) => void;
-}) {
-  const currentIndex = Math.min(range.endIndex, months.length - 1);
-  const currentMonth = months[currentIndex] ?? "";
-  const eventCounts = useMemo(() => {
-    const counts = Array.from({ length: months.length }, () => 0);
-    for (const event of events) {
-      if (event.monthIndex >= 0 && event.monthIndex < counts.length) counts[event.monthIndex] += 1;
-    }
-    return counts;
-  }, [events, months.length]);
-
-  return (
-    <section
-      aria-label="Monthly monitoring cadence"
-      className="rounded-[16px] border border-white/55 bg-white/92 px-[14px] py-[11px] shadow-[0_18px_40px_-22px_rgba(24,24,28,0.48)] backdrop-blur-md"
-    >
-      <div className="flex items-center justify-between gap-[12px]">
-        <div className="flex min-w-0 items-center gap-[8px]">
-          <span className="text-[11px] font-extrabold text-[#18181c] font-['Outfit',sans-serif] whitespace-nowrap">
-            Monthly change
-          </span>
-          <span className="inline-flex h-[20px] items-center rounded-full bg-[#e6f2ec] px-[8px] text-[9px] font-bold uppercase tracking-[0.06em] text-[#096151] font-['Outfit',sans-serif] whitespace-nowrap">
-            Monthly cadence
-          </span>
-          <span className="text-[9.5px] text-[#71717a] font-['Outfit',sans-serif] whitespace-nowrap">
-            1 cycle / month
-          </span>
-        </div>
-        <span className="shrink-0 text-[10px] font-bold text-[#18181c] font-['Outfit',sans-serif] tabular-nums">
-          Showing {currentMonth}
-        </span>
-      </div>
-
-      <div className="mt-[10px] pb-[2px]">
-        <div className="relative grid w-full grid-cols-12 gap-0" role="group" aria-label="Select monitoring month">
-          <span className="absolute left-[4.1%] right-[4.1%] top-[6px] h-px bg-[#cfd3cb]" aria-hidden="true" />
-          {months.map((month, index) => {
-            const active = index === currentIndex;
-            const count = eventCounts[index] ?? 0;
-            return (
-              <button
-                key={month}
-                type="button"
-                onClick={() => onChange({ startIndex: index, endIndex: index })}
-                aria-pressed={active}
-                aria-label={`Show ${month}, ${count} ${count === 1 ? "notification" : "notifications"}`}
-                className="u-press group/month relative z-[1] flex min-w-0 flex-col items-center gap-[5px] cursor-pointer"
-              >
-                <span
-                  className={`block rounded-full border-[2px] border-white transition-[transform,background-color,box-shadow] duration-200 group-hover/month:scale-125 ${
-                    active
-                      ? "h-[13px] w-[13px] bg-[#096151] shadow-[0_0_0_4px_rgba(9,97,81,0.18)]"
-                      : "mt-[2px] h-[9px] w-[9px] bg-[#aeb5aa] shadow-[0_0_0_2px_rgba(255,255,255,0.8)]"
-                  }`}
-                  aria-hidden="true"
-                />
-                <span
-                  className={`max-w-full truncate text-[8.5px] font-['Outfit',sans-serif] tabular-nums ${
-                    active ? "font-extrabold text-[#096151]" : "font-semibold text-[#71717a]"
-                  }`}
-                >
-                  {index === 0 || month.startsWith("Jan") ? month : month.split(" ")[0]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default function AssetsView({
   area,
   events,
   range,
-  onRangeChange,
   layerTime,
   isTimelinePlaying,
   pendingFilter,
@@ -228,7 +162,6 @@ export default function AssetsView({
    *  Insights tab's calendar. */
   events: TreeEvent[];
   range: DateRange;
-  onRangeChange?: (range: DateRange) => void;
   /** Per-layer ranges, forwarded to the layer panel's coverage strips. */
   layerTime: LayerTime;
   /** Whether the timeline's play button is currently stepping through
@@ -240,9 +173,13 @@ export default function AssetsView({
   onPendingFilterApplied?: () => void;
   /** Shared across every map view — see App.tsx. */
   layerVisibility: Record<ContentLayerId, boolean>;
-  onLayerVisibilityChange: Dispatch<SetStateAction<Record<ContentLayerId, boolean>>>;
+  onLayerVisibilityChange: Dispatch<
+    SetStateAction<Record<ContentLayerId, boolean>>
+  >;
   layerOpacity: Record<ContentLayerId, number>;
-  onLayerOpacityChange: Dispatch<SetStateAction<Record<ContentLayerId, number>>>;
+  onLayerOpacityChange: Dispatch<
+    SetStateAction<Record<ContentLayerId, number>>
+  >;
   basemapIndex: number;
   onBasemapIndexChange: Dispatch<SetStateAction<number>>;
 }) {
@@ -261,10 +198,17 @@ export default function AssetsView({
   // source/layer teardown) on every pixel of a slider drag instead of only
   // when the visible image actually needs to change.
   const timelapseBucket = timelapseImages
-    ? timelapseBucketIndex(aerialRange, area.snapshots.length, timelapseImages.length)
+    ? timelapseBucketIndex(
+        aerialRange,
+        area.snapshots.length,
+        timelapseImages.length,
+      )
     : -1;
   const overlay = useMemo(
-    () => (timelapseImages && timelapseBucket >= 0 ? { ...baseOverlay, url: timelapseImages[timelapseBucket] } : baseOverlay),
+    () =>
+      timelapseImages && timelapseBucket >= 0
+        ? { ...baseOverlay, url: timelapseImages[timelapseBucket] }
+        : baseOverlay,
     [baseOverlay, timelapseImages, timelapseBucket],
   );
 
@@ -272,7 +216,13 @@ export default function AssetsView({
   // dragging into the final three months escalates this from the mild frame
   // to the severe one.
   const dyingTreeOverlay = useMemo(
-    () => dyingTreeOverlayForRange(areaDyingTreeOverlays[area.id], area.id, dyingRange, area.snapshots.length),
+    () =>
+      dyingTreeOverlayForRange(
+        areaDyingTreeOverlays[area.id],
+        area.id,
+        dyingRange,
+        area.snapshots.length,
+      ),
     [area.id, area.snapshots.length, dyingRange.endIndex],
   );
 
@@ -286,7 +236,8 @@ export default function AssetsView({
   // and the true one, and it is exactly the rule MapCanvas applies to pins, so
   // rows and pins keep showing the same trees.
   const inRange = useMemo(
-    () => generateTreeRecordsAt(overlay, area.id, area.snapshots, range.endIndex),
+    () =>
+      generateTreeRecordsAt(overlay, area.id, area.snapshots, range.endIndex),
     [overlay, area.id, area.snapshots, range.endIndex],
   );
 
@@ -298,7 +249,10 @@ export default function AssetsView({
   // about which events exist, only about which of them the current range
   // shows.
   const areaEvents = events;
-  const visibleEvents = useMemo(() => eventsInRange(areaEvents, range), [areaEvents, range]);
+  const visibleEvents = useMemo(
+    () => eventsInRange(areaEvents, range),
+    [areaEvents, range],
+  );
 
   // Every compliance violation ever logged for this farm, all months — not
   // range-filtered like `visibleEvents` — so a pin's expanded record can show
@@ -315,7 +269,9 @@ export default function AssetsView({
   // MapCanvas because the same finding shows up in both (the worklist and a
   // clicked map pin's expanded record), and a decision made from either one
   // should show up in the other rather than each keeping its own answer.
-  const [findingOutcomes, setFindingOutcomes] = useState<Map<string, FindingOutcome>>(new Map());
+  const [findingOutcomes, setFindingOutcomes] = useState<
+    Map<string, FindingOutcome>
+  >(new Map());
   function setFindingOutcome(eventId: string, outcome: FindingOutcome | null) {
     setFindingOutcomes((prev) => {
       const next = new Map(prev);
@@ -333,7 +289,9 @@ export default function AssetsView({
   // see `rightPanelOptions`'s own comment on why that distinction matters.
   const inProgressEntries = useMemo(() => {
     if (!violationEntries) return null;
-    return violationEntries.filter((entry) => findingOutcomes.get(entry.event.id) === "hi_res");
+    return violationEntries.filter(
+      (entry) => findingOutcomes.get(entry.event.id) === "hi_res",
+    );
   }, [violationEntries, findingOutcomes]);
 
   // "Export to inspection system" doesn't set its outcome directly —
@@ -341,13 +299,16 @@ export default function AssetsView({
   // pushing that pack to the inspection system actually moves the finding to
   // "in progress". Held as the one open finding rather than a boolean: which
   // finding's pack is showing is exactly what the modal needs to render.
-  const [evidencePackEntry, setEvidencePackEntry] = useState<TriageEntry | null>(null);
+  const [evidencePackEntry, setEvidencePackEntry] =
+    useState<TriageEntry | null>(null);
 
   // Bumped once the evidence pack is actually pushed — closes the map's own
   // pin popover/modal and flies back to the area's default view, so finishing
   // that flow doesn't leave the reader zoomed into one tree with a modal
   // still open behind the pack that just closed.
-  const [resetViewNonce, setResetViewNonce] = useState<number | undefined>(undefined);
+  const [resetViewNonce, setResetViewNonce] = useState<number | undefined>(
+    undefined,
+  );
 
   // The one confirmation a push to the (mocked) inspection system gets —
   // same floating-toast shape TierComparisonModal/DenseCoverageModal already
@@ -378,7 +339,9 @@ export default function AssetsView({
   // "Recent events" ahead of the table in the switcher itself
   // (`rightPanelOptions`'s own `eventsFirst`) — now applied to which panel is
   // actually showing, not just which one reads first in the pill.
-  const [rightPanel, setRightPanel] = useState<RightPanel>(isCropFarm(area.id) ? "events" : "table");
+  const [rightPanel, setRightPanel] = useState<RightPanel>(
+    isCropFarm(area.id) ? "events" : "table",
+  );
 
   // Applies a filter handed in from outside the table (a clicked widget on
   // Insights) exactly once, then reports it consumed so App.tsx clears the
@@ -413,21 +376,29 @@ export default function AssetsView({
   // is not the same as "it filtered everything out", so it must not be an
   // empty Set: an empty one would blank every pin on the map before the
   // panel's first effect even runs.
-  const [triageVisibleEntries, setTriageVisibleEntries] = useState<TriageEntry[] | null>(null);
+  const [triageVisibleEntries, setTriageVisibleEntries] = useState<
+    TriageEntry[] | null
+  >(null);
   const triageVisibleTreeIds = useMemo(
-    () => (triageVisibleEntries ? new Set(triageVisibleEntries.map((e) => e.event.tree.id)) : null),
+    () =>
+      triageVisibleEntries
+        ? new Set(triageVisibleEntries.map((e) => e.event.tree.id))
+        : null,
     [triageVisibleEntries],
   );
 
   const visibleTreeIds = useMemo(() => {
-    const pool = isCropFarm(area.id) ? filters.visible.filter((t) => isFlaggedCondition(t.condition)) : filters.visible;
+    const pool = isCropFarm(area.id)
+      ? filters.visible.filter((t) => isFlaggedCondition(t.condition))
+      : filters.visible;
     const ids = new Set(pool.map((t) => t.id));
     // The worklist's chips narrow the map too, but only where that worklist
     // is the panel on screen (Liwa/crop farms) — every other area shows
     // RecentEventsList, which has no chips and never reports, so its stale
     // `null` correctly leaves the map alone.
     if (isCropFarm(area.id) && triageVisibleTreeIds) {
-      for (const id of [...ids]) if (!triageVisibleTreeIds.has(id)) ids.delete(id);
+      for (const id of [...ids])
+        if (!triageVisibleTreeIds.has(id)) ids.delete(id);
     }
     return ids;
   }, [filters.visible, area.id, triageVisibleTreeIds]);
@@ -485,7 +456,14 @@ export default function AssetsView({
 
   const focusTree = useMemo(() => {
     const found = filters.visible.find((t) => t.id === flyToId);
-    return found ? { id: found.id, lng: found.lng, lat: found.lat, eventId: flyToEventId ?? undefined } : null;
+    return found
+      ? {
+          id: found.id,
+          lng: found.lng,
+          lat: found.lat,
+          eventId: flyToEventId ?? undefined,
+        }
+      : null;
   }, [filters.visible, flyToId, flyToEventId]);
 
   // The census census's own grouping — see AreaImageStage's split prompt.
@@ -533,54 +511,44 @@ export default function AssetsView({
           onSplitGroups={() => setSplitCensusGroups(true)}
         />
       ) : (
-      <MapCanvas
-        layerTime={layerTime}
-        pinsRange={layerTime.rangeFor.pins}
-        generativeRange={layerTime.rangeFor.generative}
-        center={area.center}
-        zoom={area.zoom ?? 11.5}
-        overlay={overlay}
-        generativeOverlay={areaGenerativeOverlays[area.id]}
-        dyingTreeOverlay={dyingTreeOverlay}
-        areaId={area.id}
-        areaName={area.name}
-        snapshots={area.snapshots}
-        range={range}
-        isTimelinePlaying={isTimelinePlaying}
-        visibleTreeIds={visibleTreeIds}
-        focusTree={focusTree}
-        inspectTree={inspectTree}
-        violationEntries={violationEntries}
-        showFarmDetectionPins={area.id === "liwa-crop-monitor"}
-        layerPanelInitiallyCollapsed={area.id === "liwa-crop-monitor"}
-        timelineOverlay={
-          area.id === "liwa-crop-monitor" && onRangeChange ? (
-            <MonthlyCadenceTimeline
-              months={area.snapshots.map((snapshot) => snapshot.label)}
-              range={range}
-              events={areaEvents}
-              onChange={onRangeChange}
-            />
-          ) : undefined
-        }
-        findingOutcomes={findingOutcomes}
-        onSetFindingOutcome={setFindingOutcome}
-        onRequestHiRes={setEvidencePackEntry}
-        fieldFocusRequest={fieldFocusRequest}
-        resetViewRequest={resetViewNonce}
-        onExitInspect={() => setInspectId(null)}
-        onPinClick={(id) => setSelectedId(id)}
-        onPinHover={setHoveredId}
-        layerVisibility={layerVisibility}
-        onLayerVisibilityChange={onLayerVisibilityChange}
-        layerOpacity={layerOpacity}
-        onLayerOpacityChange={onLayerOpacityChange}
-        basemapIndex={basemapIndex}
-        onBasemapIndexChange={onBasemapIndexChange}
-        show3DToggle={isCropFarm(area.id)}
-        className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
-        style={{ width: `${splitPct}%` }}
-      />
+        <MapCanvas
+          layerTime={layerTime}
+          pinsRange={layerTime.rangeFor.pins}
+          generativeRange={layerTime.rangeFor.generative}
+          center={area.center}
+          zoom={area.zoom ?? 11.5}
+          overlay={overlay}
+          generativeOverlay={areaGenerativeOverlays[area.id]}
+          dyingTreeOverlay={dyingTreeOverlay}
+          areaId={area.id}
+          areaName={area.name}
+          snapshots={area.snapshots}
+          range={range}
+          isTimelinePlaying={isTimelinePlaying}
+          visibleTreeIds={visibleTreeIds}
+          focusTree={focusTree}
+          inspectTree={inspectTree}
+          violationEntries={violationEntries}
+          showFarmDetectionPins={area.id === "liwa-crop-monitor"}
+          layerPanelInitiallyCollapsed={area.id === "liwa-crop-monitor"}
+          findingOutcomes={findingOutcomes}
+          onSetFindingOutcome={setFindingOutcome}
+          onRequestHiRes={setEvidencePackEntry}
+          fieldFocusRequest={fieldFocusRequest}
+          resetViewRequest={resetViewNonce}
+          onExitInspect={() => setInspectId(null)}
+          onPinClick={(id) => setSelectedId(id)}
+          onPinHover={setHoveredId}
+          layerVisibility={layerVisibility}
+          onLayerVisibilityChange={onLayerVisibilityChange}
+          layerOpacity={layerOpacity}
+          onLayerOpacityChange={onLayerOpacityChange}
+          basemapIndex={basemapIndex}
+          onBasemapIndexChange={onBasemapIndexChange}
+          show3DToggle={isCropFarm(area.id) || hasMangroveForest(area.id)}
+          className={`${AREAS_HEIGHT} mt-[10px] shrink-0`}
+          style={{ width: `${splitPct}%` }}
+        />
       )}
 
       {/* MapCanvas already watches its container with a ResizeObserver and calls
@@ -594,7 +562,8 @@ export default function AssetsView({
         aria-valuemax={MAX_SPLIT_PCT}
         tabIndex={0}
         onPointerDown={(e) => {
-          const width = containerRef.current?.getBoundingClientRect().width ?? 0;
+          const width =
+            containerRef.current?.getBoundingClientRect().width ?? 0;
           if (width === 0) return;
           // px of travel → percent of the container.
           split.begin(e, splitPct, 100 / width);
@@ -612,7 +581,9 @@ export default function AssetsView({
         className={`split-divider mt-[10px] ${AREAS_HEIGHT} ${split.dragging ? "split-divider--active" : ""}`}
       />
 
-      <div className={`flex-1 min-w-0 ${AREAS_HEIGHT} mt-[10px] flex flex-col gap-[8px]`}>
+      <div
+        className={`flex-1 min-w-0 ${AREAS_HEIGHT} mt-[10px] flex flex-col gap-[8px]`}
+      >
         <div className="flex justify-center shrink-0">
           <RightPanelSwitcher
             value={rightPanel}
@@ -650,12 +621,21 @@ export default function AssetsView({
             // field (crop & area, trees & species, canopy trend), checked
             // one farm or the whole district at a time. Liwa Oasis keeps the
             // flat table below unchanged; this is that persona's own slot.
-            <CropMonitorFarmRecords area={area} records={inRange} onFocusField={focusField} />
+            <CropMonitorFarmRecords
+              area={area}
+              records={inRange}
+              onFocusField={focusField}
+            />
           ) : rightPanel === "table" && isCropFarm(area.id) ? (
             // Liwa Oasis is managed by field, not by individual palm — see
             // CropFieldsTable's own comment. Same slot CrabPloverTable takes
             // above for the same reason on a different area.
-            <CropFieldsTable records={inRange} areaId={area.id} areaName={area.name} onFocusField={focusField} />
+            <CropFieldsTable
+              records={inRange}
+              areaId={area.id}
+              areaName={area.name}
+              onFocusField={focusField}
+            />
           ) : rightPanel === "table" ? (
             <TreeTable
               records={inRange}
@@ -701,7 +681,9 @@ export default function AssetsView({
             // see InspectionTriageList's own comment.
             <InspectionTriageList
               events={visibleEvents}
-              pendingDetection={pendingFilter?.kind === "farmDetection" ? pendingFilter : null}
+              pendingDetection={
+                pendingFilter?.kind === "farmDetection" ? pendingFilter : null
+              }
               onPendingDetectionApplied={onPendingFilterApplied}
               onSelectEvent={handleSelectEvent}
               outcomes={findingOutcomes}
@@ -711,7 +693,11 @@ export default function AssetsView({
               onVisibleEntriesChange={setTriageVisibleEntries}
             />
           ) : (
-            <RecentEventsList events={visibleEvents} delay={0} onSelectEvent={handleSelectEvent} />
+            <RecentEventsList
+              events={visibleEvents}
+              delay={0}
+              onSelectEvent={handleSelectEvent}
+            />
           )}
         </div>
       </div>

@@ -127,6 +127,9 @@ const PLOT_WIDTH_M: Record<string, number> = {
   // whole-coastline satellite frames — so its footprint is an order of
   // magnitude wider than the drone plots above.
   "abu-al-abyad": 14_000,
+  // Tight on purpose: grey-mangrove crowns are 2–8 m across, and the 3D stand
+  // (data/mangroves.ts) is only legible when the camera frames it close.
+  mangroves: 300,
 };
 
 /**
@@ -179,8 +182,13 @@ export function areaHasOwnImagery(areaId: string): boolean {
  *
  * `areaOverlays` still gives this area a real `coordinates` box (see
  * `MapOverlay.hidden`'s own comment) — only the raster paint is skipped.
+ *
+ * Mangroves joins for a different reason: its map is the satellite basemap
+ * plus its own 3D stand and nothing else (see `hasMangroveForest`), and being
+ * in this set is what also keeps the canopy mask and the post-basemap-swap
+ * raster rebuild off it.
  */
-const NO_AERIAL_OVERLAY_AREAS = new Set(["liwa-oasis", "liwa-crop-monitor"]);
+const NO_AERIAL_OVERLAY_AREAS = new Set(["liwa-oasis", "liwa-crop-monitor", "mangroves"]);
 
 export const areaOverlays: Record<string, MapOverlay> = Object.fromEntries(
   areas.map((area) => {

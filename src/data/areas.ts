@@ -76,6 +76,24 @@ export const areas: Area[] = [
     snapshots: generateMonthlySnapshots(1.1, "abu-al-abyad"),
   },
   {
+    // Under Custom. Its map is the satellite basemap plus its own 300-tree 3D
+    // stand (data/mangroves.ts) and nothing else — see `hasMangroveForest`.
+    // The dashboard numbers are still the generic placeholder: scale 0 is this
+    // generator's floor (`generatePopulation`'s `Math.max(40, ...)` in
+    // treePopulation.ts), not a count of the 3D stand.
+    id: "mangroves",
+    name: "Mangroves",
+    projectName: "Al Maha Forest (Pilot)",
+    // Inside the Jubail Island mangrove forest, Abu Dhabi — checked against
+    // Esri World Imagery; the first guess sat on reclaimed sand next door.
+    // Vector basemap (index 0), greyed and kept flat by MapCanvas.
+    // On Um Yifeenah Island's south-west shore, where OpenStreetMap maps a
+    // real water/land edge — the Jubail mangroves themselves are mapped as
+    // water, so a stand placed there sits in an unbroken grey sea.
+    center: [54.4619, 24.4628],
+    snapshots: generateMonthlySnapshots(0, "mangroves"),
+  },
+  {
     // The one agricultural site on the programme — a working date-palm
     // orchard, not a habitat-restoration plot, which is why it gets its own
     // project grouping rather than joining "Al Maha Forest (Pilot)" above.
@@ -83,7 +101,7 @@ export const areas: Area[] = [
     // pests, harvest) instead of habitat-change copy — see `isCropFarm` and
     // `generateCropEvents` in events.ts for why that split exists.
     id: "liwa-oasis",
-    name: "Liwa Oasis Date Farm",
+    name: "Crop Monitoring",
     projectName: "Liwa Oasis Farms (Pilot)",
     center: [54.71275799623225, 24.505954381777737],
     defaultBasemapIndex: 1, // Esri World Imagery — see the field's own comment.
@@ -100,7 +118,7 @@ export const areas: Area[] = [
     // Farm's — editing one's data going forward will never move the other's,
     // with no extra plumbing required to guarantee that.
     id: "liwa-crop-monitor",
-    name: "Agricultural Monitoring Officer — Crop Monitor",
+    name: "Agro compliance monitoring",
     projectName: "Liwa Oasis Farms (Pilot)",
     center: [54.71275799623225, 24.505954381777737],
     defaultBasemapIndex: 1,

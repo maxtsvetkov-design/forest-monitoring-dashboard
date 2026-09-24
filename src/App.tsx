@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   imgBell04,
   imgFilterFunnel01,
@@ -14,7 +21,11 @@ import AnimatedDonutChart from "./components/AnimatedDonutChart";
 import AreaSwitcher from "./components/AreaSwitcher";
 import AssetsView from "./components/AssetsView";
 import CropMonitorOverlay from "./components/CropMonitorOverlay";
-import { CYCLE_LABEL, CYCLE_WINDOW, LAST_SCAN } from "./components/EstateDashboard";
+import {
+  CYCLE_LABEL,
+  CYCLE_WINDOW,
+  LAST_SCAN,
+} from "./components/EstateDashboard";
 import AreasView from "./components/AreasView";
 import CrownRadiusTreemap from "./components/CrownRadiusTreemap";
 import EcosystemConditionCard from "./components/EcosystemConditionCard";
@@ -23,13 +34,19 @@ import HealthScoreTrendChart from "./components/HealthScoreTrendChart";
 import IconBtn from "./components/IconBtn";
 import KpiCard from "./components/KpiCard";
 import LandingScreen from "./components/LandingScreen";
-import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./components/LayerPanel";
+import {
+  DEFAULT_LAYER_OPACITY,
+  DEFAULT_LAYER_VISIBILITY,
+  type ContentLayerId,
+} from "./components/LayerPanel";
 import MapsView from "./components/MapsView";
 import StoryView from "./components/StoryView";
 import MetaStatsCard from "./components/MetaStatsCard";
 import NdviCard from "./components/NdviCard";
 import OverallHealthCard from "./components/OverallHealthCard";
-import TreeHistoryModal, { TreeMiniPopover } from "./components/TreeHistoryModal";
+import TreeHistoryModal, {
+  TreeMiniPopover,
+} from "./components/TreeHistoryModal";
 import RecentEventsList from "./components/RecentEventsList";
 import InspectionTriageList from "./components/InspectionTriageList";
 import PannableFrameStage from "./components/PannableFrameStage";
@@ -48,10 +65,24 @@ import HabitatLegend from "./components/HabitatLegend";
 import ToolbarBtn from "./components/ToolbarBtn";
 import TreeSurveyCard from "./components/TreeSurveyCard";
 import { areas } from "./data/areas";
-import { eventsInRange, generateEvents, isCropFarm, type TreeEvent } from "./data/events";
-import { areaHectares, areaOverlays, frameMonthWindow, pointInQuad } from "./data/overlays";
+import {
+  eventsInRange,
+  generateEvents,
+  isCropFarm,
+  type TreeEvent,
+} from "./data/events";
+import {
+  areaHectares,
+  areaOverlays,
+  frameMonthWindow,
+  pointInQuad,
+} from "./data/overlays";
 import { fieldCenterUV, FIELD_LETTERS } from "./data/farmFields";
-import { aggregateRange, healthScoreSeries, maxScatterCount } from "./data/aggregate";
+import {
+  aggregateRange,
+  healthScoreSeries,
+  maxScatterCount,
+} from "./data/aggregate";
 import { CONDITIONS } from "./data/taxonomy";
 import { PERMIT_SECTIONS } from "./data/permits";
 import { useDateRange } from "./hooks/useDateRange";
@@ -63,6 +94,7 @@ import type { PendingAssetFilter } from "./hooks/useTreeFilters";
 import { useHashRoute } from "./hooks/useHashRoute";
 import { parseHash, type AppRoute } from "./routes";
 import { CONTENT_HEIGHT_CLASS } from "./layout";
+import { hasMangroveForest } from "./data/mangroves";
 
 const TOTAL_AREA = "12 ha";
 // Condition labels split the way the KPI row talks about them, derived from
@@ -70,8 +102,12 @@ const TOTAL_AREA = "12 ha";
 // "Total healthy trees" counts), "flagged" the three that pull NDVI and the
 // condition score down. Both feed the health filter when their card is
 // clicked, so the Assets view lands on exactly the trees the number counted.
-const HEALTHY_CONDITION_LABELS = CONDITIONS.filter((c) => !c.flagged).map((c) => c.label);
-const FLAGGED_CONDITION_LABELS = CONDITIONS.filter((c) => c.flagged).map((c) => c.label);
+const HEALTHY_CONDITION_LABELS = CONDITIONS.filter((c) => !c.flagged).map(
+  (c) => c.label,
+);
+const FLAGGED_CONDITION_LABELS = CONDITIONS.filter((c) => c.flagged).map(
+  (c) => c.label,
+);
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 560;
 const SIDEBAR_DEFAULT_WIDTH = 320;
@@ -96,7 +132,10 @@ function formatMonthYear(date: Date): string {
 // uptrend on average, but any single range comparison can still land negative
 // (month-to-month noise, a narrowed selection), and a hardcoded "up" would
 // then show a green up-arrow next to a minus sign.
-function formatKpiChange(change: number | null, format: (n: number) => string): { change: string; trend: "up" | "down" } | null {
+function formatKpiChange(
+  change: number | null,
+  format: (n: number) => string,
+): { change: string; trend: "up" | "down" } | null {
   if (change === null) return null;
   const trend: "up" | "down" = change < 0 ? "down" : "up";
   // format() already renders a negative number with its own "-"; only the
@@ -117,7 +156,9 @@ export default function App() {
   // Assets, not Insights: crossing the landing gate without an explicit
   // destination (a plain onEnter()) should land somewhere that already means
   // "this site," since that's usually why the gate was crossed at all.
-  const [activeTab, setActiveTab] = useState(initialRoute.areaId ? initialRoute.tab : "Assets");
+  const [activeTab, setActiveTab] = useState(
+    initialRoute.areaId ? initialRoute.tab : "Assets",
+  );
   // Two halves of the story's position, deliberately not one variable.
   //
   // `storyBlockId` is what the panel REPORTS — it moves on every click, and
@@ -129,8 +170,12 @@ export default function App() {
   // be written to the URL, read back as a request, and handed to the panel as
   // an instruction to jump where it already is. Keeping the two directions on
   // separate wires is what makes the URL a mirror rather than a leash.
-  const [storyBlockId, setStoryBlockId] = useState<string | undefined>(initialRoute.blockId);
-  const [storyNavBlockId, setStoryNavBlockId] = useState<string | undefined>(initialRoute.blockId);
+  const [storyBlockId, setStoryBlockId] = useState<string | undefined>(
+    initialRoute.blockId,
+  );
+  const [storyNavBlockId, setStoryNavBlockId] = useState<string | undefined>(
+    initialRoute.blockId,
+  );
   // Which of Al Maha's 3 habitat reference photos the Recent Events tab's
   // stage is on — lifted up here (rather than left inside PannableFrameStage)
   // so the tick row that replaces the calendar picker on this tab, below, can
@@ -138,7 +183,9 @@ export default function App() {
   // Null means "no habitat capture overlaid yet" — the stage starts showing
   // only the real basemap, and the reader has to actively choose to overlay
   // a reference capture on top of it.
-  const [habitatFrameIndex, setHabitatFrameIndex] = useState<number | null>(null);
+  const [habitatFrameIndex, setHabitatFrameIndex] = useState<number | null>(
+    null,
+  );
   // Bumped on every event row click on the Recent Events tab, to trigger the
   // habitat stage's "look closer" zoom reaction (see PannableFrameStage's own
   // `focusSignal` prop) — a plain counter rather than a boolean so clicking
@@ -149,7 +196,9 @@ export default function App() {
   // pins) the same spot on the photo, and the whole event is passed through
   // so the pin's hover card can show that sighting's own species stats
   // rather than a second lookup by id.
-  const [habitatFocusEvent, setHabitatFocusEvent] = useState<TreeEvent | null>(null);
+  const [habitatFocusEvent, setHabitatFocusEvent] = useState<TreeEvent | null>(
+    null,
+  );
   // Flipped once a reader dismisses the hi-res receipt (EventDetailPanel's
   // "Get high-resolution analysis" → HiResConfirmation's "Back to the plot")
   // — swaps the habitat stage over to the actual higher-resolution capture
@@ -161,7 +210,9 @@ export default function App() {
   // paired with the very next one (index+1) — null when no compare is
   // active. Toggling it also moves the stage to that capture, so the base
   // frame shown always matches which pair is being compared.
-  const [habitatCompareIndex, setHabitatCompareIndex] = useState<number | null>(null);
+  const [habitatCompareIndex, setHabitatCompareIndex] = useState<number | null>(
+    null,
+  );
   function toggleHabitatCompare(index: number) {
     // A true on/off switch: turning compare ON moves the stage to that
     // capture (same as before); turning the same one OFF drops the stage
@@ -182,7 +233,9 @@ export default function App() {
   // whether permit areas draw on the habitat stage (see the `permitAreas`
   // prop below): only while a reader is actually looking at the Permits
   // panel, not on every other view.
-  const [eventsPanel, setEventsPanel] = useState<"list" | "detail" | "permits" | "compare">("list");
+  const [eventsPanel, setEventsPanel] = useState<
+    "list" | "detail" | "permits" | "compare"
+  >("list");
   function togglePermitFocus(id: string) {
     setFocusedPermitId((prev) => (prev === id ? null : id));
   }
@@ -192,7 +245,11 @@ export default function App() {
   const permitAreas = useMemo(
     () =>
       PERMIT_SECTIONS.flatMap((s) =>
-        s.entries.map((entry) => ({ id: entry.id, label: entry.title, selected: entry.id === focusedPermitId })),
+        s.entries.map((entry) => ({
+          id: entry.id,
+          label: entry.title,
+          selected: entry.id === focusedPermitId,
+        })),
       ),
     [focusedPermitId],
   );
@@ -206,13 +263,17 @@ export default function App() {
   // which already knows whether this exact click is the toggle-off case.
   // A filter from a clicked Insights widget, waiting to be applied once
   // AssetsView mounts and consumed — see AssetsView's pendingFilter effect.
-  const [pendingFilter, setPendingFilter] = useState<PendingAssetFilter | null>(null);
+  const [pendingFilter, setPendingFilter] = useState<PendingAssetFilter | null>(
+    null,
+  );
   // An event clicked in Recent Events, on its way to being shown on the map.
   // Two states rather than one: `pendingTreeFocus` drives the camera fly-to,
   // and the modal opens only once MapCanvas reports arrival (onFocusArrived)
   // — opening it immediately would show the modal over an unrelated part of
   // the map mid-flight, before the pin is actually in view.
-  const [pendingTreeFocus, setPendingTreeFocus] = useState<TreeEvent | null>(null);
+  const [pendingTreeFocus, setPendingTreeFocus] = useState<TreeEvent | null>(
+    null,
+  );
   const [openTreeEvent, setOpenTreeEvent] = useState<TreeEvent | null>(null);
   // Whether the open tree popover is showing its compact form — toggled by
   // the modal's own "collapse" button / the compact popover's own "expand"
@@ -221,7 +282,10 @@ export default function App() {
   // Viewport position of the popover's anchor point — kept live by MapCanvas's
   // onFocusMove so the popover tracks the pin through pan/zoom instead of
   // drifting off it once the user moves the map.
-  const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [modalAnchor, setModalAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   // Bumped on every explicit fly request (a fresh event click, or "link to the
   // pin" inside the open modal) so MapCanvas's focus effect re-fires even when
   // the target tree is unchanged — it keys off object identity, and re-flying
@@ -229,7 +293,14 @@ export default function App() {
   // change. Not read for its value, only to force useMemo below to recompute.
   const [focusNonce, setFocusNonce] = useState(0);
   const focusTree = useMemo(
-    () => (pendingTreeFocus ? { id: pendingTreeFocus.tree.id, lng: pendingTreeFocus.tree.lng, lat: pendingTreeFocus.tree.lat } : null),
+    () =>
+      pendingTreeFocus
+        ? {
+            id: pendingTreeFocus.tree.id,
+            lng: pendingTreeFocus.tree.lng,
+            lat: pendingTreeFocus.tree.lat,
+          }
+        : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pendingTreeFocus, focusNonce],
   );
@@ -251,13 +322,19 @@ export default function App() {
     const index = FIELD_LETTERS.indexOf(field);
     if (index < 0) return;
     const { u, v } = fieldCenterUV(index);
-    const [lng, lat] = pointInQuad(areaOverlays["liwa-crop-monitor"].coordinates, u, v);
+    const [lng, lat] = pointInQuad(
+      areaOverlays["liwa-crop-monitor"].coordinates,
+      u,
+      v,
+    );
     setFieldFocusRequest({ fieldIndex: index, lng, lat, nonce: Date.now() });
   }, []);
 
   // Which field band(s) EstateDashboard's hovered KPI card is about, glowed
   // in place on the shared map — see MapCanvas's `highlightFieldLetters`.
-  const [hoveredFieldLetters, setHoveredFieldLetters] = useState<string[] | null>(null);
+  const [hoveredFieldLetters, setHoveredFieldLetters] = useState<
+    string[] | null
+  >(null);
 
   // Which Drift list card is selected — isolates the shared map to that
   // field (see MapCanvas's `driftFieldFocus`): every other field's pins
@@ -269,7 +346,9 @@ export default function App() {
   // "go back to seeing the whole plot" needs a way back that isn't a
   // separate button. Selecting (not deselecting) also flies the camera
   // there, same as before this card had a selected state at all.
-  const [selectedDriftField, setSelectedDriftField] = useState<string | null>(null);
+  const [selectedDriftField, setSelectedDriftField] = useState<string | null>(
+    null,
+  );
   const selectDriftField = useCallback(
     (field: string) => {
       setSelectedDriftField((prev) => {
@@ -349,8 +428,12 @@ export default function App() {
   // on one tab's map (Maps vs. Assets) stays that way on the other — each tab
   // mounts its own MapCanvas instance, so state living inside it would reset
   // on every tab switch.
-  const [layerVisibility, setLayerVisibility] = useState<Record<ContentLayerId, boolean>>(DEFAULT_LAYER_VISIBILITY);
-  const [layerOpacity, setLayerOpacity] = useState<Record<ContentLayerId, number>>(DEFAULT_LAYER_OPACITY);
+  const [layerVisibility, setLayerVisibility] = useState<
+    Record<ContentLayerId, boolean>
+  >(DEFAULT_LAYER_VISIBILITY);
+  const [layerOpacity, setLayerOpacity] = useState<
+    Record<ContentLayerId, number>
+  >(DEFAULT_LAYER_OPACITY);
   const [basemapIndex, setBasemapIndex] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [resizingSidebar, setResizingSidebar] = useState(false);
@@ -363,7 +446,10 @@ export default function App() {
       // The sidebar sits on the right, so dragging left (negative dx) should widen it.
       const dx = sidebarResizeStartRef.current.x - e.clientX;
       const maxWidth = Math.max(SIDEBAR_MAX_WIDTH, window.innerWidth * 0.5);
-      const next = Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH, sidebarResizeStartRef.current.width + dx));
+      const next = Math.min(
+        maxWidth,
+        Math.max(SIDEBAR_MIN_WIDTH, sidebarResizeStartRef.current.width + dx),
+      );
       setSidebarWidth(next);
     }
     function handleUp() {
@@ -377,7 +463,9 @@ export default function App() {
       document.removeEventListener("pointerup", handleUp);
     };
   }, [resizingSidebar]);
-  const [activeAreaId, setActiveAreaId] = useState(initialRoute.areaId ?? areas[0].id);
+  const [activeAreaId, setActiveAreaId] = useState(
+    initialRoute.areaId ?? areas[0].id,
+  );
   const activeArea = areas.find((a) => a.id === activeAreaId) ?? areas[0];
 
   // Applies an area's suggested basemap the first time it becomes active —
@@ -399,7 +487,8 @@ export default function App() {
   // this entry for crop farms — see `tabs` below. Assets is where its own
   // "Recent events" panel actually lives now.
   useEffect(() => {
-    if (isCropFarm(activeArea.id) && activeTab === "Recent events") setActiveTab("Assets");
+    if (isCropFarm(activeArea.id) && activeTab === "Recent events")
+      setActiveTab("Assets");
   }, [activeArea.id, activeTab]);
 
   // Same correction, for the "Areas" / "Drift list" swap: each only exists
@@ -407,8 +496,13 @@ export default function App() {
   // above), so a stale pill from whichever area was open before needs to
   // land on that area's own equivalent tab instead of vanishing.
   useEffect(() => {
-    if (activeArea.id === "liwa-crop-monitor" && activeTab === "Areas") setActiveTab("Insights");
-    else if (activeArea.id !== "liwa-crop-monitor" && activeTab === "Drift list") setActiveTab("Areas");
+    if (activeArea.id === "liwa-crop-monitor" && activeTab === "Areas")
+      setActiveTab("Insights");
+    else if (
+      activeArea.id !== "liwa-crop-monitor" &&
+      activeTab === "Drift list"
+    )
+      setActiveTab("Areas");
   }, [activeArea.id, activeTab]);
 
   // A Drift list selection is that screen's own state, not something the map
@@ -471,12 +565,23 @@ export default function App() {
   const layerTime = useLayerTime(activeArea.id, range);
   // Fixed ceiling for the health-per-species bubble sizes, derived from the
   // FULL dataset (not the current range) -- see maxScatterCount's comment.
-  const scatterZMax = useMemo(() => maxScatterCount(activeArea.snapshots), [activeArea]);
+  const scatterZMax = useMemo(
+    () => maxScatterCount(activeArea.snapshots),
+    [activeArea],
+  );
   // Always the full 12-month timeline, independent of the range slider --
   // see healthScoreSeries's comment.
-  const healthScoreTrend = useMemo(() => healthScoreSeries(activeArea.snapshots), [activeArea]);
+  const healthScoreTrend = useMemo(
+    () => healthScoreSeries(activeArea.snapshots),
+    [activeArea],
+  );
   const areaEvents = useMemo(
-    () => generateEvents(areaOverlays[activeArea.id], activeArea.snapshots, activeArea.id),
+    () =>
+      generateEvents(
+        areaOverlays[activeArea.id],
+        activeArea.snapshots,
+        activeArea.id,
+      ),
     [activeArea],
   );
   const visibleEvents = useMemo(
@@ -492,7 +597,11 @@ export default function App() {
     const frameCount = HABITAT_FRAMES.length;
     const totalMonths = activeArea.snapshots.length;
     const winA = frameMonthWindow(habitatCompareIndex, frameCount, totalMonths);
-    const winB = frameMonthWindow(habitatCompareIndex + 1, frameCount, totalMonths);
+    const winB = frameMonthWindow(
+      habitatCompareIndex + 1,
+      frameCount,
+      totalMonths,
+    );
     const rangeA = { startIndex: winA.startIndex, endIndex: winA.endIndex };
     const rangeB = { startIndex: winB.startIndex, endIndex: winB.endIndex };
     const labelFor = (w: { startIndex: number; endIndex: number }) => {
@@ -501,7 +610,12 @@ export default function App() {
       return from === to ? from : `${from} – ${to}`;
     };
     const habitatCountFor = (r: { startIndex: number; endIndex: number }) =>
-      areaEvents.filter((e) => e.habitat && e.monthIndex >= r.startIndex && e.monthIndex <= r.endIndex).length;
+      areaEvents.filter(
+        (e) =>
+          e.habitat &&
+          e.monthIndex >= r.startIndex &&
+          e.monthIndex <= r.endIndex,
+      ).length;
     return {
       labelA: labelFor(rangeA),
       labelB: labelFor(rangeB),
@@ -564,11 +678,24 @@ export default function App() {
     return () => clearTimeout(t);
   }, [pillReady]);
 
-  const treesChange = formatKpiChange(aggregated.totalTrees.change, (n) => Math.round(n).toLocaleString());
-  const healthyTreesChange = formatKpiChange(aggregated.healthyTrees.change, (n) => Math.round(n).toLocaleString());
-  const canopyChange = formatKpiChange(aggregated.canopyCoverPct.change, (n) => `${n.toFixed(1)}%`);
-  const crownMatureChange = formatKpiChange(aggregated.crownMaturePct.change, (n) => `${n.toFixed(1)}pp`);
-  const ndviChange = formatKpiChange(aggregated.ndvi.change, (n) => n.toFixed(2));
+  const treesChange = formatKpiChange(aggregated.totalTrees.change, (n) =>
+    Math.round(n).toLocaleString(),
+  );
+  const healthyTreesChange = formatKpiChange(
+    aggregated.healthyTrees.change,
+    (n) => Math.round(n).toLocaleString(),
+  );
+  const canopyChange = formatKpiChange(
+    aggregated.canopyCoverPct.change,
+    (n) => `${n.toFixed(1)}%`,
+  );
+  const crownMatureChange = formatKpiChange(
+    aggregated.crownMaturePct.change,
+    (n) => `${n.toFixed(1)}pp`,
+  );
+  const ndviChange = formatKpiChange(aggregated.ndvi.change, (n) =>
+    n.toFixed(2),
+  );
 
   // Each card's drill-down lands on the trees its own number is counting, so
   // the filtered Assets view is a genuine "show me these" rather than a
@@ -583,7 +710,8 @@ export default function App() {
       changeNote: "vs. prior period",
       trend: healthyTreesChange?.trend,
       hasInfo: true,
-      onDrillDown: () => drillIntoAssets({ kind: "health", values: HEALTHY_CONDITION_LABELS }),
+      onDrillDown: () =>
+        drillIntoAssets({ kind: "health", values: HEALTHY_CONDITION_LABELS }),
       drillDownLabel: "Show these trees in Assets",
     },
     {
@@ -681,33 +809,55 @@ export default function App() {
           >
             <img src={imgUnion} alt="" className="w-full h-full" />
           </button>
-          <div className="w-full border-t border-[#dedee3] my-1 animate-fade-in-left" style={{ animationDelay: "20ms" }} />
-          <div className="animate-fade-in-left" style={{ animationDelay: "50ms" }}>
+          <div
+            className="w-full border-t border-[#dedee3] my-1 animate-fade-in-left"
+            style={{ animationDelay: "20ms" }}
+          />
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "50ms" }}
+          >
             <IconBtn src={imgIcHome} alt="home" active />
           </div>
-          <div className="animate-fade-in-left" style={{ animationDelay: "80ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "80ms" }}
+          >
             <IconBtn src={imgIcBook} alt="book" />
           </div>
-          <div className="animate-fade-in-left" style={{ animationDelay: "110ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "110ms" }}
+          >
             <IconBtn src={imgIcHelpCircle} alt="help" />
           </div>
-          <div className="w-full border-t border-[#dedee3] my-1 animate-fade-in-left" style={{ animationDelay: "130ms" }} />
+          <div
+            className="w-full border-t border-[#dedee3] my-1 animate-fade-in-left"
+            style={{ animationDelay: "130ms" }}
+          />
           <div
             className="w-8 h-8 rounded-full bg-[#ebece7] border border-[#dedee3] flex items-center justify-center animate-fade-in-left"
             style={{ animationDelay: "150ms" }}
           >
-            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">AZ</span>
+            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">
+              AZ
+            </span>
           </div>
         </div>
         <div className="flex flex-col items-center gap-2">
-          <div className="animate-fade-in-left" style={{ animationDelay: "60ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "60ms" }}
+          >
             <IconBtn src={imgBell04} alt="notifications" />
           </div>
           <div
             className="w-8 h-8 rounded-full bg-[#ebece7] border border-[#dedee3] flex items-center justify-center animate-fade-in-left"
             style={{ animationDelay: "90ms" }}
           >
-            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">AZ</span>
+            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">
+              AZ
+            </span>
           </div>
         </div>
       </aside>
@@ -747,12 +897,15 @@ export default function App() {
                     onClick={() => switchTab(tab)}
                     aria-current={activeTab === tab ? "page" : undefined}
                     className={`relative z-[1] px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap transition-colors duration-200 ${
-                      activeTab === tab ? "text-[#ebece7]" : "text-[#464650] hover:text-[#18181c]"
+                      activeTab === tab
+                        ? "text-[#ebece7]"
+                        : "text-[#464650] hover:text-[#18181c]"
                     }`}
                   >
                     {tab === "Recent events" && activeArea.id === "al-maha"
                       ? "Events EAD"
-                      : tab === "Drift list" && activeArea.id === "liwa-crop-monitor"
+                      : tab === "Drift list" &&
+                          activeArea.id === "liwa-crop-monitor"
                         ? "Fields at a glance"
                         : tab}
                   </button>
@@ -782,38 +935,62 @@ export default function App() {
               value is "latest" — one month), with no way to see further back.
               That's exactly the bug an earlier pass introduced by swapping
               the picker out instead of adding beside it. */}
-          {activeTab !== "Maps" && activeTab !== "Assets" && activeTab !== "Story" && (
+          {activeTab !== "Maps" && activeTab !== "Story" && (
             <TimelineRow
-              months={calendar.months}
-              range={calendar.range}
-              onRangeChange={calendar.setRange}
+              months={
+                activeArea.id === "liwa-crop-monitor" ? months : calendar.months
+              }
+              range={
+                activeArea.id === "liwa-crop-monitor" ? range : calendar.range
+              }
+              onRangeChange={
+                activeArea.id === "liwa-crop-monitor"
+                  ? setRange
+                  : calendar.setRange
+              }
+              cadenceEvents={
+                activeArea.id === "liwa-crop-monitor" &&
+                (activeTab === "Insights" ||
+                  activeTab === "Drift list" ||
+                  activeTab === "Assets")
+                  ? areaEvents
+                  : undefined
+              }
               habitat={
                 activeTab === "Recent events" && activeArea.id === "al-maha"
                   ? {
                       frameCount: HABITAT_FRAMES.length,
                       frameIndex: habitatFrameIndex,
                       onFrameIndexChange: setHabitatFrameIndex,
-                      hiResFrameIndex: hiResDelivered ? HABITAT_FRAMES.length : undefined,
+                      hiResFrameIndex: hiResDelivered
+                        ? HABITAT_FRAMES.length
+                        : undefined,
                       compareIndex: habitatCompareIndex,
                       onCompareToggle: toggleHabitatCompare,
                     }
                   : undefined
               }
-              centerContent={
-                activeArea.id === "liwa-crop-monitor" && activeTab === "Insights" ? (
+              leftContent={
+                activeArea.id === "liwa-crop-monitor" &&
+                (activeTab === "Insights" ||
+                  activeTab === "Drift list" ||
+                  activeTab === "Assets") ? (
                   <div className="text-center">
                     <p className="text-[10px] font-bold text-[#8a8a94] font-['Outfit',sans-serif] uppercase tracking-[0.08em]">
                       Estate dashboard · {activeArea.name}
                     </p>
                     <h1 className="text-[16px] font-extrabold text-[#18181c] font-['Outfit',sans-serif] leading-[20px] mt-[1px]">
                       {CYCLE_LABEL}
-                      <span className="text-[12px] font-normal text-[#5b5b66] ml-[8px]">{CYCLE_WINDOW}</span>
+                      <span className="text-[12px] font-normal text-[#5b5b66] ml-[8px]">
+                        {CYCLE_WINDOW}
+                      </span>
                     </h1>
                   </div>
                 ) : undefined
               }
               rightContent={
-                activeArea.id === "liwa-crop-monitor" && activeTab === "Insights" ? (
+                activeArea.id === "liwa-crop-monitor" &&
+                activeTab === "Insights" ? (
                   <span className="text-[11.5px] text-[#8a8a94] font-['Outfit',sans-serif] whitespace-nowrap">
                     Last scan {LAST_SCAN}
                   </span>
@@ -831,328 +1008,387 @@ export default function App() {
             for one more beat after a click, before `activeTab` itself
             changes. */}
         <div className={isLeaving ? "view-leave" : undefined}>
-        {activeTab === "Maps" ? (
-          <div className="view-enter-soft">
-            <MapsView
-              area={activeArea}
-              layerTime={layerTime}
-              range={range}
-              isTimelinePlaying={isTimelinePlaying}
-              focusTree={focusTree}
-              onFocusArrived={(pos) => {
-                setModalAnchor(pos);
-                if (pendingTreeFocus) setOpenTreeEvent(pendingTreeFocus);
-              }}
-              onFocusMove={setModalAnchor}
-              layerVisibility={layerVisibility}
-              onLayerVisibilityChange={setLayerVisibility}
-              layerOpacity={layerOpacity}
-              onLayerOpacityChange={setLayerOpacity}
-              basemapIndex={basemapIndex}
-              onBasemapIndexChange={setBasemapIndex}
-            />
-          </div>
-        ) : activeTab === "Assets" ? (
-          <div className="view-enter-soft">
-            <AssetsView
-              area={activeArea}
-              events={areaEvents}
-              layerTime={layerTime}
-              range={range}
-              onRangeChange={setRange}
-              isTimelinePlaying={isTimelinePlaying}
-              pendingFilter={pendingFilter}
-              onPendingFilterApplied={() => setPendingFilter(null)}
-              layerVisibility={layerVisibility}
-              onLayerVisibilityChange={setLayerVisibility}
-              layerOpacity={layerOpacity}
-              onLayerOpacityChange={setLayerOpacity}
-              basemapIndex={basemapIndex}
-              onBasemapIndexChange={setBasemapIndex}
-            />
-          </div>
-        ) : activeTab === "Story" ? (
-          <div className="view-enter-soft">
-            <StoryView
-              area={activeArea}
-              range={range}
-              layerTime={layerTime}
-              isTimelinePlaying={isTimelinePlaying}
-              layerVisibility={layerVisibility}
-              onLayerVisibilityChange={setLayerVisibility}
-              layerOpacity={layerOpacity}
-              onLayerOpacityChange={setLayerOpacity}
-              basemapIndex={basemapIndex}
-              onBasemapIndexChange={setBasemapIndex}
-              requestedBlockId={storyNavBlockId}
-              onActiveBlockChange={setStoryBlockId}
-              onClose={() => switchTab("Maps")}
-            />
-          </div>
-        ) : activeTab === "Recent events" ? (
-          // The same feed and selection handler the Insights sidebar's copy
-          // uses (`visibleEvents`/`selectTreeEvent`, computed once above) —
-          // this tab is that feed given the whole page instead of a
-          // 320px-wide sidebar squeezed beside the KPI cards.
-          //
-          // Al Maha additionally gets a pannable/zoomable habitat photo beside
-          // the list, standing in for a basemap the way Abu Al Abyad's own
-          // captures do on its Maps/Assets tabs — this tab has no MapCanvas of
-          // its own, so there was nothing else for a background image to sit
-          // "instead of".
-          <div className="view-enter px-4 pb-6 flex gap-[16px] items-stretch">
-            {activeArea.id === "al-maha" && (
-              <div className={`relative ${CONTENT_HEIGHT_CLASS} min-h-[400px] flex-1 min-w-0`}>
-                <PannableFrameStage
-                  frames={hiResDelivered ? [...HABITAT_FRAMES, HI_RES_HABITAT_FRAME] : HABITAT_FRAMES}
-                  baseSrc={BASEMAP_SRC}
-                  label={
-                    hiResDelivered && habitatFrameIndex === HABITAT_FRAMES.length
-                      ? "Habitat capture — hi-res"
-                      : "Habitat reference capture"
-                  }
-                  className="w-full h-full"
-                  permitAreas={eventsPanel === "permits" ? permitAreas : []}
-                  notificationEvents={visibleEvents.filter((e) => e.habitat)}
-                  onSelectNotification={focusEventInPlace}
-                  frameIndex={habitatFrameIndex}
-                  onFrameIndexChange={setHabitatFrameIndex}
-                  focusSignal={habitatFocusSignal}
-                  focusKey={habitatFocusEvent?.id}
-                  focusEvent={habitatFocusEvent ?? undefined}
-                  hiResFrameIndex={hiResDelivered ? HABITAT_FRAMES.length : undefined}
-                  compareSrc={habitatCompareIndex !== null ? HABITAT_FRAMES[habitatCompareIndex + 1] : undefined}
-                  compareLabel={habitatCompareStats ? `Compared with ${habitatCompareStats.labelB}` : undefined}
-                  differenceSrc={habitatCompareIndex !== null ? publicUrl("/overlays/difference.png") : undefined}
-                />
-                <HabitatLegend
-                  resolutionLabel={
-                    hiResDelivered && habitatFrameIndex === HABITAT_FRAMES.length ? "0.5 × 0.5 m" : "10 × 10 m"
-                  }
-                />
-              </div>
-            )}
-            <div
-              className={`w-full shrink-0 ${activeArea.id === "al-maha" ? "max-w-[480px]" : "flex-1"} ${
-                isCropFarm(activeArea.id) ? `${CONTENT_HEIGHT_CLASS} min-h-[400px]` : ""
-              }`}
-            >
-              {isCropFarm(activeArea.id) ? (
-                // Liwa Oasis reads its notifications as a ranked, filterable
-                // worklist (farm/field ID, violation type, confidence, date,
-                // severity) rather than the scrolling card feed every other
-                // area gets — see InspectionTriageList's own comment.
-                <InspectionTriageList
-                  events={visibleEvents.filter((e) => e.habitat)}
-                  onSelectEvent={focusEventInPlace}
-                />
-              ) : (
-                // Filtered to habitat events only — the migration/species/
-                // ground-condition read, not the ordinary per-tree survey and
-                // decline events every area's Insights sidebar already shows.
-                // See `TreeEvent.habitat`'s own comment in events.ts for
-                // exactly which events that flags.
-                <RecentEventsList
-                  events={visibleEvents.filter((e) => e.habitat)}
-                  delay={CHROME_SEQUENCE_MS}
-                  onSelectEvent={focusEventInPlace}
-                  detailContext={{
-                    projectName: activeArea.projectName,
-                    monthLabels: activeArea.snapshots.map((s) => s.label),
-                    healthData: aggregated.healthData,
-                    healthScoreTrend,
-                    speciesData: aggregated.speciesData,
-                    onHiResDelivered: () => {
-                      setHiResDelivered(true);
-                      setHabitatFrameIndex(HABITAT_FRAMES.length);
-                    },
-                    areaHa: areaHectares(activeArea.id),
-                  }}
-                  compareContext={habitatCompareStats}
-                  selectedPermitId={focusedPermitId}
-                  onSelectPermit={togglePermitFocus}
-                  onPanelChange={setEventsPanel}
-                />
-              )}
+          {activeTab === "Maps" ? (
+            <div className="view-enter-soft">
+              <MapsView
+                area={activeArea}
+                layerTime={layerTime}
+                range={range}
+                isTimelinePlaying={isTimelinePlaying}
+                focusTree={focusTree}
+                onFocusArrived={(pos) => {
+                  setModalAnchor(pos);
+                  if (pendingTreeFocus) setOpenTreeEvent(pendingTreeFocus);
+                }}
+                onFocusMove={setModalAnchor}
+                layerVisibility={layerVisibility}
+                onLayerVisibilityChange={setLayerVisibility}
+                layerOpacity={layerOpacity}
+                onLayerOpacityChange={setLayerOpacity}
+                basemapIndex={basemapIndex}
+                onBasemapIndexChange={setBasemapIndex}
+              />
             </div>
-          </div>
-        ) : activeTab === "Areas" ? (
-          <AreasView area={activeArea} range={calendar.range} />
-        ) : activeArea.id === "liwa-crop-monitor" && (activeTab === "Insights" || activeTab === "Drift list") ? (
-          // Crop Monitor's Insights and Drift list share one live map — per
-          // the Figma "Project Bloom Coastal" dashboard reference — rather
-          // than each tab mounting (and re-mounting, WebGL context and all)
-          // its own. Switching between them only swaps which panel floats
-          // over it; the map itself never unmounts or moves. No generic
-          // tree-health grid, no donut charts, no Recent events sidebar —
-          // those belong to every other area's shared Insights layout below,
-          // not this persona's.
-          <div className="view-enter-soft">
-            <MapsView
-              area={activeArea}
-              layerTime={layerTime}
-              range={range}
-              isTimelinePlaying={isTimelinePlaying}
-              focusTree={focusTree}
-              onFocusArrived={(pos) => {
-                setModalAnchor(pos);
-                if (pendingTreeFocus) setOpenTreeEvent(pendingTreeFocus);
-              }}
-              onFocusMove={setModalAnchor}
-              layerVisibility={layerVisibility}
-              onLayerVisibilityChange={setLayerVisibility}
-              layerOpacity={layerOpacity}
-              onLayerOpacityChange={setLayerOpacity}
-              basemapIndex={basemapIndex}
-              onBasemapIndexChange={setBasemapIndex}
-              chrome={false}
-              // This persona's map is a flat crop-inspection view — no 3D
-              // toggle renders (chrome is false), so letting MapCanvas's own
-              // auto-tilt-on-load effect run anyway left the reader stuck on
-              // a pitched, terrain-displaced map with no button to flatten
-              // it back out.
-              show3DToggle={false}
-              fieldFocusRequest={fieldFocusRequest}
-              highlightFieldLetters={hoveredFieldLetters}
-              driftFieldFocus={selectedDriftField}
-              onOpenFarmDetection={(field) => drillIntoAssets({ kind: "farmDetection", field })}
-              overlay={
-                <CropMonitorOverlay
-                  mode={activeTab === "Drift list" ? "drift" : "insights"}
-                  areaName={activeArea.name}
-                  onFocusField={selectDriftField}
-                  selectedField={selectedDriftField}
-                  onHoverFields={setHoveredFieldLetters}
-                />
-              }
-            />
-          </div>
-        ) : (
-          <div className="view-enter flex gap-[16px] items-stretch px-5 pb-6">
-            {/* Main column */}
-            <div className="flex-1 min-w-0 flex flex-col gap-0">
-              {/* KPI row */}
-              <div className="py-[16px]">
-                <div className="flex gap-[12px] flex-wrap">
-                  <OverallHealthCard
-                    score={aggregated.ecosystemCondition.score}
-                    change={aggregated.ecosystemCondition.change}
-                    delay={CHROME_SEQUENCE_MS}
+          ) : activeTab === "Assets" ? (
+            <div className="view-enter-soft">
+              <AssetsView
+                area={activeArea}
+                events={areaEvents}
+                layerTime={layerTime}
+                range={range}
+                isTimelinePlaying={isTimelinePlaying}
+                pendingFilter={pendingFilter}
+                onPendingFilterApplied={() => setPendingFilter(null)}
+                layerVisibility={layerVisibility}
+                onLayerVisibilityChange={setLayerVisibility}
+                layerOpacity={layerOpacity}
+                onLayerOpacityChange={setLayerOpacity}
+                basemapIndex={basemapIndex}
+                onBasemapIndexChange={setBasemapIndex}
+              />
+            </div>
+          ) : activeTab === "Story" ? (
+            <div className="view-enter-soft">
+              <StoryView
+                area={activeArea}
+                range={range}
+                layerTime={layerTime}
+                isTimelinePlaying={isTimelinePlaying}
+                layerVisibility={layerVisibility}
+                onLayerVisibilityChange={setLayerVisibility}
+                layerOpacity={layerOpacity}
+                onLayerOpacityChange={setLayerOpacity}
+                basemapIndex={basemapIndex}
+                onBasemapIndexChange={setBasemapIndex}
+                requestedBlockId={storyNavBlockId}
+                onActiveBlockChange={setStoryBlockId}
+                onClose={() => switchTab("Maps")}
+              />
+            </div>
+          ) : activeTab === "Recent events" ? (
+            // The same feed and selection handler the Insights sidebar's copy
+            // uses (`visibleEvents`/`selectTreeEvent`, computed once above) —
+            // this tab is that feed given the whole page instead of a
+            // 320px-wide sidebar squeezed beside the KPI cards.
+            //
+            // Al Maha additionally gets a pannable/zoomable habitat photo beside
+            // the list, standing in for a basemap the way Abu Al Abyad's own
+            // captures do on its Maps/Assets tabs — this tab has no MapCanvas of
+            // its own, so there was nothing else for a background image to sit
+            // "instead of".
+            <div className="view-enter px-4 pb-6 flex gap-[16px] items-stretch">
+              {activeArea.id === "al-maha" && (
+                <div
+                  className={`relative ${CONTENT_HEIGHT_CLASS} min-h-[400px] flex-1 min-w-0`}
+                >
+                  <PannableFrameStage
+                    frames={
+                      hiResDelivered
+                        ? [...HABITAT_FRAMES, HI_RES_HABITAT_FRAME]
+                        : HABITAT_FRAMES
+                    }
+                    baseSrc={BASEMAP_SRC}
+                    label={
+                      hiResDelivered &&
+                      habitatFrameIndex === HABITAT_FRAMES.length
+                        ? "Habitat capture — hi-res"
+                        : "Habitat reference capture"
+                    }
+                    className="w-full h-full"
+                    permitAreas={eventsPanel === "permits" ? permitAreas : []}
+                    notificationEvents={visibleEvents.filter((e) => e.habitat)}
+                    onSelectNotification={focusEventInPlace}
+                    frameIndex={habitatFrameIndex}
+                    onFrameIndexChange={setHabitatFrameIndex}
+                    focusSignal={habitatFocusSignal}
+                    focusKey={habitatFocusEvent?.id}
+                    focusEvent={habitatFocusEvent ?? undefined}
+                    hiResFrameIndex={
+                      hiResDelivered ? HABITAT_FRAMES.length : undefined
+                    }
+                    compareSrc={
+                      habitatCompareIndex !== null
+                        ? HABITAT_FRAMES[habitatCompareIndex + 1]
+                        : undefined
+                    }
+                    compareLabel={
+                      habitatCompareStats
+                        ? `Compared with ${habitatCompareStats.labelB}`
+                        : undefined
+                    }
+                    differenceSrc={
+                      habitatCompareIndex !== null
+                        ? publicUrl("/overlays/difference.png")
+                        : undefined
+                    }
                   />
-                  <KpiCard {...kpis[0]} delay={CHROME_SEQUENCE_MS + 60} />
-                  <MetaStatsCard
-                    items={[
-                      { label: "Total area", value: TOTAL_AREA },
-                      { label: "Last activity", value: formatMonthYear(aggregated.lastActivity) },
-                    ]}
-                    delay={CHROME_SEQUENCE_MS + 120}
+                  <HabitatLegend
+                    resolutionLabel={
+                      hiResDelivered &&
+                      habitatFrameIndex === HABITAT_FRAMES.length
+                        ? "0.5 × 0.5 m"
+                        : "10 × 10 m"
+                    }
                   />
-                  <KpiCard {...kpis[1]} delay={CHROME_SEQUENCE_MS + 180} />
-                  <KpiCard {...kpis[2]} delay={CHROME_SEQUENCE_MS + 240} />
                 </div>
+              )}
+              <div
+                className={`w-full shrink-0 ${activeArea.id === "al-maha" ? "max-w-[480px]" : "flex-1"} ${
+                  isCropFarm(activeArea.id)
+                    ? `${CONTENT_HEIGHT_CLASS} min-h-[400px]`
+                    : ""
+                }`}
+              >
+                {isCropFarm(activeArea.id) ? (
+                  // Liwa Oasis reads its notifications as a ranked, filterable
+                  // worklist (farm/field ID, violation type, confidence, date,
+                  // severity) rather than the scrolling card feed every other
+                  // area gets — see InspectionTriageList's own comment.
+                  <InspectionTriageList
+                    events={visibleEvents.filter((e) => e.habitat)}
+                    onSelectEvent={focusEventInPlace}
+                  />
+                ) : (
+                  // Filtered to habitat events only — the migration/species/
+                  // ground-condition read, not the ordinary per-tree survey and
+                  // decline events every area's Insights sidebar already shows.
+                  // See `TreeEvent.habitat`'s own comment in events.ts for
+                  // exactly which events that flags.
+                  <RecentEventsList
+                    events={visibleEvents.filter((e) => e.habitat)}
+                    delay={CHROME_SEQUENCE_MS}
+                    onSelectEvent={focusEventInPlace}
+                    detailContext={{
+                      projectName: activeArea.projectName,
+                      monthLabels: activeArea.snapshots.map((s) => s.label),
+                      healthData: aggregated.healthData,
+                      healthScoreTrend,
+                      speciesData: aggregated.speciesData,
+                      onHiResDelivered: () => {
+                        setHiResDelivered(true);
+                        setHabitatFrameIndex(HABITAT_FRAMES.length);
+                      },
+                      areaHa: areaHectares(activeArea.id),
+                    }}
+                    compareContext={habitatCompareStats}
+                    selectedPermitId={focusedPermitId}
+                    onSelectPermit={togglePermitFocus}
+                    onPanelChange={setEventsPanel}
+                  />
+                )}
               </div>
+            </div>
+          ) : activeTab === "Areas" ? (
+            <AreasView area={activeArea} range={calendar.range} />
+          ) : activeArea.id === "liwa-crop-monitor" &&
+            (activeTab === "Insights" || activeTab === "Drift list") ? (
+            // Crop Monitor's Insights and Drift list share one live map — per
+            // the Figma "Project Bloom Coastal" dashboard reference — rather
+            // than each tab mounting (and re-mounting, WebGL context and all)
+            // its own. Switching between them only swaps which panel floats
+            // over it; the map itself never unmounts or moves. No generic
+            // tree-health grid, no donut charts, no Recent events sidebar —
+            // those belong to every other area's shared Insights layout below,
+            // not this persona's.
+            <div className="view-enter-soft">
+              <MapsView
+                area={activeArea}
+                layerTime={layerTime}
+                range={range}
+                isTimelinePlaying={isTimelinePlaying}
+                focusTree={focusTree}
+                onFocusArrived={(pos) => {
+                  setModalAnchor(pos);
+                  if (pendingTreeFocus) setOpenTreeEvent(pendingTreeFocus);
+                }}
+                onFocusMove={setModalAnchor}
+                layerVisibility={layerVisibility}
+                onLayerVisibilityChange={setLayerVisibility}
+                layerOpacity={layerOpacity}
+                onLayerOpacityChange={setLayerOpacity}
+                basemapIndex={basemapIndex}
+                onBasemapIndexChange={setBasemapIndex}
+                chrome={false}
+                // This persona's map is a flat crop-inspection view — no 3D
+                // toggle renders (chrome is false), so letting MapCanvas's own
+                // auto-tilt-on-load effect run anyway left the reader stuck on
+                // a pitched, terrain-displaced map with no button to flatten
+                // it back out.
+                show3DToggle={false}
+                fieldFocusRequest={fieldFocusRequest}
+                highlightFieldLetters={hoveredFieldLetters}
+                driftFieldFocus={selectedDriftField}
+                onOpenFarmDetection={(field) =>
+                  drillIntoAssets({ kind: "farmDetection", field })
+                }
+                overlay={
+                  <CropMonitorOverlay
+                    mode={activeTab === "Drift list" ? "drift" : "insights"}
+                    areaName={activeArea.name}
+                    onFocusField={selectDriftField}
+                    selectedField={selectedDriftField}
+                    onHoverFields={setHoveredFieldLetters}
+                  />
+                }
+              />
+            </div>
+          ) : (
+            <div className="view-enter flex gap-[16px] items-stretch px-5 pb-6">
+              {/* Main column */}
+              <div className="flex-1 min-w-0 flex flex-col gap-0">
+                {/* KPI row */}
+                <div className="py-[16px]">
+                  <div className="flex gap-[12px] flex-wrap">
+                    <OverallHealthCard
+                      score={aggregated.ecosystemCondition.score}
+                      change={aggregated.ecosystemCondition.change}
+                      delay={CHROME_SEQUENCE_MS}
+                    />
+                    <KpiCard {...kpis[0]} delay={CHROME_SEQUENCE_MS + 60} />
+                    <MetaStatsCard
+                      items={[
+                        { label: "Total area", value: TOTAL_AREA },
+                        {
+                          label: "Last activity",
+                          value: formatMonthYear(aggregated.lastActivity),
+                        },
+                      ]}
+                      delay={CHROME_SEQUENCE_MS + 120}
+                    />
+                    <KpiCard {...kpis[1]} delay={CHROME_SEQUENCE_MS + 180} />
+                    <KpiCard {...kpis[2]} delay={CHROME_SEQUENCE_MS + 240} />
+                  </div>
+                </div>
 
-              <div className="border-t border-[rgba(0,0,0,0.08)] my-2" />
+                <div className="border-t border-[rgba(0,0,0,0.08)] my-2" />
 
-              {/* Donut charts row */}
-              <div className="py-[16px]">
-                <div className="flex gap-[12px] flex-wrap xl:flex-nowrap">
-                  {/* NDVI is derived from canopy cover and the unflagged-tree
+                {/* Donut charts row */}
+                <div className="py-[16px]">
+                  <div className="flex gap-[12px] flex-wrap xl:flex-nowrap">
+                    {/* NDVI is derived from canopy cover and the unflagged-tree
                       fraction (aggregate.ts's ndviFor) — there is no per-tree
                       NDVI to filter on, so drilling in shows the trees that
                       actually drag it down: the three flagged condition
                       bands. */}
-                  <NdviCard
-                    value={aggregated.ndvi.value}
-                    change={ndviChange}
-                    delay={CHROME_SEQUENCE_MS + 100}
-                    onDrillDown={() => drillIntoAssets({ kind: "health", values: FLAGGED_CONDITION_LABELS })}
-                  />
-                  <AnimatedDonutChart
-                    data={aggregated.healthData}
-                    title="Tree count - by health condition"
-                    delay={CHROME_SEQUENCE_MS + 180}
-                    onSliceClick={(name) => drillIntoAssets({ kind: "health", values: [name] })}
-                  />
-                  <AnimatedDonutChart
-                    data={aggregated.diameterData}
-                    title="Tree count - by diameter"
-                    delay={CHROME_SEQUENCE_MS + 260}
-                    // The slice name IS the record's `diameter` string
-                    // ("L (>5 m)") — see aggregate.ts's DIAMETER_META.
-                    onSliceClick={(name) => drillIntoAssets({ kind: "diameter", value: name })}
-                  />
-                  <AnimatedDonutChart
-                    data={aggregated.heightData}
-                    title="Tree count - by height"
-                    delay={CHROME_SEQUENCE_MS + 340}
-                    // HEIGHT_META labels its slices "1"/"2"/"3" for keys
-                    // h1/h2/h3, so the key is the label with an `h` in front.
-                    onSliceClick={(name) => drillIntoAssets({ kind: "height", value: `h${name}` })}
-                  />
+                    <NdviCard
+                      value={aggregated.ndvi.value}
+                      change={ndviChange}
+                      delay={CHROME_SEQUENCE_MS + 100}
+                      onDrillDown={() =>
+                        drillIntoAssets({
+                          kind: "health",
+                          values: FLAGGED_CONDITION_LABELS,
+                        })
+                      }
+                    />
+                    <AnimatedDonutChart
+                      data={aggregated.healthData}
+                      title="Tree count - by health condition"
+                      delay={CHROME_SEQUENCE_MS + 180}
+                      onSliceClick={(name) =>
+                        drillIntoAssets({ kind: "health", values: [name] })
+                      }
+                    />
+                    <AnimatedDonutChart
+                      data={aggregated.diameterData}
+                      title="Tree count - by diameter"
+                      delay={CHROME_SEQUENCE_MS + 260}
+                      // The slice name IS the record's `diameter` string
+                      // ("L (>5 m)") — see aggregate.ts's DIAMETER_META.
+                      onSliceClick={(name) =>
+                        drillIntoAssets({ kind: "diameter", value: name })
+                      }
+                    />
+                    <AnimatedDonutChart
+                      data={aggregated.heightData}
+                      title="Tree count - by height"
+                      delay={CHROME_SEQUENCE_MS + 340}
+                      // HEIGHT_META labels its slices "1"/"2"/"3" for keys
+                      // h1/h2/h3, so the key is the label with an `h` in front.
+                      onSliceClick={(name) =>
+                        drillIntoAssets({ kind: "height", value: `h${name}` })
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div className="border-t border-[rgba(0,0,0,0.08)] my-2" />
+                <div className="border-t border-[rgba(0,0,0,0.08)] my-2" />
 
-              {/* Analysis widgets — chart trio, then the three derived stat
+                {/* Analysis widgets — chart trio, then the three derived stat
                   cards. NDVI, Tree Survey and the blended condition score are
                   all derived from this same dataset (see aggregate.ts's
                   ndviFor/healthScoreFor/ecosystemConditionFor) rather than
                   measured, since no spectral imagery backs this mock plot. */}
-              <div className="py-[16px]">
-                <div className="flex gap-[12px] flex-wrap xl:flex-nowrap">
-                  <CrownRadiusTreemap
-                    data={aggregated.crownData}
-                    delay={CHROME_SEQUENCE_MS + 420}
-                    trend={crownMatureChange}
-                    onSelectBucket={(i) => drillIntoAssets({ kind: "crown", value: `b${i + 1}` })}
-                  />
-                  <HealthPerSpeciesChart series={aggregated.scatterSeries} delay={CHROME_SEQUENCE_MS + 500} zMax={scatterZMax} />
+                <div className="py-[16px]">
+                  <div className="flex gap-[12px] flex-wrap xl:flex-nowrap">
+                    <CrownRadiusTreemap
+                      data={aggregated.crownData}
+                      delay={CHROME_SEQUENCE_MS + 420}
+                      trend={crownMatureChange}
+                      onSelectBucket={(i) =>
+                        drillIntoAssets({ kind: "crown", value: `b${i + 1}` })
+                      }
+                    />
+                    <HealthPerSpeciesChart
+                      series={aggregated.scatterSeries}
+                      delay={CHROME_SEQUENCE_MS + 500}
+                      zMax={scatterZMax}
+                    />
+                  </div>
+                </div>
+
+                <div className="py-[16px]">
+                  <div className="flex gap-[12px] flex-wrap lg:flex-nowrap">
+                    <AnimatedDonutChart
+                      data={aggregated.speciesData}
+                      title="Tree count - by species"
+                      delay={CHROME_SEQUENCE_MS + 660}
+                      legendColumns={2}
+                    />
+                    <TreeSurveyCard
+                      totalSurveyed={aggregated.totalTrees.value}
+                      change={treesChange}
+                      healthData={aggregated.healthData}
+                      delay={CHROME_SEQUENCE_MS + 700}
+                    />
+                    <EcosystemConditionCard
+                      condition={aggregated.ecosystemCondition}
+                      delay={CHROME_SEQUENCE_MS + 740}
+                    />
+                    <HealthScoreTrendChart
+                      data={healthScoreTrend}
+                      delay={CHROME_SEQUENCE_MS + 780}
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="py-[16px]">
-                <div className="flex gap-[12px] flex-wrap lg:flex-nowrap">
-                  <AnimatedDonutChart
-                    data={aggregated.speciesData}
-                    title="Tree count - by species"
-                    delay={CHROME_SEQUENCE_MS + 660}
-                    legendColumns={2}
-                  />
-                  <TreeSurveyCard
-                    totalSurveyed={aggregated.totalTrees.value}
-                    change={treesChange}
-                    healthData={aggregated.healthData}
-                    delay={CHROME_SEQUENCE_MS + 700}
-                  />
-                  <EcosystemConditionCard condition={aggregated.ecosystemCondition} delay={CHROME_SEQUENCE_MS + 740} />
-                  <HealthScoreTrendChart data={healthScoreTrend} delay={CHROME_SEQUENCE_MS + 780} />
-                </div>
-              </div>
-            </div>
-
-            {/* Resize handle */}
-            <div
-              role="separator"
-              aria-label="Resize sidebar"
-              aria-orientation="vertical"
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                sidebarResizeStartRef.current = { x: e.clientX, width: sidebarWidth };
-                setResizingSidebar(true);
-              }}
-              className="w-[10px] shrink-0 cursor-col-resize flex items-center justify-center group"
-              style={{ touchAction: "none" }}
-            >
+              {/* Resize handle */}
               <div
-                className={`w-[2px] h-[32px] rounded-full transition-colors ${
-                  resizingSidebar ? "bg-[#096151]" : "bg-[#dedee3] group-hover:bg-[#096151]"
-                }`}
-              />
-            </div>
+                role="separator"
+                aria-label="Resize sidebar"
+                aria-orientation="vertical"
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  sidebarResizeStartRef.current = {
+                    x: e.clientX,
+                    width: sidebarWidth,
+                  };
+                  setResizingSidebar(true);
+                }}
+                className="w-[10px] shrink-0 cursor-col-resize flex items-center justify-center group"
+                style={{ touchAction: "none" }}
+              >
+                <div
+                  className={`w-[2px] h-[32px] rounded-full transition-colors ${
+                    resizingSidebar
+                      ? "bg-[#096151]"
+                      : "bg-[#dedee3] group-hover:bg-[#096151]"
+                  }`}
+                />
+              </div>
 
-            {/* Right sidebar — sticky under the timeline header, the same
+              {/* Right sidebar — sticky under the timeline header, the same
                 document-level-scroll precedent as that header's own `sticky
                 top-0` (see its comment above): no `overflow` property on any
                 ancestor between this and the scrolling root, or that ancestor
@@ -1169,18 +1405,27 @@ export default function App() {
                 from `position: static`. `self-start` lets it size to its
                 actual content (RecentEventsList's own bounded height) instead,
                 which is what gives `sticky` somewhere to hold. */}
-            <div
-              className={`sticky top-[144px] self-start shrink-0 flex flex-col py-[10px] min-h-0 ${resizingSidebar ? "select-none" : ""}`}
-              style={{ width: sidebarWidth }}
-            >
-              <RecentEventsList events={visibleEvents} delay={CHROME_SEQUENCE_MS + 580} onSelectEvent={selectTreeEvent} />
+              <div
+                className={`sticky top-[144px] self-start shrink-0 flex flex-col py-[10px] min-h-0 ${resizingSidebar ? "select-none" : ""}`}
+                style={{ width: sidebarWidth }}
+              >
+                <RecentEventsList
+                  events={visibleEvents}
+                  delay={CHROME_SEQUENCE_MS + 580}
+                  onSelectEvent={selectTreeEvent}
+                />
+              </div>
             </div>
-          </div>
-        )}
+          )}
         </div>
       </div>
 
       <AIAssistant
+        // The four WHAT_IT_CHANGES tips (story.ts) are all watering-schedule/
+        // canopy-decline pitches for a real forest survey — Mangroves has
+        // neither behind it (see areas.ts), so the tip would be quoting a
+        // capability this area's demo data doesn't back.
+        proactiveTip={!hasMangroveForest(activeArea.id)}
         onShowHiRes={() => {
           switchTab("Recent events");
           if (hiResDelivered) setHabitatFrameIndex(HABITAT_FRAMES.length);

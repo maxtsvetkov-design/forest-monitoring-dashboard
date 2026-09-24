@@ -15,6 +15,17 @@ import type { DateRange } from "../data/aggregate";
 import { areaHasOwnImagery, isInsideQuad, plotWidthMeters, pointInQuad, type MapOverlay } from "../data/overlays";
 import { loadCanopies, MAX_CROWN_RADIUS_M, type Canopy } from "../data/canopies";
 import TreeCanopyLayer from "../map/TreeCanopyLayer";
+import MangroveLayer, { type GrowSchedule } from "../map/MangroveLayer";
+import {
+  INTRO_GROW_DELAY_MS,
+  INTRO_GROW_SWEEP_MS,
+  INTRO_MAX_PITCH,
+  INTRO_MAX_ZOOM,
+  planMangroveIntro,
+  playMangroveIntro,
+  type CameraPose,
+} from "../map/mangroveIntro";
+import { generateMangroves, hasMangroveForest, type Mangrove } from "../data/mangroves";
 import PinAreaLayer from "../map/PinAreaLayer";
 import FieldBorderLayer from "../map/FieldBorderLayer";
 import { driftStatus, FIELD_DRIFT } from "../data/fieldDrift";
@@ -44,7 +55,7 @@ import type { TriageEntry } from "../data/inspectionTriage";
 import { isCropFarm } from "../data/events";
 import type { FindingOutcome } from "../data/findingOutcome";
 import TreeTwinCard from "./TreeTwinCard";
-import { CONDITION_KEYS, CONDITION_LABEL, conditionLabelFor, type ConditionKey } from "../data/taxonomy";
+import { CONDITION_COLOR, CONDITION_KEYS, CONDITION_LABEL, conditionLabelFor, type ConditionKey } from "../data/taxonomy";
 import { smootherstep, underlayOpacity } from "../lib/crossfade";
 import { fieldBoundsUV, fieldCenterUV, fieldLetterForU, FIELD_LETTERS } from "../data/farmFields";
 import { SEVERITY_STYLE } from "../data/severity";
@@ -72,6 +83,11 @@ const BASEMAPS: { label: string; style: string | maplibregl.StyleSpecification }
             "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
           ],
           tileSize: 256,
+          // Real imagery stops at z19 across the UAE; z20 comes back as a grey
+          // "Map data not yet available" placeholder, which a pitched camera
+          // at plot zoom requests for its whole near field. Capping the source
+          // makes MapLibre overzoom the real z19 tile instead.
+          maxzoom: 19,
           attribution: "Esri, Maxar, Earthstar Geographics",
         },
       },
@@ -364,6 +380,20 @@ const DYING_GLOW_LAYER_ID = "area-dying-tree-glow-layer";
 // drawing into the map's own GL context, so it shares the camera and the depth
 // buffer with everything above. See src/map/TreeCanopyLayer.ts.
 const TREES_3D_LAYER_ID = "area-trees-3d";
+// The Mangroves project's own 3D stand — the only content layer that area
+// draws (see `hasMangroveForest`). src/map/MangroveLayer.ts.
+const MANGROVES_3D_LAYER_ID = "area-mangroves-3d";
+// A pale haze to match the greyed basemap — only ever seen when the camera
+// tilts past ~60°, which the intro's low pass does.
+const MANGROVE_SKY: NonNullable<Parameters<maplibregl.Map["setSky"]>[0]> = {
+  "sky-color": "#dfe5ec",
+  "horizon-color": "#eef0f1",
+  "fog-color": "#eceeef",
+  "sky-horizon-blend": 0.7,
+  "horizon-fog-blend": 0.85,
+  "fog-ground-blend": 0.92,
+  "atmosphere-blend": 0,
+};
 const DYING_GLOW_MAX_WIDTH = 700;
 const DYING_GLOW_MIN_OPACITY = 0.3;
 const DYING_GLOW_MAX_OPACITY = 0.85;
@@ -884,6 +914,131 @@ function PinTooltip({
   );
 }
 
+/**
+ * Recolours the loaded vector style to a light grey and drops its 3D building
+ * extrusions — the Mangroves map's backdrop. Every colour literal inside each
+ * paint property (including ones nested in zoom interpolations) is mapped to
+ * its own luma, lifted toward white, so roads/water/land keep their contrast
+ * but lose their hue. Not a CSS `grayscale()` on the container: that would
+ * grey the health-coloured trees drawn into the same canvas.
+ */
+const COLOR_PAINT_KEYS = ["background-color", "fill-color", "fill-outline-color", "line-color", "text-color", "text-halo-color", "icon-color", "circle-color", "circle-stroke-color"];
+function greyOutVectorStyle(map: maplibregl.Map) {
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return;
+  const grey = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(grey);
+    if (typeof value !== "string" || !/^(#|rgb|hsl)/i.test(value)) return value;
+    ctx.fillStyle = "#000";
+    ctx.fillStyle = value;
+    const norm = ctx.fillStyle as string;
+    const m = norm.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i) ?? null;
+    const rgba = norm.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
+    const [r, g, b, a] = m
+      ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), 1]
+      : rgba
+        ? [Number(rgba[1]), Number(rgba[2]), Number(rgba[3]), rgba[4] === undefined ? 1 : Number(rgba[4])]
+        : [128, 128, 128, 1];
+    const l = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const lifted = Math.round(l * 0.7 + 255 * 0.3);
+    return `rgba(${lifted},${lifted},${lifted},${a})`;
+  };
+  for (const layer of map.getStyle()?.layers ?? []) {
+    if (layer.type === "fill-extrusion" || layer.type === "raster" || layer.type === "hillshade") {
+      map.setLayoutProperty(layer.id, "visibility", "none");
+      continue;
+    }
+    // Only keys the layer's own style actually sets: asking MapLibre for a
+    // paint key its type doesn't have (fill-color on a line) throws.
+    const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+    for (const key of COLOR_PAINT_KEYS) {
+      if (paint[key] !== undefined) map.setPaintProperty(layer.id, key as never, grey(paint[key]) as never);
+    }
+  }
+}
+
+/**
+ * Hover readout for one Mangroves tree, anchored on its crown top.
+ *
+ * `pointer-events-none`, so it can never become the thing under the cursor
+ * and flicker the hover it reports. Position is not React's: MapCanvas writes
+ * `left`/`top` onto `elRef` every map frame (eased, so it glides between
+ * trees), and the ref callback only seeds it once on mount — a React-managed
+ * `style.left` would snap it back on every re-render. The card lingers for
+ * its exit animation after `hover` clears, and cross-fades its content (keyed
+ * on the tree) when the hover moves to a neighbour.
+ */
+const MANGROVE_TIP_EXIT_MS = 190;
+function MangroveTooltip({
+  hover,
+  elRef,
+}: {
+  hover: { tree: Mangrove; x: number; y: number } | null;
+  elRef: React.MutableRefObject<HTMLDivElement | null>;
+}) {
+  const [shown, setShown] = useState(hover);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (hover) {
+      setShown(hover);
+      setLeaving(false);
+      return;
+    }
+    setLeaving(true);
+    const id = window.setTimeout(() => {
+      setShown(null);
+      setLeaving(false);
+    }, MANGROVE_TIP_EXIT_MS);
+    return () => window.clearTimeout(id);
+  }, [hover]);
+  if (!shown) return null;
+  const { tree } = shown;
+  const color = CONDITION_COLOR[tree.condition];
+  return createPortal(
+    <div
+      ref={(el) => {
+        elRef.current = el;
+        if (el && !el.style.left) {
+          el.style.left = `${shown.x}px`;
+          el.style.top = `${shown.y}px`;
+        }
+      }}
+      className={`mangrove-tip pointer-events-none fixed z-[1000] -translate-x-1/2 -translate-y-full mt-[-14px] bg-white/95 backdrop-blur-[6px] rounded-[14px] px-3 py-[9px] min-w-[168px] shadow-[0px_6px_16px_-4px_rgba(0,0,0,0.14),0px_12px_32px_-8px_rgba(0,0,0,0.16)] font-['Outfit',sans-serif] ${leaving ? "mangrove-tip--leaving" : ""}`}
+      data-mangrove-tooltip={tree.id}
+    >
+      <div key={tree.id} className="mangrove-tip__body">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[13px] font-bold text-[#18181c] tabular-nums">{tree.id}</span>
+          <span className="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#8a8a94]">Mangrove</span>
+        </div>
+        <div className="flex items-center gap-[6px] mt-[3px]">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+          <span className="text-[12px] font-semibold" style={{ color }}>
+            {CONDITION_LABEL[tree.condition]}
+          </span>
+        </div>
+        {/* Where this tree sits on the five-step scale, worst → best. */}
+        <div className="flex gap-[3px] mt-[7px]" aria-hidden="true">
+          {CONDITION_KEYS.map((key) => (
+            <span
+              key={key}
+              className="h-[4px] flex-1 rounded-full transition-opacity duration-(--dur-3)"
+              style={{ background: CONDITION_COLOR[key], opacity: key === tree.condition ? 1 : 0.2 }}
+            />
+          ))}
+        </div>
+        <div className="text-[11px] text-[#5b5b66] mt-[7px] tabular-nums">
+          Height <strong className="text-[#18181c]">{tree.heightM.toFixed(1)} m</strong>
+          <span className="text-[#c4c4cc] mx-[5px]">·</span>
+          Crown Ø <strong className="text-[#18181c]">{(tree.crownRadiusM * 2).toFixed(1)} m</strong>
+        </div>
+      </div>
+      <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-[5px] w-[10px] h-[10px] bg-white/95 rotate-45 rounded-[2px]" />
+    </div>,
+    document.body,
+  );
+}
+
 export default function MapCanvas({
   center,
   zoom = 12.5,
@@ -931,7 +1086,10 @@ export default function MapCanvas({
   driftFieldFocus,
   onOpenFarmDetection,
   showFarmDetectionPins = false,
-  layerPanelInitiallyCollapsed = false,
+  // Collapsed by default on Mangroves: the panel has nothing to offer there
+  // but the basemap chip (see `showSurveyLayers`), so a reader opening this
+  // area shouldn't have to close an empty-looking panel themselves first.
+  layerPanelInitiallyCollapsed = hasMangroveForest(areaId),
   timelineOverlay,
   resetViewRequest,
 }: {
@@ -1142,6 +1300,9 @@ export default function MapCanvas({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  // For handlers registered once at map creation that must see the current area.
+  const areaIdRef = useRef(areaId);
+  areaIdRef.current = areaId;
   // The full-timeline pin pool, built once per overlay/area. A ref rather than
   // state: rebuilding it doesn't need a re-render, only the separate
   // range-visibility effect (below) reading it does.
@@ -1561,13 +1722,23 @@ export default function MapCanvas({
           zoom,
           pitch: 0,
           bearing: 0,
-          canvasContextAttributes: { preserveDrawingBuffer: true },
+          // MSAA for the Mangroves map: 600 modelled crowns and their thin
+          // prop roots alias badly without it. Chosen at context creation, so
+          // it applies to a map *created* on this area.
+          canvasContextAttributes: { preserveDrawingBuffer: true, antialias: hasMangroveForest(areaId) },
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't create a WebGL context, which the map requires.");
         return;
       }
       mapRef.current = map;
+
+      // Greyed on `style.load` itself, not later from the Mangroves effect:
+      // that runs a few frames after the style is up, which flashed the
+      // stock blue-and-beige basemap before the grey arrived.
+      map.on("style.load", () => {
+        if (hasMangroveForest(areaIdRef.current)) greyOutVectorStyle(map);
+      });
 
       // Dev-only handle so the map can be driven and measured from the console
       // or a browser-automation check (pin placement, camera state, tile loads).
@@ -2194,6 +2365,212 @@ export default function MapCanvas({
     treeLayerRef.current?.setShadowMode(shadowMode);
   }, [shadowMode]);
 
+  // Mangroves only: the area's entire map content (see `hasMangroveForest`).
+  // Generated inside the overlay quad — still populated with its raster
+  // hidden — so the stand fills exactly the footprint the camera fits to.
+  // Keyed on the corners' JSON rather than `overlay`, since a view may hand
+  // over a fresh overlay object every render and this must not regenerate
+  // (or re-add the layer) on each one.
+  const mangroveTrees = useMemo(
+    () => (hasMangroveForest(areaId) && overlay ? generateMangroves(overlay.coordinates) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [areaId, overlayCornersKey],
+  );
+  const basemapIndexRef = useRef(basemapIndex);
+  basemapIndexRef.current = basemapIndex;
+  // Which tree the tooltip describes — React state only changes when the
+  // hovered *tree* changes. Its position is written straight to the element
+  // every map frame (`mangroveTipRef`), so a tooltip gliding after a swaying
+  // crown never re-renders this whole component 60 times a second.
+  const [mangroveHover, setMangroveHover] = useState<{ tree: Mangrove; x: number; y: number } | null>(null);
+  const mangroveTipRef = useRef<HTMLDivElement | null>(null);
+  const mangroveLayerRef = useRef<MangroveLayer | null>(null);
+  // The intro's sprouting cue outlives any one layer instance: a basemap swap
+  // mid-flight re-creates the layer, which must keep growing on the same cue.
+  const mangroveGrowRef = useRef<GrowSchedule | null>(null);
+  const mangroveIntroRunningRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !mangroveTrees) return;
+
+    // Re-added on `styleVersion` for the same reason as the canopy layer
+    // above: a basemap swap discards custom layers.
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const layer = new MangroveLayer({
+      id: MANGROVES_3D_LAYER_ID,
+      trees: mangroveTrees,
+      reducedMotion,
+      grow: mangroveGrowRef.current ?? undefined,
+    });
+    map.addLayer(layer);
+    mangroveLayerRef.current = layer;
+
+    // The stand sits on a flat, grey vector basemap: no raster imagery, no
+    // DEM relief, no extruded buildings — the trees are the only 3D thing.
+    // The sky matches: a pale haze, so the horizon the intro's low pass
+    // reveals reads as the same grey world rather than a blue style default.
+    if (basemapIndexRef.current !== 0) setBasemapIndex(0);
+    greyOutVectorStyle(map);
+    map.setSky(MANGROVE_SKY);
+    const flatten = () => {
+      if (map.getTerrain()) map.setTerrain(null);
+    };
+    flatten();
+    map.on("terrain", flatten);
+
+    // One pick per animation frame at most, however fast mousemove fires;
+    // and re-picked on camera moves, since a scroll-zoom under a still
+    // pointer changes which tree is under it without any mousemove at all.
+    let frame = 0;
+    let pointer: { x: number; y: number } | null = null;
+    let hoveredIndex: number | null = null;
+    const anchor = (index: number) => {
+      const a = layer.anchorOf(index);
+      if (!a) return null;
+      const rect = map.getCanvas().getBoundingClientRect();
+      return { x: rect.left + a.x, y: rect.top + a.y };
+    };
+    const resolve = () => {
+      frame = 0;
+      if (!pointer || mangroveIntroRunningRef.current) return;
+      const index = layer.pick(pointer.x, pointer.y);
+      if (index === hoveredIndex) return;
+      hoveredIndex = index;
+      layer.setHovered(index);
+      map.getCanvas().style.cursor = index === null ? "" : "pointer";
+      const at = index === null ? null : anchor(index);
+      setMangroveHover(index === null || !at ? null : { tree: mangroveTrees[index], ...at });
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(resolve);
+    };
+    const clear = () => {
+      pointer = null;
+      hoveredIndex = null;
+      layer.setHovered(null);
+      map.getCanvas().style.cursor = "";
+      setMangroveHover(null);
+    };
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      // No hover affordance under a pan in progress.
+      if (e.originalEvent.buttons !== 0) return clear();
+      pointer = { x: e.point.x, y: e.point.y };
+      schedule();
+    };
+    const onCameraMove = () => {
+      if (pointer) schedule();
+    };
+
+    // The tooltip rides the crown top, eased (τ 70 ms) so moving between
+    // neighbouring trees glides it across instead of teleporting it.
+    let tipEl: HTMLDivElement | null = null;
+    let tipPos = { x: 0, y: 0 };
+    let tipAt = 0;
+    const onRender = () => {
+      const el = mangroveTipRef.current;
+      if (!el || hoveredIndex === null) return;
+      const target = anchor(hoveredIndex);
+      if (!target) return;
+      const now = performance.now();
+      if (el !== tipEl || reducedMotion) {
+        tipEl = el;
+        tipPos = { ...target };
+      } else {
+        const k = 1 - Math.exp(-(now - tipAt) / 70);
+        tipPos.x += (target.x - tipPos.x) * k;
+        tipPos.y += (target.y - tipPos.y) * k;
+      }
+      tipAt = now;
+      el.style.left = `${tipPos.x}px`;
+      el.style.top = `${tipPos.y}px`;
+    };
+
+    map.on("mousemove", onMove);
+    map.on("mouseout", clear);
+    map.on("dragstart", clear);
+    map.on("move", onCameraMove);
+    map.on("render", onRender);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      map.off("mousemove", onMove);
+      map.off("mouseout", clear);
+      map.off("dragstart", clear);
+      map.off("move", onCameraMove);
+      map.off("render", onRender);
+      map.off("terrain", flatten);
+      mangroveLayerRef.current = null;
+      setMangroveHover(null);
+      const m = mapRef.current;
+      if (!m) return;
+      m.getCanvas().style.cursor = "";
+      if (m.getLayer(MANGROVES_3D_LAYER_ID)) m.removeLayer(MANGROVES_3D_LAYER_ID);
+    };
+  }, [loaded, mangroveTrees, styleVersion]);
+
+  // The low pass flies at ~20 m with the camera nearly level, which MapLibre's
+  // default 60° / z22 limits would clamp flat — raised for this area only,
+  // and left raised after the intro so a reader can get that close too.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !mangroveTrees) return;
+    const prevPitch = map.getMaxPitch();
+    const prevZoom = map.getMaxZoom();
+    map.setMaxPitch(INTRO_MAX_PITCH);
+    map.setMaxZoom(INTRO_MAX_ZOOM);
+    return () => {
+      const m = mapRef.current;
+      if (!m) return;
+      m.setMaxPitch(prevPitch);
+      m.setMaxZoom(prevZoom);
+    };
+  }, [loaded, mangroveTrees]);
+
+  // The opening flight — Mangroves' replacement for the passive auto-fit below
+  // (which skips this area), ending on the same overview that fit would have
+  // produced. Played once per mount; `introDone` is only set when the flight
+  // actually finishes or the reader interrupts it, never by an effect cleanup,
+  // so StrictMode's dev-time double-invoke restarts it rather than eating it.
+  const mangroveIntroDoneRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !overlay || !overlayReady || !mangroveTrees || storyView || focusTree) return;
+    if (mangroveIntroDoneRef.current) return;
+
+    const fit = map.cameraForBounds(boundsOf(overlay.coordinates), { padding: 40 });
+    if (!fit?.center) return;
+    const c = maplibregl.LngLat.convert(fit.center);
+    const final: CameraPose = { center: [c.lng, c.lat], zoom: fit.zoom ?? 18, pitch: 60, bearing: -20 };
+    setIs3D(true);
+
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      mangroveIntroDoneRef.current = true;
+      map.jumpTo(final);
+      return;
+    }
+
+    const setGrow = (grow: GrowSchedule) => {
+      mangroveGrowRef.current = grow;
+      mangroveLayerRef.current?.setGrow(grow);
+    };
+    setGrow({ startAt: performance.now() + INTRO_GROW_DELAY_MS, sweepMs: INTRO_GROW_SWEEP_MS });
+    mangroveIntroRunningRef.current = true;
+    let disposed = false;
+    const cancel = playMangroveIntro(map, planMangroveIntro(map, mangroveTrees, final), (interrupted) => {
+      mangroveIntroRunningRef.current = false;
+      if (disposed) return;
+      mangroveIntroDoneRef.current = true;
+      // Cut short: stand every tree up now rather than leaving the reader in
+      // a half-sprouted stand the camera was meant to reveal.
+      if (interrupted) setGrow({ startAt: performance.now() - INTRO_GROW_SWEEP_MS * 2, sweepMs: INTRO_GROW_SWEEP_MS });
+    });
+    return () => {
+      disposed = true;
+      cancel();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, overlayReady, mangroveTrees, storyView, focusTree]);
+
   // Re-applies the height offset immediately when the slider moves, rather
   // than waiting for the next camera `move` event to pick up the new value —
   // dragging the slider at a fixed camera position would otherwise show no
@@ -2700,7 +3077,8 @@ export default function MapCanvas({
   // landed second silently won. The story's first block is an explicit request
   // for a specific frame, so it takes precedence over the passive default.
   useEffect(() => {
-    if (!show3DToggle || !overlay || !overlayReady || focusTree || storyView || skipAutoFit) return;
+    // Mangroves opens with its own flight instead, ending on this same frame.
+    if (!show3DToggle || !overlay || !overlayReady || focusTree || storyView || skipAutoFit || hasMangroveForest(areaId)) return;
 
     const map = mapRef.current;
     if (!map) return;
@@ -2896,8 +3274,10 @@ export default function MapCanvas({
     // so on an area carrying its own captures they describe nothing on the
     // ground being shown — for a coastal frame, trees in open water. The
     // area's tallies stay real; only the pretence of knowing where each tree
-    // stands is withheld.
-    if (!map || !loaded || !overlay || !overlayReady || areaHasOwnImagery(areaId ?? "")) {
+    // stands is withheld. The Mangroves stand is its own 3D layer instead —
+    // placeholder population pins over it would be a second, contradictory
+    // set of trees.
+    if (!map || !loaded || !overlay || !overlayReady || areaHasOwnImagery(areaId ?? "") || hasMangroveForest(areaId)) {
       pinsRef.current = [];
       return;
     }
@@ -4136,6 +4516,8 @@ export default function MapCanvas({
         />
       )}
 
+      {!inspectTree && !error && <MangroveTooltip hover={mangroveHover} elRef={mangroveTipRef} />}
+
       {error && <StatusOverlay title="Map failed to load" message={error} diagnostics={diagnostics} />}
       {!error && collapsed && (
         <StatusOverlay
@@ -4196,6 +4578,7 @@ export default function MapCanvas({
           }}
           showGenerative={!!generativeOverlay}
           showDyingTrees={!!dyingTreeOverlay}
+          showSurveyLayers={!hasMangroveForest(areaId)}
           treeCount={canopies.length}
           opacity={layerOpacity}
           onOpacityChange={(id, value) => setLayerOpacity((o) => ({ ...o, [id]: value }))}

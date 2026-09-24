@@ -66,7 +66,10 @@ const MORPH_TRANSITION = "transform 780ms var(--ease-lux)";
  *  on Insights: the summary bar stayed visibly readable when it should have
  *  been fully offscreen. 110% clears the whole wrapper regardless of how
  *  wide its child actually renders. */
-function morphLayerStyle(active: boolean, side: "left" | "right"): CSSProperties {
+function morphLayerStyle(
+  active: boolean,
+  side: "left" | "right",
+): CSSProperties {
   const sign = side === "left" ? -1 : 1;
   return {
     transform: active
@@ -119,14 +122,22 @@ export default function CropMonitorOverlay({
         style={morphLayerStyle(mode === "insights", "left")}
         aria-hidden={mode !== "insights"}
       >
-        <EstateDashboard onHoverFields={onHoverFields} />
+        <EstateDashboard
+          onHoverFields={onHoverFields}
+          onFocusField={onFocusField}
+          selectedField={selectedField}
+        />
       </div>
       <div
         className="absolute inset-0 pointer-events-none"
         style={morphLayerStyle(mode === "drift", "right")}
         aria-hidden={mode !== "drift"}
       >
-        <DriftListView areaName={areaName} onSelectField={onFocusField} selectedField={selectedField} />
+        <DriftListView
+          areaName={areaName}
+          onSelectField={onFocusField}
+          selectedField={selectedField}
+        />
       </div>
     </div>
   );

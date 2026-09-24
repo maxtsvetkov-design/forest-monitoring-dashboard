@@ -26,7 +26,11 @@ import CompareAreasTable from "./CompareAreasTable";
 import PermitsList from "./PermitsList";
 import DashboardView from "./DashboardView";
 import HabitatChangeView from "./HabitatChangeView";
-import { DEFAULT_LAYER_OPACITY, DEFAULT_LAYER_VISIBILITY, type ContentLayerId } from "./LayerPanel";
+import {
+  DEFAULT_LAYER_OPACITY,
+  DEFAULT_LAYER_VISIBILITY,
+  type ContentLayerId,
+} from "./LayerPanel";
 import {
   areaDyingTreeOverlays,
   areaGenerativeOverlays,
@@ -43,9 +47,7 @@ import RecentEventsList from "./RecentEventsList";
 import { generateEvents, type TreeEvent } from "../data/events";
 import { CONDITIONS, isFlaggedCondition } from "../data/taxonomy";
 import DenseCoverageModal from "./DenseCoverageModal";
-import TierComparisonModal from "./TierComparisonModal";
 import SlotScore from "./SlotScore";
-import { CURRENT_TIER_INDEX, TIERS } from "../data/tiers";
 import { useDragResize } from "../hooks/useDragResize";
 
 /**
@@ -62,7 +64,15 @@ import { useDragResize } from "../hooks/useDragResize";
 
 /** Tabs across the top. Only "All areas" is this screen; the rest hand off to
  * the dashboard, which owns its own equivalents of these views. */
-const TOP_TABS = ["Dashboard", "All areas", "Table", "Alert", "Compare", "Permits", "Story"] as const;
+const TOP_TABS = [
+  "Dashboard",
+  "All areas",
+  "Table",
+  "Alert",
+  "Compare",
+  "Permits",
+  "Story",
+] as const;
 
 type TopTab = (typeof TOP_TABS)[number];
 
@@ -121,7 +131,15 @@ const SYNC_PILL_EXIT_MS = 480;
  *  the analysis panel on the habitat-change screen. */
 const EVENTS_BAR_WIDTH = 372;
 
-function SidebarButton({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {
+function SidebarButton({
+  src,
+  alt,
+  onClick,
+}: {
+  src: string;
+  alt: string;
+  onClick?: () => void;
+}) {
   return (
     <button
       type="button"
@@ -129,7 +147,11 @@ function SidebarButton({ src, alt, onClick }: { src: string; alt: string; onClic
       aria-label={alt}
       className="u-press flex items-center justify-center p-[8px] rounded-[10px] hover:bg-white/10 cursor-pointer"
     >
-      <img src={src} alt="" className="w-4 h-4 brightness-0 invert opacity-80" />
+      <img
+        src={src}
+        alt=""
+        className="w-4 h-4 brightness-0 invert opacity-80"
+      />
     </button>
   );
 }
@@ -140,8 +162,12 @@ function SidebarButton({ src, alt, onClick }: { src: string; alt: string; onClic
 // rather than living in a second hand-maintained list that could drift from
 // `data/areas.ts`. Every other project's rows are untouched.
 const CUSTOM_PROJECT_NAME = "Al Maha Forest (Pilot)";
-const MONITORED_AREA_ROWS = AREA_ROWS.filter((row) => row.projectName !== CUSTOM_PROJECT_NAME);
-const CUSTOM_AREA_ROWS = AREA_ROWS.filter((row) => row.projectName === CUSTOM_PROJECT_NAME);
+const MONITORED_AREA_ROWS = AREA_ROWS.filter(
+  (row) => row.projectName !== CUSTOM_PROJECT_NAME,
+);
+const CUSTOM_AREA_ROWS = AREA_ROWS.filter(
+  (row) => row.projectName === CUSTOM_PROJECT_NAME,
+);
 
 /**
  * A schematic stand-in for Liwa Oasis Farms' two real sites, drawn over the
@@ -208,7 +234,11 @@ interface MonitoredFarmSquare {
  *  this scale to treat as one number — the same simplification a schematic
  *  diagram's own ground offsets can afford that a real survey couldn't. */
 const METERS_PER_DEG_LAT = 111_320;
-function offsetLngLat([lng, lat]: [number, number], eastM: number, northM: number): [number, number] {
+function offsetLngLat(
+  [lng, lat]: [number, number],
+  eastM: number,
+  northM: number,
+): [number, number] {
   const dLat = northM / METERS_PER_DEG_LAT;
   const dLng = eastM / (METERS_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180));
   return [lng + dLng, lat + dLat];
@@ -216,7 +246,10 @@ function offsetLngLat([lng, lat]: [number, number], eastM: number, northM: numbe
 
 /** A square's own four real ground corners, top-left → clockwise — the same
  *  order `pointInQuad`/`MapOverlay` already use everywhere else in this app. */
-function squareCorners(center: [number, number], halfSizeM: number): MapOverlay["coordinates"] {
+function squareCorners(
+  center: [number, number],
+  halfSizeM: number,
+): MapOverlay["coordinates"] {
   return [
     offsetLngLat(center, -halfSizeM, halfSizeM),
     offsetLngLat(center, halfSizeM, halfSizeM),
@@ -228,7 +261,9 @@ function squareCorners(center: [number, number], halfSizeM: number): MapOverlay[
 // The ground point the schematic squares are built around — real Liwa desert
 // coordinates near the two Liwa Oasis Farms sites. Each square's own corners
 // offset from this, not the point itself drawn on the map.
-const MONITORED_SQUARES_ANCHOR: [number, number] = [54.71565298969728, 24.514783923162966];
+const MONITORED_SQUARES_ANCHOR: [number, number] = [
+  54.71565298969728, 24.514783923162966,
+];
 
 /** Fractional (u, v) placements for a handful of notices inside a square,
  *  fed straight into `pointInQuad` — real ground points, not screen ones. */
@@ -263,8 +298,19 @@ const MONITORED_FARM_SQUARES: MonitoredFarmSquare[] = (() => {
     halfSizeM: number,
     limit: number,
   ): MonitoredFarmSquare {
-    const corners = squareCorners(offsetLngLat(MONITORED_SQUARES_ANCHOR, centerOffsetM[0], centerOffsetM[1]), halfSizeM);
-    const flaggedEvents = generateEvents(areaOverlays[area.id], area.snapshots, area.id)
+    const corners = squareCorners(
+      offsetLngLat(
+        MONITORED_SQUARES_ANCHOR,
+        centerOffsetM[0],
+        centerOffsetM[1],
+      ),
+      halfSizeM,
+    );
+    const flaggedEvents = generateEvents(
+      areaOverlays[area.id],
+      area.snapshots,
+      area.id,
+    )
       .filter((e) => isFlaggedCondition(e.severity))
       .slice(0, limit);
     const notices: MonitoredFarmNotice[] = flaggedEvents.map((e, i) => ({
@@ -273,8 +319,17 @@ const MONITORED_FARM_SQUARES: MonitoredFarmSquare[] = (() => {
       flagged: e.severity === "defoliated",
       point: pointInQuad(corners, NOTICE_SCATTER[i][0], NOTICE_SCATTER[i][1]),
     }));
-    const criticalRatio = notices.length === 0 ? 0 : notices.filter((n) => n.flagged).length / notices.length;
-    return { areaId: area.id, label: area.name, corners, notices, criticalRatio };
+    const criticalRatio =
+      notices.length === 0
+        ? 0
+        : notices.filter((n) => n.flagged).length / notices.length;
+    return {
+      areaId: area.id,
+      label: area.name,
+      corners,
+      notices,
+      criticalRatio,
+    };
   }
 
   // Centres ~250-350m apart from the shared anchor — far enough that two
@@ -292,10 +347,11 @@ const MONITORED_FARM_SQUARES: MonitoredFarmSquare[] = (() => {
  *  `MONITORED_FARM_SQUARES` lists them, so the live-projected pixels
  *  (`monitoredSquaresPoints`) can be sliced back apart by each square's own
  *  known corner/notice counts (see the render below). */
-const MONITORED_SQUARES_FOCUS_POINTS: [number, number][] = MONITORED_FARM_SQUARES.flatMap((sq) => [
-  ...sq.corners,
-  ...sq.notices.map((n) => n.point),
-]);
+const MONITORED_SQUARES_FOCUS_POINTS: [number, number][] =
+  MONITORED_FARM_SQUARES.flatMap((sq) => [
+    ...sq.corners,
+    ...sq.notices.map((n) => n.point),
+  ]);
 
 // The project sidebar's own width — draggable from its right edge, same
 // pattern as the site table's own column grips (see AreaTable).
@@ -324,7 +380,10 @@ export default function LandingScreen({
   // tab. Held as the thing being analysed rather than a boolean, so the screen
   // knows which area's imagery and which project's name to carry — and closing
   // it returns to the table underneath with its own state untouched.
-  const [habitatChange, setHabitatChange] = useState<{ areaId: string; projectName: string } | null>(null);
+  const [habitatChange, setHabitatChange] = useState<{
+    areaId: string;
+    projectName: string;
+  } | null>(null);
 
   // The map behind this screen is the pilot plot's own imagery; the sidebar
   // lists every area the project covers.
@@ -356,14 +415,17 @@ export default function LandingScreen({
   // dashboard's map gives it (MapCanvas wires that up regardless of which
   // screen is hosting it), so this overview is a real look at the plot
   // rather than a picture of one.
-  const [layerVisibility, setLayerVisibility] = useState<Record<ContentLayerId, boolean>>(DEFAULT_LAYER_VISIBILITY);
-  const [layerOpacity, setLayerOpacity] = useState<Record<ContentLayerId, number>>(DEFAULT_LAYER_OPACITY);
+  const [layerVisibility, setLayerVisibility] = useState<
+    Record<ContentLayerId, boolean>
+  >(DEFAULT_LAYER_VISIBILITY);
+  const [layerOpacity, setLayerOpacity] = useState<
+    Record<ContentLayerId, number>
+  >(DEFAULT_LAYER_OPACITY);
   const [basemapIndex, setBasemapIndex] = useState(SATELLITE_BASEMAP_INDEX);
 
   // The future view reuses the same "Denser time coverage" modal the
   // dashboard's timeline opens.
   const [futureOpen, setFutureOpen] = useState(false);
-  const [tierModalOpen, setTierModalOpen] = useState(false);
 
   // The "Mapping updated" pill — appears on arrival, then dismisses itself:
   // a live-pipeline notice reads as stale reassurance if it just sits there
@@ -375,15 +437,24 @@ export default function LandingScreen({
   const [syncPillLeaving, setSyncPillLeaving] = useState(false);
   useEffect(() => {
     if (syncPillLeaving) return;
-    const t = window.setTimeout(() => setSyncPillLeaving(true), SYNC_PILL_VISIBLE_MS);
+    const t = window.setTimeout(
+      () => setSyncPillLeaving(true),
+      SYNC_PILL_VISIBLE_MS,
+    );
     return () => window.clearTimeout(t);
   }, [syncPillLeaving]);
   useEffect(() => {
     if (!syncPillLeaving) return;
-    const t = window.setTimeout(() => setSyncPillVisible(false), SYNC_PILL_EXIT_MS);
+    const t = window.setTimeout(
+      () => setSyncPillVisible(false),
+      SYNC_PILL_EXIT_MS,
+    );
     return () => window.clearTimeout(t);
   }, [syncPillLeaving]);
-  const heroPreviewImages = useMemo(() => getTimelapseImages(heroArea.id), [heroArea]);
+  const heroPreviewImages = useMemo(
+    () => getTimelapseImages(heroArea.id),
+    [heroArea],
+  );
 
   /**
    * The events feed for the plot this screen's map is showing.
@@ -400,7 +471,12 @@ export default function LandingScreen({
    * ground the sidebar's own hero card and the bottom capture strip describe.
    */
   const heroEvents = useMemo(
-    () => generateEvents(areaOverlays[heroArea.id], heroArea.snapshots, heroArea.id),
+    () =>
+      generateEvents(
+        areaOverlays[heroArea.id],
+        heroArea.snapshots,
+        heroArea.id,
+      ),
     [heroArea],
   );
 
@@ -418,7 +494,10 @@ export default function LandingScreen({
     const flaggedKeys = CONDITIONS.filter((c) => c.flagged).map((c) => c.key);
     const flagged = areas.reduce((total, area) => {
       const latest = area.snapshots[area.snapshots.length - 1];
-      return total + flaggedKeys.reduce((sum, key) => sum + latest.healthCounts[key], 0);
+      return (
+        total +
+        flaggedKeys.reduce((sum, key) => sum + latest.healthCounts[key], 0)
+      );
     }, 0);
     return {
       title: "Monitoring areas to identify dying trees",
@@ -426,7 +505,11 @@ export default function LandingScreen({
       // Straight into the screen that answers the question the notice raises.
       // Same state the site table's own row sets, so both routes open the same
       // drill-down on the same plot rather than two similar-looking paths.
-      onSelect: () => setHabitatChange({ areaId: heroArea.id, projectName: heroArea.projectName }),
+      onSelect: () =>
+        setHabitatChange({
+          areaId: heroArea.id,
+          projectName: heroArea.projectName,
+        }),
     };
   }, [heroArea]);
 
@@ -438,9 +521,16 @@ export default function LandingScreen({
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   const pastBtnRef = useRef<HTMLButtonElement>(null);
   const futureBtnRef = useRef<HTMLButtonElement>(null);
-  const [overlayQuad, setOverlayQuad] = useState<{ x: number; y: number }[] | null>(null);
-  const [monitoredSquaresPoints, setMonitoredSquaresPoints] = useState<{ x: number; y: number }[] | null>(null);
-  const [boundaryPoint, setBoundaryPoint] = useState<{ x: number; y: number } | null>(null);
+  const [overlayQuad, setOverlayQuad] = useState<
+    { x: number; y: number }[] | null
+  >(null);
+  const [monitoredSquaresPoints, setMonitoredSquaresPoints] = useState<
+    { x: number; y: number }[] | null
+  >(null);
+  const [boundaryPoint, setBoundaryPoint] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [parallax, setParallax] = useState({ x: 0, y: 0 });
   const [lineEndpoints, setLineEndpoints] = useState<{
     past: { x: number; y: number };
@@ -486,7 +576,12 @@ export default function LandingScreen({
       const futureRect = futureBtnRef.current?.getBoundingClientRect();
       const pad = 40;
       const overButtons = [pastRect, futureRect].some(
-        (r) => r && mx >= r.left - pad && mx <= r.right + pad && my >= r.top - pad && my <= r.bottom + pad,
+        (r) =>
+          r &&
+          mx >= r.left - pad &&
+          mx <= r.right + pad &&
+          my >= r.top - pad &&
+          my <= r.bottom + pad,
       );
 
       if (!overlayQuad || overlayQuad.length < 2) {
@@ -541,7 +636,10 @@ export default function LandingScreen({
     if (!past || !future) return;
     setLineEndpoints({
       past: { x: past.left + past.width / 2, y: past.top + past.height / 2 },
-      future: { x: future.left + future.width / 2, y: future.top + future.height / 2 },
+      future: {
+        x: future.left + future.width / 2,
+        y: future.top + future.height / 2,
+      },
     });
   }, [boundaryPoint, parallax]);
 
@@ -563,8 +661,10 @@ export default function LandingScreen({
   // the dashboard reports one click later.
   const heroScore = useMemo(
     () =>
-      aggregateRange(heroArea.snapshots, { startIndex: 0, endIndex: heroArea.snapshots.length - 1 }).ecosystemCondition
-        .score,
+      aggregateRange(heroArea.snapshots, {
+        startIndex: 0,
+        endIndex: heroArea.snapshots.length - 1,
+      }).ecosystemCondition.score,
     [heroArea],
   );
   // Same 75-point cutoff OverallHealthCard uses for its own green/amber
@@ -613,7 +713,9 @@ export default function LandingScreen({
           // makes "fixed over this location" true rather than the anchor
           // sitting off past the edge of whatever Al Maha's own view
           // happened to be showing.
-          center={scope === "monitored" ? MONITORED_SQUARES_ANCHOR : heroArea.center}
+          center={
+            scope === "monitored" ? MONITORED_SQUARES_ANCHOR : heroArea.center
+          }
           zoom={scope === "monitored" ? 14.6 : 13.4}
           overlay={areaOverlays[heroArea.id]}
           generativeOverlay={areaGenerativeOverlays[heroArea.id]}
@@ -639,7 +741,10 @@ export default function LandingScreen({
             each button — makes the buttons read as tethered to the plot's
             own outline rather than floating independently over the map. */}
         {boundaryPoint && lineEndpoints && (
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-[9]" aria-hidden="true">
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none z-[9]"
+            aria-hidden="true"
+          >
             <line
               x1={boundaryPoint.x}
               y1={boundaryPoint.y}
@@ -660,7 +765,13 @@ export default function LandingScreen({
               strokeDasharray="4 4"
               className="tether-line"
             />
-            <circle cx={boundaryPoint.x} cy={boundaryPoint.y} r="5" fill="#096151" className="tether-dot" />
+            <circle
+              cx={boundaryPoint.x}
+              cy={boundaryPoint.y}
+              r="5"
+              fill="#096151"
+              className="tether-dot"
+            />
             <circle
               cx={boundaryPoint.x}
               cy={boundaryPoint.y}
@@ -684,13 +795,22 @@ export default function LandingScreen({
             by the exact counts that array was built from, so a mismatch
             there can only come from editing one without the other. */}
         {scope === "monitored" && monitoredSquaresPoints && (
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-[8]" aria-hidden="true">
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none z-[8]"
+            aria-hidden="true"
+          >
             {(() => {
               let cursor = 0;
               return MONITORED_FARM_SQUARES.map((square) => {
-                const cornerPx = monitoredSquaresPoints.slice(cursor, cursor + square.corners.length);
+                const cornerPx = monitoredSquaresPoints.slice(
+                  cursor,
+                  cursor + square.corners.length,
+                );
                 cursor += square.corners.length;
-                const noticePx = monitoredSquaresPoints.slice(cursor, cursor + square.notices.length);
+                const noticePx = monitoredSquaresPoints.slice(
+                  cursor,
+                  cursor + square.notices.length,
+                );
                 cursor += square.notices.length;
                 if (cornerPx.length < square.corners.length) return null;
 
@@ -716,7 +836,13 @@ export default function LandingScreen({
                       strokeWidth={2}
                       strokeDasharray="6 4"
                     />
-                    <foreignObject x={labelX} y={labelY - 26} width={260} height={22} style={{ overflow: "visible" }}>
+                    <foreignObject
+                      x={labelX}
+                      y={labelY - 26}
+                      width={260}
+                      height={22}
+                      style={{ overflow: "visible" }}
+                    >
                       <span className="inline-block text-[11px] font-semibold text-white bg-[#18181c]/85 px-[8px] py-[3px] rounded-[6px] whitespace-nowrap font-['Outfit',sans-serif]">
                         {square.label}
                       </span>
@@ -783,8 +909,6 @@ export default function LandingScreen({
         />
       )}
 
-      {tierModalOpen && <TierComparisonModal onClose={() => setTierModalOpen(false)} />}
-
       {/* Left icon rail — the same one the dashboard carries, so the two
           screens read as one product rather than a splash page and an app. */}
       <aside className="absolute top-0 left-0 h-full w-[48px] z-10 flex flex-col items-center justify-between py-3 px-2 bg-[#f6f6f8] border-r border-[rgba(0,0,0,0.06)]">
@@ -798,23 +922,37 @@ export default function LandingScreen({
             <img src={imgUnion} alt="" className="w-full h-full" />
           </button>
           <div className="w-full border-t border-[#dedee3] my-1" />
-          <div className="animate-fade-in-left" style={{ animationDelay: "50ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "50ms" }}
+          >
             <IconBtn src={imgIcHome} alt="home" active />
           </div>
-          <div className="animate-fade-in-left" style={{ animationDelay: "80ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "80ms" }}
+          >
             <IconBtn src={imgIcBook} alt="book" />
           </div>
-          <div className="animate-fade-in-left" style={{ animationDelay: "110ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "110ms" }}
+          >
             <IconBtn src={imgIcHelpCircle} alt="help" />
           </div>
           <div className="w-full border-t border-[#dedee3] my-1" />
         </div>
         <div className="flex flex-col items-center gap-2">
-          <div className="animate-fade-in-left" style={{ animationDelay: "140ms" }}>
+          <div
+            className="animate-fade-in-left"
+            style={{ animationDelay: "140ms" }}
+          >
             <IconBtn src={imgBell04} alt="notifications" />
           </div>
           <div className="w-8 h-8 rounded-full bg-[#ebece7] border border-[#dedee3] flex items-center justify-center">
-            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">AZ</span>
+            <span className="text-[11px] font-medium text-[#464650] font-['Outfit',sans-serif]">
+              AZ
+            </span>
           </div>
         </div>
       </aside>
@@ -846,7 +984,9 @@ export default function LandingScreen({
           </span>
           <span className="text-[12px] font-medium text-[#464650] font-['Outfit',sans-serif] whitespace-nowrap">
             Mapping updated:{" "}
-            <span className="font-semibold text-[#18181c]">{DEMO_LAST_SYNC_HOURS_AGO} hours ago</span>
+            <span className="font-semibold text-[#18181c]">
+              {DEMO_LAST_SYNC_HOURS_AGO} hours ago
+            </span>
           </span>
         </div>
       )}
@@ -862,20 +1002,24 @@ export default function LandingScreen({
               was the sole way into the app. They are real controls now: two
               switch this screen's own section, three enter the app. */}
           <div className="flex gap-[2px] bg-[#f6f6f8] border border-[#dedee3] rounded-[10px] p-[2px]">
-          {TOP_TABS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => selectTopTab(tab)}
-              aria-pressed={activeTab === tab}
-              title={TAB_DESTINATION[tab] ? `Open ${tab} in the project workspace` : undefined}
-              className={`u-press px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
-                activeTab === tab
-                  ? "bg-[#096151] border border-[#dedee3] text-[#ebece7] shadow-[0px_4px_4px_rgba(0,0,0,0.08),0px_2px_2px_rgba(0,0,0,0.04)]"
-                  : "text-[#464650] hover:text-[#18181c]"
-              }`}
-            >
-              {tab}
+            {TOP_TABS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => selectTopTab(tab)}
+                aria-pressed={activeTab === tab}
+                title={
+                  TAB_DESTINATION[tab]
+                    ? `Open ${tab} in the project workspace`
+                    : undefined
+                }
+                className={`u-press px-[12px] py-[6px] rounded-[10px] text-[14px] font-medium font-['Outfit',sans-serif] leading-[22px] whitespace-nowrap cursor-pointer transition-colors duration-150 ${
+                  activeTab === tab
+                    ? "bg-[#096151] border border-[#dedee3] text-[#ebece7] shadow-[0px_4px_4px_rgba(0,0,0,0.08),0px_2px_2px_rgba(0,0,0,0.04)]"
+                    : "text-[#464650] hover:text-[#18181c]"
+                }`}
+              >
+                {tab}
               </button>
             ))}
           </div>
@@ -903,7 +1047,9 @@ export default function LandingScreen({
               // A KPI drill-down crosses the landing gate: it opens the
               // workspace on Assets with the filter already applied, which is
               // where the per-tree answer to "show me these" actually lives.
-              onDrillIntoAssets={(filter) => onEnter(dashboardAreaId, { tab: "Assets", filter })}
+              onDrillIntoAssets={(filter) =>
+                onEnter(dashboardAreaId, { tab: "Assets", filter })
+              }
               // The site table re-scopes this preview in place — paging
               // through rows is "show me that area's numbers", not "leave
               // this screen".
@@ -926,7 +1072,9 @@ export default function LandingScreen({
           <div className="pt-[64px]">
             <AreaTableView
               onSelectSite={onEnter}
-              onOpenHabitatChange={(areaId, projectName) => setHabitatChange({ areaId, projectName })}
+              onOpenHabitatChange={(areaId, projectName) =>
+                setHabitatChange({ areaId, projectName })
+              }
             />
           </div>
         </div>
@@ -943,7 +1091,9 @@ export default function LandingScreen({
               events={heroEvents}
               delay={0}
               defaultImportantOnly
-              onSelectEvent={(event) => onEnter(heroArea.id, { tab: "Maps", treeEvent: event })}
+              onSelectEvent={(event) =>
+                onEnter(heroArea.id, { tab: "Maps", treeEvent: event })
+              }
               notice={monitoringNotice}
             />
           </div>
@@ -992,7 +1142,9 @@ export default function LandingScreen({
           edge below. */}
       <div
         className={`absolute left-[65px] top-[8px] z-20 bg-[#ebece7] rounded-[16px] p-[12px] shadow-[0px_6px_20px_-4px_rgba(0,0,0,0.1),0px_4px_12px_-2px_rgba(0,0,0,0.08)] animate-fade-in-left ${
-          sidebarResize.dragging ? "" : "transition-[width] duration-(--dur-4) ease-(--ease-lux)"
+          sidebarResize.dragging
+            ? ""
+            : "transition-[width] duration-(--dur-4) ease-(--ease-lux)"
         }`}
         style={{ width: sidebarWidth }}
       >
@@ -1005,8 +1157,10 @@ export default function LandingScreen({
           onPointerDown={(e) => sidebarResize.begin(e, sidebarWidth)}
           onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
           onKeyDown={(e) => {
-            if (e.key === "ArrowLeft") setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, w - 16));
-            else if (e.key === "ArrowRight") setSidebarWidth((w) => Math.min(SIDEBAR_MAX_WIDTH, w + 16));
+            if (e.key === "ArrowLeft")
+              setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, w - 16));
+            else if (e.key === "ArrowRight")
+              setSidebarWidth((w) => Math.min(SIDEBAR_MAX_WIDTH, w + 16));
             else return;
             e.preventDefault();
           }}
@@ -1023,14 +1177,6 @@ export default function LandingScreen({
           </button>
           <span className="flex-1 min-w-0 flex items-center gap-[6px] text-[14px] font-medium text-[#18181c] font-['Outfit',sans-serif] leading-[22px]">
             <span className="truncate">{heroArea.projectName}</span>
-            <button
-              type="button"
-              onClick={() => setTierModalOpen(true)}
-              className="u-press shrink-0 px-[7px] py-[2px] rounded-full border border-[#dedee3] bg-white text-[#5b5b66] text-[10px] font-medium font-['Outfit',sans-serif] whitespace-nowrap cursor-pointer hover:border-[#096151] hover:text-[#096151]"
-              title="Unlock more with a higher tier"
-            >
-              {TIERS[CURRENT_TIER_INDEX].label.toLowerCase()}
-            </button>
           </span>
           <button
             type="button"
@@ -1040,8 +1186,6 @@ export default function LandingScreen({
             <img src={imgIcCollapse} alt="" className="w-4 h-4" />
           </button>
         </div>
-
-
 
         {/* Product banner — the entry point into the dashboard, and the only
             click that opens it (area rows below are informational only).
@@ -1128,7 +1272,6 @@ export default function LandingScreen({
 
       {/* AOI label over the plot the map is centred on. */}
 
-
       {/* Recent events — the same feed and the same list component the
           workspace dashboard carries in its own right sidebar, mirrored onto
           the opposite edge from the project sidebar.
@@ -1155,7 +1298,9 @@ export default function LandingScreen({
             // look at that tree. It crosses the landing gate on the way, so
             // the destination is handed over rather than acted on — see
             // App.tsx's onEnter.
-            onSelectEvent={(event) => onEnter(heroArea.id, { tab: "Maps", treeEvent: event })}
+            onSelectEvent={(event) =>
+              onEnter(heroArea.id, { tab: "Maps", treeEvent: event })
+            }
             notice={monitoringNotice}
           />
         </div>
@@ -1166,7 +1311,9 @@ export default function LandingScreen({
           to the same edge, and the strip is the smaller of the two. */}
       <div
         className="absolute top-1/2 -translate-y-1/2 z-20"
-        style={{ right: activeTab === "All areas" ? EVENTS_BAR_WIDTH + 24 : 12 }}
+        style={{
+          right: activeTab === "All areas" ? EVENTS_BAR_WIDTH + 24 : 12,
+        }}
       >
         <div
           className="flex flex-col items-center gap-[8px] animate-fade-in-right"
@@ -1179,7 +1326,9 @@ export default function LandingScreen({
             <SidebarButton src={imgIcPolygon} alt="Draw area" />
           </div>
           <div className="w-[52px] h-[52px] rounded-full bg-[#18181c]/85 border-2 border-[#f0edea] flex items-center justify-center shadow-[0px_1.8px_0.8px_rgba(0,0,0,0.04)]">
-            <span className="text-[10px] font-bold text-white font-['Outfit',sans-serif] leading-[16px]">3D</span>
+            <span className="text-[10px] font-bold text-white font-['Outfit',sans-serif] leading-[16px]">
+              3D
+            </span>
           </div>
         </div>
       </div>
@@ -1187,17 +1336,21 @@ export default function LandingScreen({
       {/* Capture metadata strip, pinned to the bottom edge like the design. */}
       <div className="absolute bottom-0 left-1/2 -translate-x-1/2 z-20 animate-fade-in">
         <div className="flex items-center gap-[8px] px-[8px] py-[2px] rounded-tl-[4px] rounded-tr-[4px] bg-[#18181c]">
-        <span className="flex items-center gap-[2px] text-[10px] font-['Outfit',sans-serif] leading-[16px] text-white whitespace-nowrap">
-          Satellite image date:
-          <span className="text-white">{heroArea.snapshots[heroArea.snapshots.length - 1].label}</span>
-        </span>
-        <span className="w-px h-[16px] bg-white/25" />
-        <span className="flex items-center gap-[2px] text-[10px] font-['Outfit',sans-serif] leading-[16px] text-white whitespace-nowrap">
-          Displayed area:
-          <span>{heroHectares} ha</span>
-        </span>
+          <span className="flex items-center gap-[2px] text-[10px] font-['Outfit',sans-serif] leading-[16px] text-white whitespace-nowrap">
+            Satellite image date:
+            <span className="text-white">
+              {heroArea.snapshots[heroArea.snapshots.length - 1].label}
+            </span>
+          </span>
           <span className="w-px h-[16px] bg-white/25" />
-          <span className="text-[10px] text-white font-['Outfit',sans-serif] leading-[16px]">4km</span>
+          <span className="flex items-center gap-[2px] text-[10px] font-['Outfit',sans-serif] leading-[16px] text-white whitespace-nowrap">
+            Displayed area:
+            <span>{heroHectares} ha</span>
+          </span>
+          <span className="w-px h-[16px] bg-white/25" />
+          <span className="text-[10px] text-white font-['Outfit',sans-serif] leading-[16px]">
+            4km
+          </span>
         </div>
       </div>
 

@@ -2,7 +2,6 @@ import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { GLASS } from "./glassPanel";
 import { CORRECTION_THRESHOLD_PCT, driftStatus, DRIFT_STATUS_COLOR, FIELD_DRIFT } from "../data/fieldDrift";
 import { CropHiResConfirmation, FIELD_ROWS, type FieldRow } from "./EstateDashboard";
-import { imgIcTrendingUp } from "../assets";
 import { FARM_DETECTIONS } from "../data/farmDetections";
 import FarmDetectionModal from "./FarmDetectionModal";
 
@@ -224,13 +223,6 @@ const DRIFT_ROWS: DriftRow[] = [
   },
 ];
 
-/** The one finding per field worth surfacing before anything else on the
- *  card — a single, specific compliance signal (a structure count changing,
- *  cultivated area crossing a threshold) rather than the general drift
- *  narrative the badge/notes already cover. Deliberately rendered as its own
- *  loud banner (see `ProblemBanner`) instead of folded into the panel or a
- *  `ListRow`, since this is the one fact a reviewer scanning the list should
- *  never have to hunt for. */
 /** A minimal inline-SVG line, no axes/tooltip/legend — this app's own
  *  convention for a compact chart (see DESIGN-SYSTEM.md §5: "bespoke
  *  visualisations ... are hand-rolled SVG"), not `recharts`, which needs a

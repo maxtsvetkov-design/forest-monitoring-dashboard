@@ -3484,3 +3484,43 @@ html {
     stroke-dashoffset: 0;
   }
 }
+
+/* Mangroves hover readout (MangroveTooltip in MapCanvas). Enters with a small
+   lift and scale from its anchor, leaves the same way. `backwards`, not
+   `both`: a forwards fill would pin `opacity: 1`/`transform: none` and
+   outrank `--leaving`, so the exit would never play. `transform` only —
+   Tailwind v4's -translate-* utilities use the separate `translate`
+   property, so the centring and this motion compose instead of fighting. */
+.mangrove-tip {
+  transform-origin: 50% 100%;
+  animation: mangroveTipIn 280ms var(--ease-lux) backwards;
+  transition:
+    opacity 190ms ease,
+    transform 190ms var(--ease-lux);
+}
+.mangrove-tip--leaving {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+}
+.mangrove-tip__body {
+  animation: mangroveTipBody 220ms ease backwards;
+}
+@keyframes mangroveTipIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+}
+@keyframes mangroveTipBody {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mangrove-tip,
+  .mangrove-tip__body {
+    animation: none;
+    transition: none;
+  }
+}

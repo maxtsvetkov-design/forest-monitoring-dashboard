@@ -1,10 +1,15 @@
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { imgIcTrendingUp } from "../assets";
 import { areas } from "../data/areas";
 import { aggregateRange } from "../data/aggregate";
 import type { CategoryDatum } from "../data/types";
 import { areaHectares } from "../data/overlays";
-import { CURRENT_TIER_INDEX, TIERS } from "../data/tiers";
 import { useDragResize } from "../hooks/useDragResize";
 import { SortArrow, type SortDir } from "./SortArrow";
 
@@ -33,11 +38,18 @@ import { SortArrow, type SortDir } from "./SortArrow";
  * but only the ones this dataset actually backs. That mockup's own "Saplings"
  * and "Hive capacity" columns, and its per-site "Control"/"Seeding" type, have
  * no equivalent here (no age-class or apiary data, and every site sits on the
- * one contract-wide tier — see TierTag) and are not ported; a fabricated
- * number is worse than a missing column.
+ * one contract-wide service level) and are not ported; a fabricated number
+ * is worse than a missing column.
  */
 
-type SortableKey = "hectares" | "activity" | "health" | "tier" | "trees" | "insights" | "ndvi" | "since";
+type SortableKey =
+  | "hectares"
+  | "activity"
+  | "health"
+  | "trees"
+  | "insights"
+  | "ndvi"
+  | "since";
 
 export interface SiteRowData {
   id: string;
@@ -86,12 +98,18 @@ export const AREA_ROWS: SiteRowData[] = areas.map((area) => {
   const first = area.snapshots[0] ?? last;
   const prev = area.snapshots[area.snapshots.length - 2] ?? last;
   const trendPct = prev.canopyCoverPct
-    ? Math.round(((last.canopyCoverPct - prev.canopyCoverPct) / prev.canopyCoverPct) * 100)
+    ? Math.round(
+        ((last.canopyCoverPct - prev.canopyCoverPct) / prev.canopyCoverPct) *
+          100,
+      )
     : 0;
   // One aggregate over the area's full range feeds every derived column below
   // — the table's health chip, tree count and NDVI can never disagree with
   // what the dashboard reports one click later, because it's the same call.
-  const agg = aggregateRange(area.snapshots, { startIndex: 0, endIndex: area.snapshots.length - 1 });
+  const agg = aggregateRange(area.snapshots, {
+    startIndex: 0,
+    endIndex: area.snapshots.length - 1,
+  });
   return {
     id: area.id,
     name: area.name,
@@ -200,8 +218,20 @@ interface SiteColumn {
 }
 
 const SITE_COLUMNS: SiteColumn[] = [
-  { key: "name", label: "Project & site", sortValue: (r) => r.name, defaultDir: "asc" },
-  { key: "hectares", label: "Ha", defaultWidth: 32, minWidth: 30, sortValue: (r) => r.hectares, defaultDir: "desc" },
+  {
+    key: "name",
+    label: "Project & site",
+    sortValue: (r) => r.name,
+    defaultDir: "asc",
+  },
+  {
+    key: "hectares",
+    label: "Ha",
+    defaultWidth: 32,
+    minWidth: 30,
+    sortValue: (r) => r.hectares,
+    defaultDir: "desc",
+  },
   {
     key: "trees",
     label: "Estimated trees",
@@ -265,30 +295,31 @@ const SITE_COLUMNS: SiteColumn[] = [
     defaultDir: "asc",
     fullOnly: true,
   },
-  {
-    key: "tier",
-    label: "Tier",
-    defaultWidth: 56,
-    minWidth: 48,
-    // Every row currently shares the same tier (see TierTag) — this sorts
-    // without error, it just can't reorder anything yet.
-    sortValue: () => 0,
-    defaultDir: "asc",
-  },
 ];
 
-const RESIZABLE_COLUMNS = SITE_COLUMNS.filter((c): c is SiteColumn & { defaultWidth: number; minWidth: number } =>
-  Boolean(c.defaultWidth),
+const RESIZABLE_COLUMNS = SITE_COLUMNS.filter(
+  (c): c is SiteColumn & { defaultWidth: number; minWidth: number } =>
+    Boolean(c.defaultWidth),
 );
 
 /** The effective default/min width for a resizable column, given which
  * variant it's rendering in — see SiteColumn's compactDefaultWidth/
  * compactMinWidth fields. */
-function defaultWidthFor(column: SiteColumn & { defaultWidth: number }, variant: "compact" | "full"): number {
-  return variant === "compact" && column.compactDefaultWidth !== undefined ? column.compactDefaultWidth : column.defaultWidth;
+function defaultWidthFor(
+  column: SiteColumn & { defaultWidth: number },
+  variant: "compact" | "full",
+): number {
+  return variant === "compact" && column.compactDefaultWidth !== undefined
+    ? column.compactDefaultWidth
+    : column.defaultWidth;
 }
-function minWidthFor(column: SiteColumn & { minWidth: number }, variant: "compact" | "full"): number {
-  return variant === "compact" && column.compactMinWidth !== undefined ? column.compactMinWidth : column.minWidth;
+function minWidthFor(
+  column: SiteColumn & { minWidth: number },
+  variant: "compact" | "full",
+): number {
+  return variant === "compact" && column.compactMinWidth !== undefined
+    ? column.compactMinWidth
+    : column.minWidth;
 }
 
 const KEYBOARD_RESIZE_STEP = 16;
@@ -355,7 +386,6 @@ const COLUMN_ICON: Record<SiteColumn["key"], ReactElement> = {
       <path d="M1.5 5h9M4 1.2v2M8 1.2v2M4 7.2h1.4" />
     </svg>
   ),
-  tier: <></>,
 };
 
 /** Sortable, resizable header row — the same interaction as TreeTable's own
@@ -379,9 +409,17 @@ function AreaTableHeader({
   onToggleSort: (column: SiteColumn) => void;
   widths: Record<string, number>;
   resizingKey: string | null;
-  onResizeBegin: (column: SiteColumn & { defaultWidth: number; minWidth: number }, e: React.PointerEvent) => void;
-  onResizeReset: (column: SiteColumn & { defaultWidth: number; minWidth: number }) => void;
-  onResizeKey: (column: SiteColumn & { defaultWidth: number; minWidth: number }, e: React.KeyboardEvent) => void;
+  onResizeBegin: (
+    column: SiteColumn & { defaultWidth: number; minWidth: number },
+    e: React.PointerEvent,
+  ) => void;
+  onResizeReset: (
+    column: SiteColumn & { defaultWidth: number; minWidth: number },
+  ) => void;
+  onResizeKey: (
+    column: SiteColumn & { defaultWidth: number; minWidth: number },
+    e: React.KeyboardEvent,
+  ) => void;
   columnsTemplate: string;
 }) {
   return (
@@ -393,7 +431,10 @@ function AreaTableHeader({
         const active = sort.key === column.key;
         const resizable = Boolean(column.defaultWidth);
         return (
-          <div key={column.key} className={`relative ${column.key === "name" ? "" : "justify-self-end"}`}>
+          <div
+            key={column.key}
+            className={`relative ${column.key === "name" ? "" : "justify-self-end"}`}
+          >
             <button
               type="button"
               onClick={() => onToggleSort(column)}
@@ -404,15 +445,24 @@ function AreaTableHeader({
               {column.key === "name" && COLUMN_ICON[column.key]}
               <span className="truncate">{column.label}</span>
               {column.key !== "name" && COLUMN_ICON[column.key]}
-              <SortArrow dir={active ? sort.dir : column.defaultDir} active={active} />
+              <SortArrow
+                dir={active ? sort.dir : column.defaultDir}
+                active={active}
+              />
             </button>
             {resizable && (
               <button
                 type="button"
                 aria-label={`Resize ${column.label} column`}
-                onPointerDown={(e) => onResizeBegin(column as (typeof RESIZABLE_COLUMNS)[number], e)}
-                onDoubleClick={() => onResizeReset(column as (typeof RESIZABLE_COLUMNS)[number])}
-                onKeyDown={(e) => onResizeKey(column as (typeof RESIZABLE_COLUMNS)[number], e)}
+                onPointerDown={(e) =>
+                  onResizeBegin(column as (typeof RESIZABLE_COLUMNS)[number], e)
+                }
+                onDoubleClick={() =>
+                  onResizeReset(column as (typeof RESIZABLE_COLUMNS)[number])
+                }
+                onKeyDown={(e) =>
+                  onResizeKey(column as (typeof RESIZABLE_COLUMNS)[number], e)
+                }
                 className={`col-grip ${resizingKey === column.key ? "col-grip--active" : ""}`}
               />
             )}
@@ -420,22 +470,6 @@ function AreaTableHeader({
         );
       })}
     </div>
-  );
-}
-
-/** Which service tier serves this site's data — see data/tiers.ts. There is
- * no per-site tier in this dataset (a site inherits whatever tier the whole
- * contract is on), so every row shows the same TIERS[CURRENT_TIER_INDEX]
- * badge rather than a fabricated per-site value; the day a site can sit on
- * its own tier, this becomes a per-row prop instead of a shared constant. */
-function TierTag() {
-  return (
-    <span
-      className="shrink-0 px-[7px] py-[2px] rounded-full border border-[#dedee3] bg-white text-[#5b5b66] text-[10px] font-medium font-['Outfit',sans-serif] whitespace-nowrap"
-      title={`Served on ${TIERS[CURRENT_TIER_INDEX].label} — ${TIERS[CURRENT_TIER_INDEX].name}`}
-    >
-      {TIERS[CURRENT_TIER_INDEX].label}
-    </span>
   );
 }
 
@@ -492,7 +526,11 @@ function HealthIndicatorChip({
         className="flex items-center gap-[3px] text-[10px] font-['Outfit',sans-serif] leading-[14px] whitespace-nowrap"
         style={{ color: rising ? "#0f7a44" : "#c05a17" }}
       >
-        <img src={imgIcTrendingUp} alt="" className={`w-[9px] h-[9px] ${rising ? "" : "-scale-y-100"}`} />
+        <img
+          src={imgIcTrendingUp}
+          alt=""
+          className={`w-[9px] h-[9px] ${rising ? "" : "-scale-y-100"}`}
+        />
         {label}
       </span>
     </div>
@@ -543,7 +581,13 @@ function ProjectGroupHeader({
  * detection screen (see HabitatChangeView), which is where the interval, the
  * detections and the operational workflow all live — this row is the entry
  * point to that analysis, not a place to read it. */
-function HabitatChangeRow({ delay, onOpen }: { delay: number; onOpen: () => void }) {
+function HabitatChangeRow({
+  delay,
+  onOpen,
+}: {
+  delay: number;
+  onOpen: () => void;
+}) {
   return (
     <button
       type="button"
@@ -553,7 +597,13 @@ function HabitatChangeRow({ delay, onOpen }: { delay: number; onOpen: () => void
     >
       <span className="flex items-center gap-[10px] min-w-0">
         <span className="shrink-0 w-[28px] h-[28px] rounded-[8px] bg-[#e7f4f2] text-[#0f7a6a] flex items-center justify-center">
-          <svg width="15" height="15" viewBox="0 0 16 16" {...headerIconStroke} strokeWidth={1.6}>
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 16 16"
+            {...headerIconStroke}
+            strokeWidth={1.6}
+          >
             <path d="M8 14.5c3-1.8 4.8-4.3 4.8-7.3A4.8 4.8 0 0 0 8 2.4a4.8 4.8 0 0 0-4.8 4.8c0 3 1.8 5.5 4.8 7.3Z" />
             <path d="M8 14.5V8.2" />
             <path d="M8 4.5 5.5 7" />
@@ -568,8 +618,20 @@ function HabitatChangeRow({ delay, onOpen }: { delay: number; onOpen: () => void
             AI-flagged · refreshes every month · open on the map
           </span>
         </span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0 text-[#5b5b66]">
-          <path d="M3.5 2 6.5 5 3.5 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          className="shrink-0 text-[#5b5b66]"
+        >
+          <path
+            d="M3.5 2 6.5 5 3.5 8"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </span>
     </button>
@@ -586,7 +648,15 @@ function HealthDistributionBar({ data }: { data: CategoryDatum[] }) {
   return (
     <span className="flex h-[4px] w-full rounded-full overflow-hidden bg-[#ebece7]">
       {data.map((d) =>
-        d.value > 0 ? <span key={d.name} style={{ width: `${(d.value / total) * 100}%`, background: d.color }} /> : null,
+        d.value > 0 ? (
+          <span
+            key={d.name}
+            style={{
+              width: `${(d.value / total) * 100}%`,
+              background: d.color,
+            }}
+          />
+        ) : null,
       )}
     </span>
   );
@@ -638,7 +708,15 @@ function TreeCountCell({
  * gets — the same sign convention `HealthIndicatorChip` already uses for its
  * arrow colour, just extended to the whole chip so a declining metric reads
  * as a flag at a glance instead of only on close reading of a tiny arrow. */
-function MetricChip({ label, value, deltaPct }: { label: string; value: string; deltaPct?: number }) {
+function MetricChip({
+  label,
+  value,
+  deltaPct,
+}: {
+  label: string;
+  value: string;
+  deltaPct?: number;
+}) {
   const hasTrend = deltaPct !== undefined;
   const rising = hasTrend && deltaPct >= 0;
   const declining = hasTrend && !rising;
@@ -646,7 +724,9 @@ function MetricChip({ label, value, deltaPct }: { label: string; value: string; 
     <div
       title={label}
       className={`shrink-0 flex items-center gap-[4px] px-[7px] py-[4px] rounded-[10px] border ${
-        declining ? "border-[#e8b09c] bg-[#fbe9e3]" : "border-[#e2e4d9] bg-[#f2f4ec]"
+        declining
+          ? "border-[#e8b09c] bg-[#fbe9e3]"
+          : "border-[#e2e4d9] bg-[#f2f4ec]"
       }`}
     >
       <span
@@ -681,7 +761,7 @@ function MetricChip({ label, value, deltaPct }: { label: string; value: string; 
  * out of alignment.
  *
  * The "compact" (566px sidebar) variant instead renders a card: a header line
- * (name, alerts, tier) over a wrapped row of every metric as a `MetricChip` —
+ * (name and alerts) over a wrapped row of every metric as a `MetricChip` —
  * not just the five columns the old column-grid had room for. A card can wrap
  * its content to fit the sidebar's width; a single grid row can't, which is
  * what made columns disappear behind `fullOnly` in the first place. */
@@ -718,7 +798,9 @@ function SiteRow({
   const healthDeclining = site.healthScore - 75 < 0;
   const canopyDeclining = site.trendPct < 0;
   const treesDeclining = (site.totalTreesChange ?? 0) < 0;
-  const correlatedDecline = [healthDeclining, canopyDeclining, treesDeclining].filter(Boolean).length >= 2;
+  const correlatedDecline =
+    [healthDeclining, canopyDeclining, treesDeclining].filter(Boolean).length >=
+    2;
 
   if (compact) {
     return (
@@ -739,9 +821,6 @@ function SiteRow({
               ))}
             </span>
           )}
-          <span className="shrink-0">
-            <TierTag />
-          </span>
         </div>
         <div className="flex flex-wrap gap-[6px]">
           <MetricChip label="Ha" value={site.hectares.toLocaleString()} />
@@ -751,9 +830,13 @@ function SiteRow({
               "these are one correlated trend," which three individually red
               chips scattered through the flex-wrap wouldn't. */}
           <div
-            title={correlatedDecline ? "Declining together this cycle" : undefined}
+            title={
+              correlatedDecline ? "Declining together this cycle" : undefined
+            }
             className={`flex flex-wrap gap-[6px] ${
-              correlatedDecline ? "p-[4px] rounded-[12px] border border-[#e8987a] bg-[#fce1d7]" : ""
+              correlatedDecline
+                ? "p-[4px] rounded-[12px] border border-[#e8987a] bg-[#fce1d7]"
+                : ""
             }`}
           >
             <MetricChip
@@ -772,7 +855,12 @@ function SiteRow({
               deltaPct={site.totalTreesChange ?? undefined}
             />
           </div>
-          <MetricChip label="Insights" value={site.flaggedTrees > 0 ? site.flaggedTrees.toLocaleString() : "—"} />
+          <MetricChip
+            label="Insights"
+            value={
+              site.flaggedTrees > 0 ? site.flaggedTrees.toLocaleString() : "—"
+            }
+          />
           <MetricChip label="NDVI" value={site.avgNdvi.toFixed(2)} />
           <MetricChip label="Activity" value={site.lastActivityLabel} />
           <MetricChip label="Since" value={site.monitoredSinceLabel} />
@@ -786,7 +874,10 @@ function SiteRow({
       type="button"
       onClick={onClick}
       className="u-press w-full grid items-center gap-[12px] px-[14px] py-[14px] text-left cursor-pointer hover:bg-[#fbfbfa] animate-fade-in-up"
-      style={{ gridTemplateColumns: columnsTemplate, animationDelay: `${delay}ms` }}
+      style={{
+        gridTemplateColumns: columnsTemplate,
+        animationDelay: `${delay}ms`,
+      }}
     >
       {columns.map((column) => {
         switch (column.key) {
@@ -806,7 +897,10 @@ function SiteRow({
               // instead grew this cell taller than the row around it, which
               // is what actually needs one row, not two, to read as a single
               // site rather than a site plus a footnote.
-              <span key={column.key} className="flex items-center min-w-0 gap-[8px] pl-[6px]">
+              <span
+                key={column.key}
+                className="flex items-center min-w-0 gap-[8px] pl-[6px]"
+              >
                 {/* `min-w-0` here too, not just the parent — a flex item's
                     default `min-width: auto` holds it to its content's own
                     intrinsic width regardless of the parent's own min-w-0,
@@ -837,7 +931,11 @@ function SiteRow({
           case "trees":
             return (
               <span key={column.key} className="flex justify-end">
-                <TreeCountCell total={site.totalTrees} change={site.totalTreesChange} healthData={site.healthData} />
+                <TreeCountCell
+                  total={site.totalTrees}
+                  change={site.totalTreesChange}
+                  healthData={site.healthData}
+                />
               </span>
             );
           case "insights":
@@ -846,12 +944,17 @@ function SiteRow({
                 key={column.key}
                 className="text-[13px] text-[#464650] font-['Outfit',sans-serif] leading-[20px] text-right tabular-nums"
               >
-                {site.flaggedTrees > 0 ? site.flaggedTrees.toLocaleString() : "—"}
+                {site.flaggedTrees > 0
+                  ? site.flaggedTrees.toLocaleString()
+                  : "—"}
               </span>
             );
           case "health":
             return (
-              <span key={column.key} className="flex items-center justify-end gap-[6px] flex-wrap">
+              <span
+                key={column.key}
+                className="flex items-center justify-end gap-[6px] flex-wrap"
+              >
                 <HealthIndicatorChip
                   label="Health score"
                   value={`${Math.round(site.healthScore)}%`}
@@ -893,12 +996,6 @@ function SiteRow({
                 {site.monitoredSinceLabel}
               </span>
             );
-          case "tier":
-            return (
-              <span key={column.key} className="flex justify-end">
-                <TierTag />
-              </span>
-            );
           default:
             return null;
         }
@@ -930,19 +1027,30 @@ export default function AreaTable({
   // tables behave identically. Held per mount rather than lifted: the sidebar
   // and the Table tab are different contexts, and a column resized in one has
   // no business resizing the other.
-  const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "name", dir: "asc" });
+  const [sort, setSort] = useState<{ key: string; dir: SortDir }>({
+    key: "name",
+    dir: "asc",
+  });
   const [widths, setWidths] = useState<Record<string, number>>(() =>
-    Object.fromEntries(RESIZABLE_COLUMNS.map((c) => [c.key, defaultWidthFor(c, variant)])),
+    Object.fromEntries(
+      RESIZABLE_COLUMNS.map((c) => [c.key, defaultWidthFor(c, variant)]),
+    ),
   );
   const [resizingKey, setResizingKey] = useState<string | null>(null);
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const visibleColumns = useMemo(
     () => SITE_COLUMNS.filter((c) => variant === "full" || !c.fullOnly),
     [variant],
   );
   const visibleResizable = useMemo(
-    () => visibleColumns.filter((c): c is SiteColumn & { defaultWidth: number; minWidth: number } => Boolean(c.defaultWidth)),
+    () =>
+      visibleColumns.filter(
+        (c): c is SiteColumn & { defaultWidth: number; minWidth: number } =>
+          Boolean(c.defaultWidth),
+      ),
     [visibleColumns],
   );
 
@@ -970,13 +1078,16 @@ export default function AreaTable({
   // Which column the active grip belongs to — a ref, since the drag handler
   // needs to read it synchronously on every pointer move, same reasoning as
   // TreeTable's own resizeColRef.
-  const resizeColRef = useRef<(SiteColumn & { defaultWidth: number; minWidth: number }) | null>(null);
+  const resizeColRef = useRef<
+    (SiteColumn & { defaultWidth: number; minWidth: number }) | null
+  >(null);
   const resize = useDragResize({
     min: 0,
     max: 320,
     onChange: (next) => {
       const column = resizeColRef.current;
-      if (column) applyWidth(column.key, Math.max(minWidthFor(column, variant), next));
+      if (column)
+        applyWidth(column.key, Math.max(minWidthFor(column, variant), next));
     },
     onEnd: () => {
       resizeColRef.current = null;
@@ -989,7 +1100,11 @@ export default function AreaTable({
     // columns left over -- 94px on a 1280px window, which rendered every site
     // as "Al ...", "Hat...", "Sir ...". A grid track with a zero minimum is
     // not a flexible column, it is a column with no floor.
-    () => [`minmax(${NAME_MIN_WIDTH}px,1fr)`, ...visibleResizable.map((c) => `${widths[c.key]}px`)].join(" "),
+    () =>
+      [
+        `minmax(${NAME_MIN_WIDTH}px,1fr)`,
+        ...visibleResizable.map((c) => `${widths[c.key]}px`),
+      ].join(" "),
     [widths, visibleResizable],
   );
 
@@ -1014,7 +1129,8 @@ export default function AreaTable({
         ? [...sites].sort((a, b) => {
             const av = column.sortValue(a);
             const bv = column.sortValue(b);
-            if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+            if (typeof av === "number" && typeof bv === "number")
+              return (av - bv) * dir;
             return String(av).localeCompare(String(bv)) * dir;
           })
         : sites,
@@ -1034,12 +1150,20 @@ export default function AreaTable({
           setResizingKey(column.key);
           resize.begin(e, widths[column.key]);
         }}
-        onResizeReset={(column) => applyWidth(column.key, defaultWidthFor(column, variant))}
+        onResizeReset={(column) =>
+          applyWidth(column.key, defaultWidthFor(column, variant))
+        }
         onResizeKey={(column, e) => {
           if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
           e.preventDefault();
-          const delta = e.key === "ArrowRight" ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP;
-          applyWidth(column.key, Math.max(minWidthFor(column, variant), widths[column.key] + delta));
+          const delta =
+            e.key === "ArrowRight"
+              ? KEYBOARD_RESIZE_STEP
+              : -KEYBOARD_RESIZE_STEP;
+          applyWidth(
+            column.key,
+            Math.max(minWidthFor(column, variant), widths[column.key] + delta),
+          );
         }}
         columnsTemplate={columnsTemplate}
       />
@@ -1073,8 +1197,15 @@ export default function AreaTable({
                   ))}
                   {onOpenHabitatChange && (
                     <HabitatChangeRow
-                      delay={160 + groupIndex * 60 + (group.sites.length + 1) * 40}
-                      onOpen={() => onOpenHabitatChange(group.sites[0].id, group.projectName)}
+                      delay={
+                        160 + groupIndex * 60 + (group.sites.length + 1) * 40
+                      }
+                      onOpen={() =>
+                        onOpenHabitatChange(
+                          group.sites[0].id,
+                          group.projectName,
+                        )
+                      }
                     />
                   )}
                 </>

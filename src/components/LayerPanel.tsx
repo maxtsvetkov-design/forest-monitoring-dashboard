@@ -551,6 +551,7 @@ export default function LayerPanel({
   onReset,
   showGenerative,
   showDyingTrees,
+  showSurveyLayers = true,
   treeCount = 0,
   opacity,
   onOpacityChange,
@@ -587,6 +588,10 @@ export default function LayerPanel({
   showGenerative: boolean;
   /** Whether the dying-trees generative trace applies to this area at all. */
   showDyingTrees: boolean;
+  /** False for an area whose map draws none of the aerial / canopy-mask /
+   *  pins layers (the Mangroves stand) — a chip for a layer that can never
+   *  render is a switch wired to nothing. Defaults to true. */
+  showSurveyLayers?: boolean;
   /** How many crowns the 3D layer has loaded — 0 while the crown table is
    * still in flight, which also hides the chip. See src/data/canopies.ts. */
   treeCount?: number;
@@ -664,6 +669,7 @@ export default function LayerPanel({
   // does nothing.
   const availableLayers = order.filter(
     (id) =>
+      (showSurveyLayers || (id !== "aerial" && id !== "canopy" && id !== "pins")) &&
       (id !== "generative" || showGenerative) &&
       (id !== "dyingTrees" || showDyingTrees) &&
       (id !== "trees3d" || (showGenerative && treeCount > 0)),
